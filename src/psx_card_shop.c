@@ -54,6 +54,7 @@
 #include "psx_drop_db.h"
 #include "psx_fusion_font.h"
 #include "psx_game_hooks.h"
+#include "psx_shop_skin.h"
 #include "psx_video_menu.h"
 
 /* ---- measured addresses -------------------------------------------------- */
@@ -460,23 +461,20 @@ static void shop_register_hooks(void) {
 #define ROW_H 18
 #define ROW_X 12
 #define ROW_Y 111
-#define PANEL_W 208
-#define PANEL_H 152
-#define PANEL_X 56
-#define PANEL_Y 34
+#define PANEL_W 304
+#define PANEL_H 220
+#define PANEL_X 8
+#define PANEL_Y 10
 #define CV_W PANEL_W
 #define CV_H PANEL_H
 static uint32_t s_px[CV_W * CV_H];
 static int s_img_w, s_img_h;
 
-#define C_BAND    0xEE060606u
-#define C_FIELD   0xF0101C30u   /* the dialog boxes' deep blue */
 #define C_GOLD    0xFFE0B84Cu
-#define C_GOLD_D  0xFF8A6E24u
 #define C_WHITE   0xFFF0F0F0u
 #define C_GREY    0xFFB0B4C0u
 #define C_RED     0xFFE06858u
-#define C_SEL     0xFF283048u
+#define C_SEL     0xFF2A3454u
 
 static void px_fill(int x0, int y0, int w, int h, uint32_t c) {
     if (x0 < 0) { w += x0; x0 = 0; }
@@ -486,24 +484,57 @@ static void px_fill(int x0, int y0, int w, int h, uint32_t c) {
             s_px[y * CV_W + x] = c;
 }
 
-/* The stone frame the game's own dialog boxes wear, procedurally: a mottled
- * grey band with chisel shadows, so the panel reads as this game's furniture
- * rather than as a debug rectangle. Deterministic hash noise — no state. */
-static void stone_frame(int thick) {
-    for (int y = 0; y < CV_H; y++)
-        for (int x = 0; x < CV_W; x++) {
-            const int edge = x < thick || y < thick ||
-                             x >= CV_W - thick || y >= CV_H - thick;
-            if (!edge) continue;
-            uint32_t h = (uint32_t)(x * 374761393 + y * 668265263);
-            h = (h ^ (h >> 13)) * 1274126177u;
-            int v = 132 + (int)((h >> 28) & 0xFu) * 6;
-            if (x == 0 || y == 0 || x == CV_W - 1 || y == CV_H - 1) v -= 46;
-            if (x == thick - 1 || y == thick - 1 ||
-                x == CV_W - thick || y == CV_H - thick) v -= 28;
-            if (v < 0) v = 0;
-            s_px[y * CV_W + x] = 0xFF000000u | ((uint32_t)v * 0x010101u);
+/* ---- the password screen's box furniture (psx_shop_skin) ----------------- */
+static void skin_blit(const PsxSprite *s, int dx, int dy,
+                      int sx, int sy, int w, int h) {
+    if (!s->px) return;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            const int px = dx + x, py = dy + y;
+            if (px < 0 || py < 0 || px >= CV_W || py >= CV_H) continue;
+            const uint32_t c = s->px[(sy + y) * s->w + (sx + x)];
+            if (c >> 24) s_px[py * CV_W + px] = c;
         }
+}
+
+/* One password-screen box: field, side edges, then the top/bottom strips
+ * whose ends carry the corners — assembled exactly the way the screen's own
+ * draw list assembles one, just at our width. The field is STRETCHED, not
+ * tiled: its art carries the box's own light-to-dark shading top to bottom,
+ * so tiling puts the dark bottom mid-box; nearest-neighbour stretch keeps
+ * the composition at any size and the mottle hides the resampling. */
+static void skin_box(int x0, int y0, int w, int h) {
+    const PsxSprite *f = &psx_spr_shop_field;
+    const int iw = w - 8, ih = h - 8;
+    if (f->px && iw > 1 && ih > 1)
+        for (int y = 0; y < ih; y++)
+            for (int x = 0; x < iw; x++) {
+                const int sy = y * (f->h - 1) / (ih - 1);
+                const int sx = x * (f->w - 1) / (iw - 1);
+                const uint32_t c = f->px[sy * f->w + sx];
+                const int px = x0 + 4 + x, py = y0 + 4 + y;
+                if (px >= 0 && py >= 0 && px < CV_W && py < CV_H)
+                    s_px[py * CV_W + px] = c | 0xFF000000u;
+            }
+    const PsxSprite *le = &psx_spr_shop_left, *re = &psx_spr_shop_right;
+    for (int y = 8; y < h - 8; y += le->h) {
+        const int hh = (h - 8 - y) < le->h ? (h - 8 - y) : le->h;
+        skin_blit(le, x0, y0 + y, 0, 0, le->w, hh);
+        skin_blit(re, x0 + w - re->w, y0 + y, 0, 0, re->w, hh);
+    }
+    const PsxSprite *ts = &psx_spr_shop_top, *bs = &psx_spr_shop_bot;
+    const int end = ts->w / 2;               /* 88: each half owns a corner */
+    for (int pass = 0; pass < 2; pass++) {
+        const PsxSprite *s = pass ? bs : ts;
+        const int dy = pass ? y0 + h - s->h : y0;
+        skin_blit(s, x0, dy, 0, 0, end, s->h);
+        skin_blit(s, x0 + w - end, dy, s->w - end, 0, end, s->h);
+        for (int x = end; x < w - end; ) {
+            const int seg = (w - end - x) < 136 ? (w - end - x) : 136;
+            skin_blit(s, x0 + x, dy, 20, 0, seg, s->h);
+            x += seg;
+        }
+    }
 }
 
 static int put_glyph(int cell, int x0, int y0, uint32_t tint) {
@@ -536,49 +567,57 @@ static int put_text(const char *s, int x, int y, uint32_t tint) {
     return x;
 }
 
+/* Three stacked password-screen boxes: header (title + starchip readout),
+ * the pack list, and the message/pull box. */
+#define BOX_A_Y 0
+#define BOX_A_H 40
+#define BOX_B_Y 43
+#define BOX_B_H 104
+#define BOX_C_Y 150
+#define BOX_C_H 70
+
 static void draw_panel(void) {
     s_img_w = PANEL_W; s_img_h = PANEL_H;
     memset(s_px, 0, sizeof s_px);
-    px_fill(0, 0, PANEL_W, PANEL_H, C_FIELD);
-    stone_frame(7);
-    px_fill(7, 7, PANEL_W - 14, 1, C_GOLD_D);
-    px_fill(7, PANEL_H - 8, PANEL_W - 14, 1, C_GOLD_D);
+    skin_box(0, BOX_A_Y, PANEL_W, BOX_A_H);
+    skin_box(0, BOX_B_Y, PANEL_W, BOX_B_H);
+    skin_box(0, BOX_C_Y, PANEL_W, BOX_C_H);
 
-    put_text("CARD SHOP", 14, 10, C_GOLD);
+    put_text("CARD SHOP", 16, BOX_A_Y + 15, C_GOLD);
+    skin_blit(&psx_spr_shop_star, 206, BOX_A_Y + 12, 0, 0,
+              psx_spr_shop_star.w, psx_spr_shop_star.h);
     char line[36];
-    snprintf(line, sizeof line, "CHIPS %u",
+    snprintf(line, sizeof line, "x %u",
              (unsigned)psx_mod_read_word(SHOP_CHIPS_ADDR));
-    put_text(line, 132, 10, C_WHITE);
-    px_fill(10, 24, PANEL_W - 20, 1, C_GOLD_D);
+    put_text(line, 226, BOX_A_Y + 16, C_WHITE);
 
     build_pools();
     for (int i = 0; i < SHOP_PACKS; i++) {
-        const int y = 28 + i * 14;
+        const int y = BOX_B_Y + 12 + i * 21;
         const int tier = s_tier[i];
-        if (i == s_sel) px_fill(9, y - 1, PANEL_W - 18, 14, C_SEL);
-        put_text(i == s_sel ? ">" : " ", 12, y, C_GOLD);
-        put_text(k_packs[i].name, 20, y, C_WHITE);
-        put_text(k_tier_names[tier], 84, y,
+        if (i == s_sel) px_fill(10, y - 3, PANEL_W - 20, 17, C_SEL);
+        put_text(i == s_sel ? ">" : " ", 18, y, C_GOLD);
+        put_text(k_packs[i].name, 32, y, C_WHITE);
+        put_text(k_tier_names[tier], 128, y,
                  tier == 0 ? C_GREY : tier == 1 ? C_WHITE
                  : tier == 2 ? C_GOLD : C_RED);
         snprintf(line, sizeof line, "%d",
                  k_packs[i].base_price * k_tier_mult[tier]);
-        put_text(line, 172, y, C_GOLD);
+        put_text(line, 246, y, C_GOLD);
     }
-    px_fill(10, 86, PANEL_W - 20, 1, C_GOLD_D);
 
-    if (s_msg[0]) put_text(s_msg, 12, 90, s_pull_n ? C_GREY : C_RED);
+    if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
     for (int i = 0; i < s_pull_n && i < 3; i++) {
         const char *nm = psx_card_db_name(s_pull[i]);
-        snprintf(line, sizeof line, "%.22s", nm ? nm : "?");
-        put_text(line, 14, 103 + i * 12, C_WHITE);
+        snprintf(line, sizeof line, "%.30s", nm ? nm : "?");
+        put_text(line, 20, BOX_C_Y + 19 + i * 11, C_WHITE);
     }
     if (s_pull_n > 3) {
         snprintf(line, sizeof line, "+%d MORE IN TRUNK", s_pull_n - 3);
-        put_text(line, 14, 103 + 3 * 12, C_GREY);
+        put_text(line, 20, BOX_C_Y + 19 + 3 * 11, C_GREY);
     }
     if (!s_pull_n && !s_msg[0])
-        put_text("X BUY  <> RARITY  O CLOSE", 30, 108, C_GREY);
+        put_text("X BUY   <> RARITY   O CLOSE", 62, BOX_C_Y + 28, C_GREY);
 }
 
 /* ---- purchase ------------------------------------------------------------ */

@@ -118,7 +118,8 @@ if(YGOFM_HAS_GAME_C)
     set(YGOFM_ART_SOURCES
         "${YGOFM_ART_DIR}/psx_rank_sprites.c"
         "${YGOFM_ART_DIR}/psx_cd_sprites.c"
-        "${YGOFM_ART_DIR}/psx_fusion_font.c")
+        "${YGOFM_ART_DIR}/psx_fusion_font.c"
+        "${YGOFM_ART_DIR}/psx_shop_skin.c")
     add_custom_command(
         OUTPUT ${YGOFM_ART_SOURCES}
         COMMAND ${Python3_EXECUTABLE}
