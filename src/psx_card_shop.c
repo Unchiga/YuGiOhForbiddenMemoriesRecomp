@@ -287,17 +287,55 @@ static void build_pools(void) {
 }
 
 /* ---- screen + native detection ------------------------------------------- */
+static int widget_on_menu17(void) {
+    /* Is the campaign menu widget displaying string 17 - the shopkeeper's
+     * menu labels? True for our arena stream and for the stock stream (the
+     * pre-repoint table entry up to table[18], the next stream's start). */
+    const uint32_t cur = psx_mod_read_word(SHOP_WIDGET1);
+    if (cur >= SHOP_LBL_BASE + SHOP_ARENA_OFF &&
+        cur <  SHOP_LBL_BASE + SHOP_ARENA_OFF + sizeof k_menu_stream + 8u)
+        return 1;
+    uint16_t e17 = psx_mod_read_half(SHOP_LBL_TABLE + 17u * 2u);
+    if (e17 == SHOP_ARENA_OFF) e17 = s_stock_entry;
+    const uint16_t e18 = psx_mod_read_half(SHOP_LBL_TABLE + 18u * 2u);
+    if (!e17 || e18 <= e17) return 0;
+    return cur >= SHOP_LBL_BASE + e17 && cur < SHOP_LBL_BASE + e18;
+}
+
+static int greeting_live(void) {
+    /* The shopkeeper's "Hello there!" (string 1086) playing in the dialog
+     * widget. The id is stored either direct or in +256 bank form. */
+    if (psx_mod_read_byte(SHOP_DLG_MODE) != 0x0Au) return 0;
+    const uint16_t id = psx_mod_read_half(SHOP_DLG_ID);
+    return id == 1086u || id == 1086u + 256u;
+}
+
 static int screen_match(void) {
     if (!s_enabled) return 0;
-    if (psx_mod_read_half(SHOP_STATE_ADDR) != 0xE00Du) return 0;
-    if (psx_mod_read_word(SHOP_MENUFLAG) != 1u) return 0;  /* menu really open */
-    if (psx_mod_read_byte(SHOP_SIG_A) != 0x08u) return 0;
-    /* SIG_B was dropped: it read 0xFF only on savestate-restored menus and
-     * 0xFE on naturally-entered ones - a counter, not a discriminator. Its
-     * false negative is what let an X press leak through to BUILD DECK. */
-    if (psx_mod_read_byte(SHOP_SIG_C) != 0x20u) return 0;
-    const uint8_t n = psx_mod_read_byte(SHOP_COUNT_ADDR);
-    return n == 4u || n == 5u;
+    if (psx_mod_read_word(SHOP_MENUFLAG) != 1u) return 0;
+    /* Our own flow keeps the gate through widget transitions. */
+    if (s_say || s_open) return 1;
+    /* Signature 1: the campaign overlay state left by entering the shop
+     * FROM THE MAP. A save made inside the shop resumes with ALL of these
+     * zero (measured on a natural CAMPAIGN resume, 2026-08-22, where the
+     * old gate never matched and the menu stayed stock) - so this is one
+     * sufficient signature, not a requirement.
+     * SIG_B was dropped earlier: it read 0xFF only on savestate-restored
+     * menus and 0xFE on naturally-entered ones - a counter, not a
+     * discriminator. */
+    if (psx_mod_read_half(SHOP_STATE_ADDR) == 0xE00Du &&
+        psx_mod_read_byte(SHOP_SIG_A) == 0x08u &&
+        psx_mod_read_byte(SHOP_SIG_C) == 0x20u) {
+        const uint8_t n = psx_mod_read_byte(SHOP_COUNT_ADDR);
+        if (n == 4u || n == 5u) return 1;
+    }
+    /* Signature 2: the greeting is playing - stages the streams BEFORE the
+     * menu's first open, so the fifth row is there from the very first
+     * visit on every path. Harmless if another scene ever spoke 1086: the
+     * staged data is dormant until the shopkeeper menu displays it. */
+    if (greeting_live()) return 1;
+    /* Signature 3: the shopkeeper menu itself is on screen. */
+    return widget_on_menu17();
 }
 
 static int widget_on_our_stream(void) {
@@ -710,6 +748,7 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
                         psx_mod_read_byte(SHOP_SIG_C) == 0x20u;
     return snprintf(out, cap,
         "\"t_state\":%d,\"t_menu\":%d,\"t_sig\":%d,"
+        "\"t_menu17\":%d,\"t_greet\":%d,"
         "\"hpatch\":%u,"
         "\"enabled\":%d,\"gate\":%d,\"native\":%d,\"open\":%d,\"sel\":%d,"
         "\"tier\":%d,\"count_byte\":%u,\"cursor\":%u,\"chips\":%u,"
@@ -718,6 +757,7 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         "\"pools\":[%d,%d,%d,%d],"
         "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u",
         t_state, t_menu, t_sig,
+        widget_on_menu17(), greeting_live(),
         (unsigned)(psx_mod_read_word(SHOP_H_PATCH_ADDR) == SHOP_H_FIVE),
         s_enabled, s_gate, s_native, s_open, s_sel, s_tier[s_sel],
         (unsigned)psx_mod_read_byte(SHOP_COUNT_ADDR),
