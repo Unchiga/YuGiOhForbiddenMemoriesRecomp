@@ -92,6 +92,13 @@ mod_function_entry_funcs = [
     #             interpreter and kills every hook here, or gets blessed and
     #             leaves the native body running the old constant).
     "0x80021480",
+    # ---- CARD SHOP ---------------------------------------------------------
+    # 0x8003700C  the campaign menu cursor driver. Its first act is reading
+    #             the new-press mask; the entry hook is the only race-free
+    #             place to take UP/DOWN away while the pack panel is open
+    #             (frame-hook eating runs a frame too late and the leaked
+    #             arrows stepped the menu highlight behind the panel).
+    "0x8003700C",
     # 0x80037DA4  the text engine. Reads the next byte of a name/label stream
     #             from a cursor held at obj[obj[88]*4]; hooking its ENTRY is
     #             what exposes the card-name stream pointer, which is the only

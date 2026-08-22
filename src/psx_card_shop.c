@@ -48,10 +48,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_card_db.h"
 #include "psx_drop_db.h"
 #include "psx_fusion_font.h"
+#include "psx_game_hooks.h"
 #include "psx_video_menu.h"
 
 /* ---- measured addresses -------------------------------------------------- */
@@ -84,6 +86,14 @@
 #define SHOP_DLG_PHASE  0x800EB12Du
 #define SHOP_DLG_ID     0x800EB12Eu
 #define SHOP_DLG_PENX   0x800EB130u
+
+/* The campaign menu cursor driver. Its first loads are the new-press mask
+ * (0x8009B394 & 0x5008: UP|DOWN|START); the frame hook's press-eating can
+ * NEVER beat it - the driver reads and acts within the same guest frame,
+ * before any host tick runs - so eaten arrows still stepped the menu
+ * highlight behind the pack panel. An entry hook fires exactly before that
+ * first read, which is the only race-free place to take the arrows away. */
+#define SHOP_MENU_NAV_FN 0x8003700Cu
 #define SHOP_CHIPS_ADDR   0x801D07E0u
 #define SHOP_SAVE_LIVE    0x801D0200u
 #define SHOP_SAVE_MIRROR  0x801D3200u
@@ -219,6 +229,7 @@ static int      s_say;               /* 0 idle, 1 kick pending, 2 line up   */
 static int      s_say_timer;         /* frames until the pending kick       */
 static uint16_t s_say_stock;         /* table[SHOP_SAY_ID] before repoint   */
 static int      s_say_stock_ok;
+static uint16_t s_nav_latch;         /* arrows eaten at the driver's door   */
 static unsigned s_buys, s_denied, s_opens, s_remaps;
 
 /* Card pools per (pack, tier), built once card_db + drop scarcity are up. */
@@ -310,10 +321,24 @@ static int greeting_live(void) {
     return id == 1086u || id == 1086u + 256u;
 }
 
+static int menu_widget_live(void) {
+    /* The campaign menu widget's mode byte: 0x26 while a menu is open on
+     * screen, 0x00 once the screen tears it down. Measured 2026-08-22:
+     * without this the widget's stale stream cursor kept the gate - and a
+     * left-open panel - alive on the map and even on the title screen. */
+    return psx_mod_read_byte(SHOP_WIDGET1 + 52u) != 0u;
+}
+
 static int screen_match(void) {
     if (!s_enabled) return 0;
     if (psx_mod_read_word(SHOP_MENUFLAG) != 1u) return 0;
-    /* Our own flow keeps the gate through widget transitions. */
+    /* The greeting arms the gate before the menu's first open. */
+    if (greeting_live()) return 1;
+    /* Everything below is about the MENU, so the menu widget must be live;
+     * a dead widget means the shop screen is gone and all its bytes are
+     * stale, whatever they say. */
+    if (!menu_widget_live()) return 0;
+    /* Our own flow keeps the gate through widget-content transitions. */
     if (s_say || s_open) return 1;
     /* Signature 1: the campaign overlay state left by entering the shop
      * FROM THE MAP. A save made inside the shop resumes with ALL of these
@@ -329,12 +354,7 @@ static int screen_match(void) {
         const uint8_t n = psx_mod_read_byte(SHOP_COUNT_ADDR);
         if (n == 4u || n == 5u) return 1;
     }
-    /* Signature 2: the greeting is playing - stages the streams BEFORE the
-     * menu's first open, so the fifth row is there from the very first
-     * visit on every path. Harmless if another scene ever spoke 1086: the
-     * staged data is dormant until the shopkeeper menu displays it. */
-    if (greeting_live()) return 1;
-    /* Signature 3: the shopkeeper menu itself is on screen. */
+    /* Signature 2: the shopkeeper menu itself is on screen. */
     return widget_on_menu17();
 }
 
@@ -412,6 +432,27 @@ static void say_winddown(void) {
 static void say_reset(void) {
     if (s_say && say_line_ours()) say_winddown();
     s_say = 0;
+}
+
+/* Entry hook on the menu cursor driver: while the panel (or the say line)
+ * owns input, take UP/DOWN out of the new-press mask BEFORE the driver's
+ * own read of it, and latch them for the panel. The frame-hook eat runs a
+ * frame too late for this driver (see SHOP_MENU_NAV_FN above). */
+void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
+    (void)cpu; (void)address;
+    if (!s_enabled || (!s_open && !s_say)) return;
+    const uint16_t np = psx_mod_read_half(SHOP_PAD_NEW_ADDR);
+    const uint16_t arrows = (uint16_t)(SHOP_NP_UP | SHOP_NP_DOWN);
+    if (np & arrows) {
+        s_nav_latch |= (uint16_t)(np & arrows);
+        psx_mod_write_half(SHOP_PAD_NEW_ADDR, (uint16_t)(np & ~arrows));
+    }
+}
+
+static void shop_register_hooks(void) {
+    (void)psx_mod_register_function_entry_plugin(
+        "ygofm.card_shop.menu_nav", SHOP_MENU_NAV_FN,
+        psx_mod_card_shop_on_menu_nav);
 }
 
 /* ---- canvas -------------------------------------------------------------- */
@@ -636,7 +677,12 @@ void psx_card_shop_tick(void) {
         return;
     }
 
-    const uint16_t np = psx_mod_read_half(SHOP_PAD_NEW_ADDR);
+    uint16_t np = psx_mod_read_half(SHOP_PAD_NEW_ADDR);
+    /* Arrows the driver-entry hook took while the panel owns input arrive
+     * here; anything latched during the say line is deliberately dropped
+     * (the line is modal). */
+    if (s_open) np |= s_nav_latch;
+    s_nav_latch = 0;
     const int cursor = (int)psx_mod_read_byte(SHOP_CURSOR_ADDR);
 
     if (!s_open) {
@@ -735,6 +781,7 @@ void psx_card_shop_register_menu(void) {
         "A CARD SHOP ROW ON THE SHOPKEEPER MENU",
         "BUY CARD PACKS WITH STARCHIPS AT THE SHOPKEEPER",
     };
+    (void)psx_game_add_start_hook(shop_register_hooks);
     s_row_handle = psx_video_menu_add_option(
         PSX_VM_MENU_MODS, "CARD SHOP", HINTS[0],
         ONOFF, 2, "card_shop", 1, shop_changed);
