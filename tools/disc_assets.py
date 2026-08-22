@@ -95,6 +95,7 @@ MANIFEST = {
     'xbtn':        dict(x=708, y=128, w=4,   h=16, off=32567304),
     'obtn':        dict(x=720, y=128, w=4,   h=16, off=32567328),
     'arrow':       dict(x=728, y=160, w=4,   h=16, off=32571440),
+    'arrow2':      dict(x=728, y=192, w=4,   h=16, off=32575536),
     'clut_star':   dict(x=512, y=252, w=64,  h=1,  off=32618496),
 }
 
@@ -199,6 +200,7 @@ def emit_shop_skin(vram, out_path, sprite_extract):
         ('shop_xbtn',   sprite_extract.decode(vram, 704 * 4 + 16, 128, 16, 16, 4, (512, 252))),
         ('shop_obtn',   sprite_extract.decode(vram, 704 * 4 + 64, 128, 16, 16, 4, (512, 252))),
         ('shop_arrow',  sprite_extract.decode(vram, 704 * 4 + 96, 160, 16, 16, 4, (544, 252))),
+        ('shop_arrow2', sprite_extract.decode(vram, 704 * 4 + 96, 192, 16, 16, 4, (544, 252))),
     ]
     body = []
     tail = []

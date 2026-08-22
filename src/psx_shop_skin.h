@@ -29,6 +29,7 @@ extern const PsxSprite psx_spr_shop_star;
 extern const PsxSprite psx_spr_shop_xbtn;
 extern const PsxSprite psx_spr_shop_obtn;
 extern const PsxSprite psx_spr_shop_arrow;
+extern const PsxSprite psx_spr_shop_arrow2;   /* second animation frame */
 
 #ifdef __cplusplus
 }

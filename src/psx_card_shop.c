@@ -200,43 +200,52 @@ static const uint8_t k_say_stream[] = {
 #define SHOP_D3_OURS  0x24020004u
 
 /* ---- packs --------------------------------------------------------------- */
-/* Typed as the user specced: monsters cheapest, then magic (rituals ride
- * along), equip, traps dearest. LEFT/RIGHT walks the rarity tier, which
- * multiplies the price and narrows the pool to scarcer cards. */
-typedef struct { const char *name; int base_price; int cards; } ShopPack;
+/* LEFT/RIGHT walks the rarity tier; the price is the tier's, same for
+ * every pack type, as the user specced. */
+typedef struct { const char *name; int cards; } ShopPack;
 static const ShopPack k_packs[] = {
-    { "MONSTER", 20, 3 },
-    { "MAGIC",   40, 3 },
-    { "EQUIP",   60, 3 },
-    { "TRAP",    80, 3 },
+    { "MONSTER", 3 },
+    { "MAGIC",   3 },
+    { "EQUIP",   3 },
+    { "TRAP",    3 },
 };
 #define SHOP_PACKS 4
 #define SHOP_TIERS 4
 static const char *const k_tier_names[SHOP_TIERS] =
     { "COMMON", "UNCOMMON", "RARE", "LEGENDARY" };
-static const int k_tier_mult[SHOP_TIERS] = { 1, 2, 4, 8 };
+static const int k_tier_price[SHOP_TIERS] = { 20, 80, 200, 800 };
 #define SHOP_PULL_MAX 5
+/* A tier the player pays for should never be a two-card lottery: any pool
+ * shorter than this borrows the tier(s) below it for variety. */
+#define SHOP_POOL_MIN 12
 
-/* Every card lands in exactly ONE rarity, so everything is obtainable.
- * Placements the user pinned by name; matched against the game's own
- * decoded names so no id table can rot. */
+/* Home-tier placements the user pinned by name; matched against the game's
+ * own decoded names so no id table can rot. */
 static const char *const k_force_legendary[] = {
     "Exodia the Forbidden One",      /* the win condition itself */
     "Swords of Revealing Light",
     "Raigeki",
     "Megamorph",
-    "Widespread Ruin",               /* judgment: the nastiest trap in FM */
+    "Widespread Ruin",               /* judgment: FM's heaviest traps */
+    "Acid Trap Hole",
+    "Invisible Wire",
 };
 static const char *const k_force_rare[] = {
     "Crush Card",
     "Bright Castle",
     "Dragon Capture Jar",
+    "Dragon Treasure",
     /* judgment: the limbs are chase cards but not the win itself */
     "Right Arm of the Forbidden One",
     "Left Arm of the Forbidden One",
     "Right Leg of the Forbidden One",
     "Left Leg of the Forbidden One",
     "Dark Hole",
+};
+/* Cards the user wants in BOTH the rare and legendary pools. */
+static const char *const k_dual_rare_legendary[] = {
+    "Bright Castle",
+    "Dragon Treasure",
 };
 
 static int name_in(const char *nm, const char *const *list, int n) {
@@ -255,19 +264,16 @@ static int name_in(const char *nm, const char *const *list, int n) {
 }
 #define NAME_IN(nm, list) name_in(nm, list, (int)(sizeof list / sizeof *list))
 
-/* Judgment tiers: monsters by muscle (every monster over 3000 ATK is
- * LEGENDARY per the spec), everything else by how hard the game guards it
- * (droppers = how many of the 39 duelists ever drop it; 0 means password-
- * only in the stock game - the true chase cards, bumped a tier). */
+/* Home tiers: monsters by the user's ATK brackets (2500+ legendary,
+ * 1600-2450 rare, 850-1550 uncommon, the rest common), everything else by
+ * how hard the game guards it (droppers = how many of the 39 duelists ever
+ * drop it; 0 means password-only in the stock game). */
 static int card_rarity(int id, int atk, int type, int droppers) {
     const char *nm = psx_card_db_name(id);
     if (NAME_IN(nm, k_force_legendary)) return 3;
     if (NAME_IN(nm, k_force_rare))      return 2;
-    if (type <= 19) {
-        int r = atk > 3000 ? 3 : atk >= 2500 ? 2 : atk >= 1600 ? 1 : 0;
-        if (droppers == 0 && r < 2) r++;
-        return r;
-    }
+    if (type <= 19)
+        return atk >= 2500 ? 3 : atk >= 1600 ? 2 : atk >= 850 ? 1 : 0;
     if (droppers == 0) return 2;
     if (droppers <= 3) return 1;
     return 0;
@@ -288,6 +294,7 @@ static int      s_open;              /* pack panel is up                    */
 static int      s_sel;               /* selected pack 0..3                  */
 static int      s_tier[SHOP_PACKS];  /* per-pack rarity tier                */
 static int      s_dirty = 1;
+static int      s_anim;              /* arrow animation frame               */
 static uint32_t s_rng = 0x5EEDCA5Du;
 static int      s_pull[SHOP_PULL_MAX];
 static int      s_pull_n;
@@ -339,6 +346,10 @@ static void build_pools(void) {
                 }
             }
     }
+    static uint8_t home[PSX_CARD_DB_COUNT + 1];
+    static int8_t  hpack[PSX_CARD_DB_COUNT + 1];
+    memset(home, 0, sizeof home);
+    memset(hpack, -1, sizeof hpack);
     for (int id = 1; id <= PSX_CARD_DB_COUNT; id++) {
         int atk = 0, def = 0, type = 0;
         if (!psx_card_db_stats(id, &atk, &def, &type)) continue;
@@ -349,16 +360,22 @@ static void build_pools(void) {
         else if (type == TYPE_TRAP)                         pack = 3;
         else continue;
         const int t = card_rarity(id, atk, type, droppers[id]);
+        hpack[id] = (int8_t)pack;
+        home[id] = (uint8_t)t;
         s_pool[pack][t][s_pool_n[pack][t]++] = (uint16_t)id;
+        /* The user's dual placements sit in rare AND legendary. */
+        if (t == 2 && NAME_IN(psx_card_db_name(id), k_dual_rare_legendary))
+            s_pool[pack][3][s_pool_n[pack][3]++] = (uint16_t)id;
     }
-    /* An empty pool falls back down a tier rather than bricking a buy. */
+    /* Variety floor: a short pool borrows whole tiers below it until it
+     * offers a real spread (a legendary TRAP pack would otherwise be a
+     * three-card lottery - the game only has 18 traps). */
     for (int p = 0; p < SHOP_PACKS; p++)
-        for (int t = 1; t < SHOP_TIERS; t++)
-            if (!s_pool_n[p][t]) {
-                memcpy(s_pool[p][t], s_pool[p][t - 1],
-                       (size_t)s_pool_n[p][t - 1] * sizeof(uint16_t));
-                s_pool_n[p][t] = s_pool_n[p][t - 1];
-            }
+        for (int t = SHOP_TIERS - 1; t >= 1; t--)
+            for (int tt = t - 1; tt >= 0 && s_pool_n[p][t] < SHOP_POOL_MIN; tt--)
+                for (int id = 1; id <= PSX_CARD_DB_COUNT; id++)
+                    if (hpack[id] == p && home[id] == (uint8_t)tt)
+                        s_pool[p][t][s_pool_n[p][t]++] = (uint16_t)id;
     s_pools_built = 1;
 }
 
@@ -695,21 +712,24 @@ static void draw_panel(void) {
         const int y = BOX_B_Y + 12 + i * 21;
         const int tier = s_tier[i];
         if (i == s_sel) px_fill(10, y - 3, PANEL_W - 20, 17, C_SEL);
-        put_text(i == s_sel ? ">" : " ", 18, y, C_GOLD);
-        put_text(k_packs[i].name, 32, y, C_WHITE);
-        put_text(k_tier_names[tier], 128, y,
+        put_text(k_packs[i].name, 18, y, C_WHITE);
+        put_text(k_tier_names[tier], 104, y,
                  tier == 0 ? C_GREY : tier == 1 ? C_WHITE
                  : tier == 2 ? C_GOLD : C_RED);
         if (i == s_sel) {
-            /* The password screen's digit arrows flanking the rarity: the
-             * sheet only carries the right-pointing one; the game mirrors
-             * it for left (poly with reversed UVs) and so do we. */
-            skin_blit_mirror(&psx_spr_shop_arrow, 108, y - 3);
-            skin_blit(&psx_spr_shop_arrow, 214, y - 3, 0, 0,
-                      psx_spr_shop_arrow.w, psx_spr_shop_arrow.h);
+            /* The password screen's digit arrows flanking the rarity,
+             * alternating between the sheet's two animation frames the way
+             * the screen itself blinks them. The sheet only carries the
+             * right-pointing arrow; the game mirrors it for left (poly
+             * with reversed UVs) and so do we. */
+            const PsxSprite *ar = s_anim ? &psx_spr_shop_arrow2
+                                         : &psx_spr_shop_arrow;
+            skin_blit_mirror(ar, 84, y - 3);
+            skin_blit(ar, 184, y - 3, 0, 0, ar->w, ar->h);
         }
-        snprintf(line, sizeof line, "%d",
-                 k_packs[i].base_price * k_tier_mult[tier]);
+        skin_blit(&psx_spr_shop_star, 226, y - 4, 0, 0,
+                  psx_spr_shop_star.w, psx_spr_shop_star.h);
+        snprintf(line, sizeof line, "%d", k_tier_price[tier]);
         put_text(line, 246, y, C_GOLD);
     }
 
@@ -741,7 +761,7 @@ static void grant_card(int id) {
 
 static void buy(int pack) {
     const int tier = s_tier[pack];
-    const int price = k_packs[pack].base_price * k_tier_mult[tier];
+    const int price = k_tier_price[tier];
     build_pools();
     if (!s_pools_built || !s_pool_n[pack][tier]) {
         snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET");
@@ -904,6 +924,9 @@ void psx_card_shop_tick(void) {
     static uint32_t last_chips;
     const uint32_t chips = psx_mod_read_word(SHOP_CHIPS_ADDR);
     if (chips != last_chips) { last_chips = chips; s_dirty = 1; }
+    /* The rarity arrows blink like the password screen's. */
+    static unsigned anim_clk;
+    if (++anim_clk >= 16u) { anim_clk = 0; s_anim ^= 1; s_dirty = 1; }
 }
 
 /* ---- overlay contract ---------------------------------------------------- */
