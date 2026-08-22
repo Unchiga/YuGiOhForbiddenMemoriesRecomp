@@ -579,6 +579,9 @@ static int s_img_w, s_img_h;
 #define C_WHITE   0xFFF0F0F0u
 #define C_GREY    0xFFB0B4C0u
 #define C_RED     0xFFE06858u
+#define C_GREEN   0xFF6CD86Cu   /* uncommon */
+#define C_BLUE    0xFF6C9CF0u   /* rare (readable on the navy field)   */
+#define C_YELLOW  0xFFF0E048u   /* legendary */
 #define C_SEL     0xFF2A3454u
 
 static void px_fill(int x0, int y0, int w, int h, uint32_t c) {
@@ -714,8 +717,8 @@ static void draw_panel(void) {
         if (i == s_sel) px_fill(10, y - 3, PANEL_W - 20, 17, C_SEL);
         put_text(k_packs[i].name, 18, y, C_WHITE);
         put_text(k_tier_names[tier], 104, y,
-                 tier == 0 ? C_GREY : tier == 1 ? C_WHITE
-                 : tier == 2 ? C_GOLD : C_RED);
+                 tier == 0 ? C_WHITE : tier == 1 ? C_GREEN
+                 : tier == 2 ? C_BLUE : C_YELLOW);
         if (i == s_sel) {
             /* The password screen's digit arrows flanking the rarity,
              * alternating between the sheet's two animation frames the way
