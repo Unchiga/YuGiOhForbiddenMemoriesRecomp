@@ -35,7 +35,13 @@
  * the extra row and the count bump apply ONLY while the menu widget is
  * actually displaying OUR stream (its cursor points into our arena). If a
  * savestate restored the stock table mid-screen, the menu shows stock labels
- * and this module behaves as if absent until the next natural open. */
+ * and this module behaves as if absent until the next natural open.
+ *
+ * On CARD SHOP the shopkeeper first asks "What are you looking for?" in the
+ * game's own textbox: a second arena stream is repointed under a dead label
+ * table entry and the campaign dialog widget (SHOP_DLG_*) is started the
+ * same way the scene starts the greeting. The engine types it, waits, and
+ * dismisses on X natively; the pack panel opens on that dismissal. */
 
 #include "psx_card_shop.h"
 
@@ -61,6 +67,23 @@
 #define SHOP_LBL_TABLE    0x801C0000u   /* u16 stream offsets, id 17 = menu */
 #define SHOP_LBL_BASE     0x801B0000u
 #define SHOP_ARENA_OFF    0xFF80u       /* our stream in the bank's zeros   */
+#define SHOP_SAY_OFF      0xFFD8u       /* dialog stream, past the menu one */
+#define SHOP_SAY_ID       252u          /* dead table entry (offset 0; 143
+                                         * such entries measured live)      */
+
+/* The campaign dialog widget slot — the textbox the shopkeeper talks in.
+ * Measured live 2026-08-22 (greeting "Hello there!" = string id 1086):
+ *   +0  u32 stream cursor (the id resolver at 0x8003944C stores it)
+ *   +52 mode  byte: 0x0a dialog active, 0x02 idle
+ *   +53 phase byte: 0x80 start-pending, 0xc0 typing, 0xe0 done/waiting
+ *   +54 u16 string id (direct band: <0x500 = label-table index)
+ *   +56 pen x
+ * Writing id+mode+phase starts a line; the engine types it, shows the wait
+ * arrow, and its own X handler drops mode to 0x02. */
+#define SHOP_DLG_MODE   0x800EB12Cu
+#define SHOP_DLG_PHASE  0x800EB12Du
+#define SHOP_DLG_ID     0x800EB12Eu
+#define SHOP_DLG_PENX   0x800EB130u
 #define SHOP_CHIPS_ADDR   0x801D07E0u
 #define SHOP_SAVE_LIVE    0x801D0200u
 #define SHOP_SAVE_MIRROR  0x801D3200u
@@ -104,6 +127,19 @@ static const uint8_t k_menu_stream[] = {
     0xF8, 0x02, 0x14,  0x2A, 0x25, 0x18, 0x39, 0x25, 0x00,
                        0x1D, 0x23, 0x21, 0x2F,                   0xFE, /* LEAVE SHOP */
     0xFB, 0x80, 0x00, 0x00, 0x00, 0x00,
+};
+
+/* "What are you looking for?" — the shopkeeper's line when CARD SHOP is
+ * picked, in the game's frequency-ordered codes ('?' = 0x2E, decode table
+ * at 0x801D9000 maps it to Shift-JIS 0x8148). Plain glyphs, FF terminator:
+ * the dialog face needs no header. */
+static const uint8_t k_say_stream[] = {
+    0x22, 0x09, 0x03, 0x02, 0x00,                    /* What  */
+    0x03, 0x08, 0x01, 0x00,                          /* are   */
+    0x11, 0x04, 0x0D, 0x00,                          /* you   */
+    0x0A, 0x04, 0x04, 0x16, 0x05, 0x06, 0x10, 0x00,  /* looking */
+    0x13, 0x04, 0x08, 0x2E,                          /* for?  */
+    0xFF,
 };
 
 /* The shopkeeper screen opens its menu window with hardcoded geometry
@@ -179,6 +215,10 @@ static int      s_pull[SHOP_PULL_MAX];
 static int      s_pull_n;
 static char     s_msg[30];
 static uint16_t s_stock_entry;       /* table[17] before our repoint        */
+static int      s_say;               /* 0 idle, 1 kick pending, 2 line up   */
+static int      s_say_timer;         /* frames until the pending kick       */
+static uint16_t s_say_stock;         /* table[SHOP_SAY_ID] before repoint   */
+static int      s_say_stock_ok;
 static unsigned s_buys, s_denied, s_opens, s_remaps;
 
 /* Card pools per (pack, tier), built once card_db + drop scarcity are up. */
@@ -293,6 +333,47 @@ static void assert_stream(void) {
         if (cur) s_stock_entry = cur;
         psx_mod_write_half(SHOP_LBL_TABLE + 17u * 2u, SHOP_ARENA_OFF);
     }
+    for (unsigned i = 0; i < sizeof k_say_stream; i++) {
+        const uint32_t a = SHOP_LBL_BASE + SHOP_SAY_OFF + i;
+        if (psx_mod_read_byte(a) != k_say_stream[i])
+            psx_mod_write_byte(a, k_say_stream[i]);
+    }
+    const uint16_t say = psx_mod_read_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u);
+    if (say != SHOP_SAY_OFF) {
+        s_say_stock = say; s_say_stock_ok = 1;   /* stock is 0 (dead entry) */
+        psx_mod_write_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u, SHOP_SAY_OFF);
+    }
+}
+
+/* ---- the shopkeeper's line ------------------------------------------------ */
+static int say_line_ours(void) {
+    return psx_mod_read_byte(SHOP_DLG_MODE) == 0x0Au &&
+           psx_mod_read_half(SHOP_DLG_ID) == (uint16_t)SHOP_SAY_ID;
+}
+
+static void say_kick(void) {
+    psx_mod_write_byte(SHOP_DLG_PENX, 0);
+    psx_mod_write_byte(SHOP_DLG_ID,     (uint8_t)SHOP_SAY_ID);
+    psx_mod_write_byte(SHOP_DLG_ID + 1, 0);
+    psx_mod_write_byte(SHOP_DLG_MODE,  0x0A);
+    psx_mod_write_byte(SHOP_DLG_PHASE, 0x80);
+}
+
+/* The engine's own wind-down entry state, measured at the natural greeting
+ * dismiss: id 0, pen 0, phase 0x80, mode 0x02 makes it decode the empty
+ * string, which clears the glyph display list and relinks the widget's
+ * draw nodes. Without this, dismissed text stays painted in the box. */
+static void say_winddown(void) {
+    psx_mod_write_byte(SHOP_DLG_ID,     0);
+    psx_mod_write_byte(SHOP_DLG_ID + 1, 0);
+    psx_mod_write_byte(SHOP_DLG_PENX,   0);
+    psx_mod_write_byte(SHOP_DLG_PHASE,  0x80);
+    psx_mod_write_byte(SHOP_DLG_MODE,   0x02);
+}
+
+static void say_reset(void) {
+    if (s_say && say_line_ours()) say_winddown();
+    s_say = 0;
 }
 
 /* ---- canvas -------------------------------------------------------------- */
@@ -477,6 +558,10 @@ static void restore_stock_code(void) {
     if (s_stock_entry &&
         psx_mod_read_half(SHOP_LBL_TABLE + 17u * 2u) == SHOP_ARENA_OFF)
         psx_mod_write_half(SHOP_LBL_TABLE + 17u * 2u, s_stock_entry);
+    if (s_say_stock_ok &&
+        psx_mod_read_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u) == SHOP_SAY_OFF)
+        psx_mod_write_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u, s_say_stock);
+    say_reset();
 }
 
 void psx_card_shop_tick(void) {
@@ -485,6 +570,7 @@ void psx_card_shop_tick(void) {
     if (gate != s_gate) { s_gate = gate; s_dirty = 1; }
     if (!gate) {
         if (s_open) { s_open = 0; s_dirty = 1; }
+        say_reset();
         s_native = 0;
         return;
     }
@@ -508,6 +594,7 @@ void psx_card_shop_tick(void) {
          * taken before this feature). Behave as absent: no fifth row, no
          * remap, stock count. */
         if (s_open) { s_open = 0; s_dirty = 1; }
+        say_reset();
         return;
     }
 
@@ -517,25 +604,60 @@ void psx_card_shop_tick(void) {
     if (!s_open) {
         static int prev_cursor = -1;
         if (cursor != prev_cursor) { prev_cursor = cursor; s_dirty = 1; }
-        if (np & SHOP_NP_CROSS) {
-            if (cursor == SHOP_ROW) {
-                /* CARD SHOP: with the dispatch chain shifted, the game's own
-                 * default case handles this press (dialog closes, nothing
-                 * else). The panel opens on top; on close the player talks
-                 * to the shopkeeper again, exactly like leaving any of the
-                 * game's own sub-screens. */
+        /* A savestate can restore RAM with our line mid-display while this
+         * module's state starts over: adopt it instead of orphaning it. */
+        if (s_say == 0 && say_line_ours()) s_say = 2;
+        if (s_say == 1) {
+            /* One-tick grace so the game's accept default (a no-op for the
+             * CARD SHOP row) fully runs before the widget is touched. */
+            psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)SHOP_ROW);
+            if (--s_say_timer <= 0) { say_kick(); s_say = 2; s_dirty = 1; }
+            return;
+        }
+        if (s_say == 2) {
+            /* The line is up and modal. Park the cursor on CARD SHOP - the
+             * shifted chain's no-op default - so the dismiss X, which the
+             * menu ALSO receives (measured: one press once opened the SAVE
+             * dialog, another dispatched LEAVE SHOP), lands on nothing. Eat
+             * everything except that X: it is the dialog's own dismiss. */
+            psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)SHOP_ROW);
+            const uint16_t eat = (uint16_t)(SHOP_NP_UP | SHOP_NP_DOWN |
+                                            SHOP_NP_LEFT | SHOP_NP_RIGHT |
+                                            SHOP_NP_CIRCLE);
+            if (np & eat)
+                psx_mod_write_half(SHOP_PAD_NEW_ADDR, (uint16_t)(np & ~eat));
+            if (psx_mod_read_byte(SHOP_DLG_MODE) != 0x0Au) {
+                /* Dismissed: the engine's X handler dropped the arrow and
+                 * the mode; finish its teardown, then open the panel. */
+                say_winddown();
+                s_say = 0;
                 s_open = 1; s_sel = 0; s_msg[0] = 0; s_pull_n = 0; s_opens++;
                 s_rng ^= psx_mod_read_word(0x8009B0C4u) * 2654435761u;
                 s_dirty = 1;
+            }
+            return;
+        }
+        if (np & SHOP_NP_CROSS) {
+            if (cursor == SHOP_ROW) {
+                /* CARD SHOP: with the dispatch chain shifted, the game's own
+                 * default case handles this press (nothing). The shopkeeper
+                 * asks his line first; the panel opens when it is dismissed
+                 * (the s_say == 2 branch above). */
+                s_say = 1; s_say_timer = 2; s_dirty = 1;
             }
             /* Rows 2..4 dispatch natively through the patched chain. */
         }
         return;
     }
 
-    /* Panel open: pin the game's cursor on the no-op index and eat everything
-     * we act on — O would otherwise leave the whole shop screen. */
-    psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)(SHOP_ROWS - 1));
+    /* Panel open: pin the game's cursor on CARD SHOP — the shifted chain's
+     * no-op default — and eat everything we act on. The eat rewrite loses
+     * the race against the game's own dispatch (measured: it samples at the
+     * accept instant), and with the say-line flow the menu is X-live again
+     * under the panel, so a BUY press leaks into the chain; pinned at 4 it
+     * dispatched LEAVE SHOP and dumped the player on the map mid-purchase.
+     * Pinned here it lands on the row that does nothing. */
+    psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)SHOP_ROW);
     uint16_t eat = 0;
     if (np & SHOP_NP_UP)    { s_sel = (s_sel + SHOP_PACKS - 1) % SHOP_PACKS; eat |= SHOP_NP_UP; s_dirty = 1; }
     if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; s_dirty = 1; }
@@ -592,6 +714,7 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         "\"enabled\":%d,\"gate\":%d,\"native\":%d,\"open\":%d,\"sel\":%d,"
         "\"tier\":%d,\"count_byte\":%u,\"cursor\":%u,\"chips\":%u,"
         "\"table17\":%u,\"stock_entry\":%u,\"widget_cur\":%u,"
+        "\"say\":%d,\"say_table\":%u,\"dlg_mode\":%u,\"dlg_id\":%u,"
         "\"pools\":[%d,%d,%d,%d],"
         "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u",
         t_state, t_menu, t_sig,
@@ -603,6 +726,10 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         (unsigned)psx_mod_read_half(SHOP_LBL_TABLE + 17u * 2u),
         (unsigned)s_stock_entry,
         (unsigned)psx_mod_read_word(SHOP_WIDGET1),
+        s_say,
+        (unsigned)psx_mod_read_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u),
+        (unsigned)psx_mod_read_byte(SHOP_DLG_MODE),
+        (unsigned)psx_mod_read_half(SHOP_DLG_ID),
         s_pool_n[0][0] + s_pool_n[0][1] + s_pool_n[0][2] + s_pool_n[0][3],
         s_pool_n[1][0] + s_pool_n[1][1] + s_pool_n[1][2] + s_pool_n[1][3],
         s_pool_n[2][0] + s_pool_n[2][1] + s_pool_n[2][2] + s_pool_n[2][3],
