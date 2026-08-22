@@ -686,6 +686,26 @@ static int put_text(const char *s, int x, int y, uint32_t tint) {
     return x;
 }
 
+/* Advance-width of a string without drawing it, mirroring put_text's
+ * metrics, so variable-width labels can be centred in a column. */
+static int text_width(const char *s) {
+    const PsxFusionFont *f = &psx_fusion_font;
+    int x = 0;
+    for (; *s; s++) {
+        if (*s == ' ') { x += 4; continue; }
+        const int cell = psx_fusion_font_cell((unsigned char)*s);
+        if (cell < 0) { x += 5; continue; }
+        const uint8_t *g = f->px + (size_t)cell * (size_t)f->w * (size_t)f->h;
+        int hi = 0;
+        for (int yy = 0; yy < f->h; yy++)
+            for (int xx = 0; xx < f->w; xx++)
+                if (g[yy * f->w + xx] && xx > hi) hi = xx;
+        const int w = hi + 1;
+        x += (w > 2 ? w : 4) + 1;
+    }
+    return x;
+}
+
 /* Three stacked password-screen boxes: header (title + starchip readout),
  * the pack list, and the message/pull box. */
 #define BOX_A_Y 0
@@ -716,7 +736,10 @@ static void draw_panel(void) {
         const int tier = s_tier[i];
         if (i == s_sel) px_fill(10, y - 3, PANEL_W - 20, 17, C_SEL);
         put_text(k_packs[i].name, 18, y, C_WHITE);
-        put_text(k_tier_names[tier], 104, y,
+        /* Rarity centred between the arrow columns (arrows at 94 and 194,
+         * so the span between them is 110..194). */
+        put_text(k_tier_names[tier],
+                 152 - text_width(k_tier_names[tier]) / 2, y,
                  tier == 0 ? C_WHITE : tier == 1 ? C_GREEN
                  : tier == 2 ? C_BLUE : C_YELLOW);
         if (i == s_sel) {
@@ -727,13 +750,13 @@ static void draw_panel(void) {
              * with reversed UVs) and so do we. */
             const PsxSprite *ar = s_anim ? &psx_spr_shop_arrow2
                                          : &psx_spr_shop_arrow;
-            skin_blit_mirror(ar, 84, y - 3);
-            skin_blit(ar, 184, y - 3, 0, 0, ar->w, ar->h);
+            skin_blit_mirror(ar, 94, y - 3);
+            skin_blit(ar, 194, y - 3, 0, 0, ar->w, ar->h);
         }
-        skin_blit(&psx_spr_shop_star, 226, y - 4, 0, 0,
+        skin_blit(&psx_spr_shop_star, 234, y - 4, 0, 0,
                   psx_spr_shop_star.w, psx_spr_shop_star.h);
         snprintf(line, sizeof line, "%d", k_tier_price[tier]);
-        put_text(line, 246, y, C_GOLD);
+        put_text(line, 254, y, C_GOLD);
     }
 
     if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
