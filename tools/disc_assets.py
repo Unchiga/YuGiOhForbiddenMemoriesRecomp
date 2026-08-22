@@ -84,8 +84,17 @@ MANIFEST = {
     # Six identical copies live on disc (one per campaign room); this is
     # the first.
     'clut_shop':   dict(x=256, y=242, w=32,  h=1,  off=32763392),
-    # The starchip: texpage (704,0) 4bpp, uv (80,128), 16x16.
+    # The starchip sheet pieces: texpage (704,0) 4bpp. star uv (80,128),
+    # circle button uv (64,128), digit right-arrow uv (96,160); the CLUT
+    # row at (512,252) carries all three palettes (512=buttons, 528=star,
+    # 544=arrows).
+    # (xbtn's disc copy is one row MORE complete than the snapshot: the
+    # sheet's first VRAM row was clobbered by an overlapping upload, and
+    # the disc row 0 is the button's real top edge - 15/16 rows verify.)
     'star':        dict(x=724, y=128, w=4,   h=16, off=32567336),
+    'xbtn':        dict(x=708, y=128, w=4,   h=16, off=32567304),
+    'obtn':        dict(x=720, y=128, w=4,   h=16, off=32567328),
+    'arrow':       dict(x=728, y=160, w=4,   h=16, off=32571440),
     'clut_star':   dict(x=512, y=252, w=64,  h=1,  off=32618496),
 }
 
@@ -187,6 +196,9 @@ def emit_shop_skin(vram, out_path, sprite_extract):
         ('shop_right',  sprite_extract.decode(vram, AX + 8,  280,   8, 64, 4, A)),
         ('shop_field',  sprite_extract.decode(vram, AX + 16, 280, 112, 72, 4, B)),
         ('shop_star',   sprite_extract.decode(vram, 704 * 4 + 80, 128, 16, 16, 4, S)),
+        ('shop_xbtn',   sprite_extract.decode(vram, 704 * 4 + 16, 128, 16, 16, 4, (512, 252))),
+        ('shop_obtn',   sprite_extract.decode(vram, 704 * 4 + 64, 128, 16, 16, 4, (512, 252))),
+        ('shop_arrow',  sprite_extract.decode(vram, 704 * 4 + 96, 160, 16, 16, 4, (544, 252))),
     ]
     body = []
     tail = []

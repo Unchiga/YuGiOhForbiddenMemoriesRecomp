@@ -5,8 +5,11 @@
  * Pieces, as the password screen itself assembles a box:
  *   top / bot    128x8 border strips, corners included, tile horizontally
  *   left / right 8x64 side edges, tile vertically between the strips
- *   field        112x72 mottled navy interior, tiles both ways
+ *   field        112x72 mottled navy interior, stretched to fit
  *   star         16x16 starchip, the STARCHIP readout's own sprite
+ *   xbtn / obtn  16x16 cross and circle buttons from the OK/END row
+ *   arrow        16x16 right-pointing digit arrow (mirror it for left,
+ *                the way the screen itself does)
  */
 #ifndef PSX_SHOP_SKIN_H
 #define PSX_SHOP_SKIN_H
@@ -23,6 +26,9 @@ extern const PsxSprite psx_spr_shop_left;
 extern const PsxSprite psx_spr_shop_right;
 extern const PsxSprite psx_spr_shop_field;
 extern const PsxSprite psx_spr_shop_star;
+extern const PsxSprite psx_spr_shop_xbtn;
+extern const PsxSprite psx_spr_shop_obtn;
+extern const PsxSprite psx_spr_shop_arrow;
 
 #ifdef __cplusplus
 }

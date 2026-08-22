@@ -95,6 +95,23 @@
  * highlight behind the pack panel. An entry hook fires exactly before that
  * first read, which is the only race-free place to take the arrows away. */
 #define SHOP_MENU_NAV_FN 0x8003700Cu
+
+/* The game's own sound-effect dispatcher, play_se(a0 = id): found via the
+ * cursor driver's jal at 0x800370E8 (it plays id 6 on every menu step) and
+ * confirmed with fntrace. Ids captured live 2026-08-22:
+ *   6    the menu cursor tick (every campaign menu move)
+ *   9    the deck builder's "nothing here" thunk (X on a blank slot)
+ *   0x30 the password screen's reward chime (the accept press also plays
+ *        0x0C first; the chime is the part that reads as "purchased")
+ * Calls are made from the driver-entry hook - guest context - with the
+ * card_drops $ra rule, around a full CPUState snapshot so the driver call
+ * in flight is untouched. SHOP_SE_RET is the driver's own return site for
+ * its play_se call, i.e. a real post-call address. */
+#define SHOP_SE_FN      0x8003FEE0u
+#define SHOP_SE_RET     0x800370ECu
+#define SHOP_SE_CURSOR  0x06u
+#define SHOP_SE_DENY    0x09u
+#define SHOP_SE_BUY     0x30u
 #define SHOP_CHIPS_ADDR   0x801D07E0u
 #define SHOP_SAVE_LIVE    0x801D0200u
 #define SHOP_SAVE_MIRROR  0x801D3200u
@@ -188,23 +205,73 @@ static const uint8_t k_say_stream[] = {
  * multiplies the price and narrows the pool to scarcer cards. */
 typedef struct { const char *name; int base_price; int cards; } ShopPack;
 static const ShopPack k_packs[] = {
-    { "MONSTER", 20, 5 },
-    { "MAGIC",   40, 5 },
-    { "EQUIP",   60, 5 },
-    { "TRAP",    80, 5 },
+    { "MONSTER", 20, 3 },
+    { "MAGIC",   40, 3 },
+    { "EQUIP",   60, 3 },
+    { "TRAP",    80, 3 },
 };
 #define SHOP_PACKS 4
 #define SHOP_TIERS 4
 static const char *const k_tier_names[SHOP_TIERS] =
-    { "NORMAL", "RARE", "SUPER", "ULTRA" };
+    { "COMMON", "UNCOMMON", "RARE", "LEGENDARY" };
 static const int k_tier_mult[SHOP_TIERS] = { 1, 2, 4, 8 };
-/* Rarity = drop scarcity: how many of the 39 duelists drop the card at all.
- * ULTRA (<=1) includes the 82 cards nobody drops — the set's true chase
- * cards, otherwise reachable only by password. Monsters also gain an ATK
- * floor per tier so a dear pack cannot pull a 300 ATK filler. */
-static const int k_tier_droppers[SHOP_TIERS] = { 255, 8, 3, 1 };
-static const int k_tier_atk_floor[SHOP_TIERS] = { 0, 1000, 1600, 2000 };
 #define SHOP_PULL_MAX 5
+
+/* Every card lands in exactly ONE rarity, so everything is obtainable.
+ * Placements the user pinned by name; matched against the game's own
+ * decoded names so no id table can rot. */
+static const char *const k_force_legendary[] = {
+    "Exodia the Forbidden One",      /* the win condition itself */
+    "Swords of Revealing Light",
+    "Raigeki",
+    "Megamorph",
+    "Widespread Ruin",               /* judgment: the nastiest trap in FM */
+};
+static const char *const k_force_rare[] = {
+    "Crush Card",
+    "Bright Castle",
+    "Dragon Capture Jar",
+    /* judgment: the limbs are chase cards but not the win itself */
+    "Right Arm of the Forbidden One",
+    "Left Arm of the Forbidden One",
+    "Right Leg of the Forbidden One",
+    "Left Leg of the Forbidden One",
+    "Dark Hole",
+};
+
+static int name_in(const char *nm, const char *const *list, int n) {
+    for (int i = 0; i < n; i++) {
+        const char *a = nm, *b = list[i];
+        while (*a && *b) {
+            char ca = *a, cb = *b;
+            if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+            if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+            if (ca != cb) break;
+            a++; b++;
+        }
+        if (!*a && !*b) return 1;
+    }
+    return 0;
+}
+#define NAME_IN(nm, list) name_in(nm, list, (int)(sizeof list / sizeof *list))
+
+/* Judgment tiers: monsters by muscle (every monster over 3000 ATK is
+ * LEGENDARY per the spec), everything else by how hard the game guards it
+ * (droppers = how many of the 39 duelists ever drop it; 0 means password-
+ * only in the stock game - the true chase cards, bumped a tier). */
+static int card_rarity(int id, int atk, int type, int droppers) {
+    const char *nm = psx_card_db_name(id);
+    if (NAME_IN(nm, k_force_legendary)) return 3;
+    if (NAME_IN(nm, k_force_rare))      return 2;
+    if (type <= 19) {
+        int r = atk > 3000 ? 3 : atk >= 2500 ? 2 : atk >= 1600 ? 1 : 0;
+        if (droppers == 0 && r < 2) r++;
+        return r;
+    }
+    if (droppers == 0) return 2;
+    if (droppers <= 3) return 1;
+    return 0;
+}
 
 /* Type codes (psx_card_db TYPE_NAMES order): 0..19 monsters, then: */
 #define TYPE_MAGIC  20
@@ -281,11 +348,8 @@ static void build_pools(void) {
         else if (type == TYPE_EQUIP)                        pack = 2;
         else if (type == TYPE_TRAP)                         pack = 3;
         else continue;
-        for (int t = 0; t < SHOP_TIERS; t++) {
-            if (droppers[id] > k_tier_droppers[t]) continue;
-            if (pack == 0 && atk < k_tier_atk_floor[t]) continue;
-            s_pool[pack][t][s_pool_n[pack][t]++] = (uint16_t)id;
-        }
+        const int t = card_rarity(id, atk, type, droppers[id]);
+        s_pool[pack][t][s_pool_n[pack][t]++] = (uint16_t)id;
     }
     /* An empty pool falls back down a tier rather than bricking a buy. */
     for (int p = 0; p < SHOP_PACKS; p++)
@@ -435,13 +499,37 @@ static void say_reset(void) {
     s_say = 0;
 }
 
+/* Sound requests from the tick, played from the hook below: the tick is a
+ * host frame hook with no guest context, while the driver entry has the
+ * live CPUState the nested call needs. */
+static uint8_t s_sfx_q[4];
+static int     s_sfx_n;
+static void sfx_req(uint8_t id) {
+    if (s_sfx_n < (int)sizeof s_sfx_q) s_sfx_q[s_sfx_n++] = id;
+}
+
 /* Entry hook on the menu cursor driver: while the panel (or the say line)
  * owns input, take UP/DOWN out of the new-press mask BEFORE the driver's
  * own read of it, and latch them for the panel. The frame-hook eat runs a
- * frame too late for this driver (see SHOP_MENU_NAV_FN above). */
+ * frame too late for this driver (see SHOP_MENU_NAV_FN above).
+ * Also the shop's speaker: queued sounds go through the game's own
+ * play_se here, in guest context, snapshot/restore around the nested call
+ * so the driver call in flight is untouched (the card_drops $ra rule). */
 void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
-    (void)cpu; (void)address;
-    if (!s_enabled || (!s_open && !s_say)) return;
+    (void)address;
+    if (!s_enabled) { s_sfx_n = 0; return; }
+    if (s_sfx_n) {
+        CPUState saved = *cpu;
+        for (int i = 0; i < s_sfx_n; i++) {
+            cpu->pc = 0;
+            cpu->gpr[4] = s_sfx_q[i];
+            cpu->gpr[31] = SHOP_SE_RET;
+            psx_dispatch_call(cpu, SHOP_SE_FN, SHOP_SE_RET);
+        }
+        *cpu = saved;
+        s_sfx_n = 0;
+    }
+    if (!s_open && !s_say) return;
     const uint16_t np = psx_mod_read_half(SHOP_PAD_NEW_ADDR);
     const uint16_t arrows = (uint16_t)(SHOP_NP_UP | SHOP_NP_DOWN);
     if (np & arrows) {
@@ -493,6 +581,17 @@ static void skin_blit(const PsxSprite *s, int dx, int dy,
             const int px = dx + x, py = dy + y;
             if (px < 0 || py < 0 || px >= CV_W || py >= CV_H) continue;
             const uint32_t c = s->px[(sy + y) * s->w + (sx + x)];
+            if (c >> 24) s_px[py * CV_W + px] = c;
+        }
+}
+
+static void skin_blit_mirror(const PsxSprite *s, int dx, int dy) {
+    if (!s->px) return;
+    for (int y = 0; y < s->h; y++)
+        for (int x = 0; x < s->w; x++) {
+            const int px = dx + x, py = dy + y;
+            if (px < 0 || py < 0 || px >= CV_W || py >= CV_H) continue;
+            const uint32_t c = s->px[y * s->w + (s->w - 1 - x)];
             if (c >> 24) s_px[py * CV_W + px] = c;
         }
 }
@@ -583,7 +682,7 @@ static void draw_panel(void) {
     skin_box(0, BOX_B_Y, PANEL_W, BOX_B_H);
     skin_box(0, BOX_C_Y, PANEL_W, BOX_C_H);
 
-    put_text("CARD SHOP", 16, BOX_A_Y + 15, C_GOLD);
+    put_text("Buy Card Packs", 16, BOX_A_Y + 15, C_GOLD);
     skin_blit(&psx_spr_shop_star, 206, BOX_A_Y + 12, 0, 0,
               psx_spr_shop_star.w, psx_spr_shop_star.h);
     char line[36];
@@ -601,6 +700,14 @@ static void draw_panel(void) {
         put_text(k_tier_names[tier], 128, y,
                  tier == 0 ? C_GREY : tier == 1 ? C_WHITE
                  : tier == 2 ? C_GOLD : C_RED);
+        if (i == s_sel) {
+            /* The password screen's digit arrows flanking the rarity: the
+             * sheet only carries the right-pointing one; the game mirrors
+             * it for left (poly with reversed UVs) and so do we. */
+            skin_blit_mirror(&psx_spr_shop_arrow, 108, y - 3);
+            skin_blit(&psx_spr_shop_arrow, 214, y - 3, 0, 0,
+                      psx_spr_shop_arrow.w, psx_spr_shop_arrow.h);
+        }
         snprintf(line, sizeof line, "%d",
                  k_packs[i].base_price * k_tier_mult[tier]);
         put_text(line, 246, y, C_GOLD);
@@ -612,12 +719,15 @@ static void draw_panel(void) {
         snprintf(line, sizeof line, "%.30s", nm ? nm : "?");
         put_text(line, 20, BOX_C_Y + 19 + i * 11, C_WHITE);
     }
-    if (s_pull_n > 3) {
-        snprintf(line, sizeof line, "+%d MORE IN TRUNK", s_pull_n - 3);
-        put_text(line, 20, BOX_C_Y + 19 + 3 * 11, C_GREY);
+    if (!s_pull_n && !s_msg[0]) {
+        /* The password screen's own OK/END buttons, relabelled. */
+        skin_blit(&psx_spr_shop_xbtn, 88, BOX_C_Y + 24, 0, 0,
+                  psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
+        put_text("BUY", 108, BOX_C_Y + 28, C_WHITE);
+        skin_blit(&psx_spr_shop_obtn, 160, BOX_C_Y + 24, 0, 0,
+                  psx_spr_shop_obtn.w, psx_spr_shop_obtn.h);
+        put_text("CLOSE", 180, BOX_C_Y + 28, C_WHITE);
     }
-    if (!s_pull_n && !s_msg[0])
-        put_text("X BUY   <> RARITY   O CLOSE", 62, BOX_C_Y + 28, C_GREY);
 }
 
 /* ---- purchase ------------------------------------------------------------ */
@@ -635,17 +745,18 @@ static void buy(int pack) {
     build_pools();
     if (!s_pools_built || !s_pool_n[pack][tier]) {
         snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET");
-        s_pull_n = 0; s_denied++; return;
+        s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     if (!save_live()) {
         snprintf(s_msg, sizeof s_msg, "NO SAVE LOADED");
-        s_pull_n = 0; s_denied++; return;
+        s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     const uint32_t chips = psx_mod_read_word(SHOP_CHIPS_ADDR);
     if (chips < (uint32_t)price) {
         snprintf(s_msg, sizeof s_msg, "NOT ENOUGH CHIPS");
-        s_pull_n = 0; s_denied++; return;
+        s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
+    sfx_req(SHOP_SE_BUY);
     psx_mod_write_word(SHOP_CHIPS_ADDR, chips - (uint32_t)price);
     s_pull_n = 0;
     for (int i = 0; i < k_packs[pack].cards && i < SHOP_PULL_MAX; i++) {
@@ -782,10 +893,10 @@ void psx_card_shop_tick(void) {
      * Pinned here it lands on the row that does nothing. */
     psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)SHOP_ROW);
     uint16_t eat = 0;
-    if (np & SHOP_NP_UP)    { s_sel = (s_sel + SHOP_PACKS - 1) % SHOP_PACKS; eat |= SHOP_NP_UP; s_dirty = 1; }
-    if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; s_dirty = 1; }
-    if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; s_dirty = 1; }
-    if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; s_dirty = 1; }
+    if (np & SHOP_NP_UP)    { s_sel = (s_sel + SHOP_PACKS - 1) % SHOP_PACKS; eat |= SHOP_NP_UP; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+    if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+    if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+    if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
     if (np & SHOP_NP_CROSS) { buy(s_sel); eat |= SHOP_NP_CROSS; s_dirty = 1; }
     if (np & SHOP_NP_CIRCLE){ s_open = 0; eat |= SHOP_NP_CIRCLE; s_dirty = 1; }
     if (eat)
