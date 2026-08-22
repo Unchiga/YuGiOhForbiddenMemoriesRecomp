@@ -495,6 +495,14 @@ void psx_card_shop_tick(void) {
 
     const int native = widget_on_our_stream();
     if (native != s_native) { s_native = native; s_dirty = 1; }
+    /* The header carries count=5, but the init's header read lands on a
+     * different stream byte depending on how the greeting was skipped
+     * (observed live: our five labels drawn, count byte 4, LEAVE SHOP
+     * unreachable). The cursor driver reads this byte LIVE, so asserting it
+     * here fixes navigation regardless of what the init sampled. Only 4->5:
+     * the menu's done-path legitimately parks other values here. */
+    if (native && psx_mod_read_byte(SHOP_COUNT_ADDR) == 4u)
+        psx_mod_write_byte(SHOP_COUNT_ADDR, (uint8_t)SHOP_ROWS);
     if (!native) {
         /* Menu is showing stock labels (pre-repoint open, or a savestate
          * taken before this feature). Behave as absent: no fifth row, no
