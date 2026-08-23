@@ -451,18 +451,20 @@ static void handle_card_drops_state(int id, const char *json)
 {
     (void)json;
     extern void psx_card_drops_debug(int *, int *, uint32_t *, int *, int *,
-                                     int *, int *, int *, int *);
+                                     int *, int *, int *, int *, int *, int *);
     int setting = 0, calls = 0, tier = -1, granted = 0, bails = 0;
     int new_count = 0, chest_builds = 0, overlays = 0;
+    int page_duel = 0, awarded_total = 0;
     uint32_t last_ra = 0;
     psx_card_drops_debug(&setting, &calls, &last_ra, &tier, &granted, &bails,
-                         &new_count, &chest_builds, &overlays);
+                         &new_count, &chest_builds, &overlays,
+                         &page_duel, &awarded_total);
     send_fmt("{\"id\":%d,\"ok\":true,\"setting\":%d,\"calls\":%d,"
              "\"last_ra\":\"0x%08X\",\"last_tier\":%d,\"granted\":%d,"
              "\"bails\":%d,\"new_count\":%d,\"chest_builds\":%d,"
-             "\"overlays\":%d}",
+             "\"overlays\":%d,\"page_duel\":%d,\"awarded_total\":%d}",
              id, setting, calls, last_ra, tier, granted, bails,
-             new_count, chest_builds, overlays);
+             new_count, chest_builds, overlays, page_duel, awarded_total);
 }
 
 #ifndef PSX_NO_DEBUG_TOOLS

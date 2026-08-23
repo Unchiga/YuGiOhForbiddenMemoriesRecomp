@@ -51,9 +51,13 @@ int  psx_card_drops_set(int drops);
 
 /* Why the mod did or did not add cards (`card_drops_state`). Any pointer
  * may be NULL. */
+/* page_duel / awarded_total describe the DROPS RESULTS PAGE's record: it is
+ * scoped to one results screen, so a duel that awarded nothing (a loss - the
+ * roll is win-only) cannot show the previous duel's cards. */
 void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
                           int *last_tier, int *granted, int *bails,
-                          int *new_count, int *chest_builds, int *overlays);
+                          int *new_count, int *chest_builds, int *overlays,
+                          int *page_duel, int *awarded_total);
 
 /* This duel's awards as JSON, ordered the way the results page lists them:
  * cards the player owned none of first, then by card id. Returns the DISTINCT

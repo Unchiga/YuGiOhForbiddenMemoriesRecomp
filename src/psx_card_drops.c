@@ -167,7 +167,8 @@ static int      s_cd_overlays;     /* overlay passes actually written */
 void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
                                      int *last_tier, int *granted, int *bails,
                                      int *new_count, int *chest_builds,
-                                     int *overlays) {
+                                     int *overlays, int *page_duel,
+                                     int *awarded_total) {
     if (setting)      *setting      = g_card_drops;
     if (calls)        *calls        = s_cd_calls;
     if (last_ra)      *last_ra      = s_cd_last_ra;
@@ -177,6 +178,8 @@ void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
     if (new_count)    *new_count    = s_cd_new_distinct;
     if (chest_builds) *chest_builds = s_cd_chest_builds;
     if (overlays)     *overlays     = s_cd_overlays;
+    if (page_duel)    *page_duel    = s_cd_page_duel;
+    if (awarded_total) *awarded_total = s_cd_awarded_total;
 }
 
 /* This duel's award list, sorted the way the results page shows it: cards the
@@ -772,7 +775,10 @@ void psx_card_drops_tick(void) {
         stale++;
         /* The results screen is gone: this duel's card record must not
          * survive into the next duel's results (see s_cd_page_duel). */
-        if (stale == 64 && s_cd_page_duel) {
+        /* Threshold, not equality: `stale` saturates at its cap, so a record
+         * created while it already sat there (or any time the counter had
+         * run past the mark) would never have been cleared. */
+        if (stale >= 64 && s_cd_page_duel) {
             s_cd_page_duel = 0;
             s_cd_awarded_total = 0;
             memset(s_cd_copies_this_duel, 0, sizeof s_cd_copies_this_duel);

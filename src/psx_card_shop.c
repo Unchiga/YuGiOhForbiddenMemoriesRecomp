@@ -995,16 +995,25 @@ static void draw_panel(void) {
 
     if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
     if (s_ceremony) {
-        /* Ceremony hints on the header line: X flips cards during the
-         * reveal; once all are open, TRIANGLE views the picked one. */
-        if (s_shown >= s_pull_n) {
-            skin_blit(&psx_spr_shop_tbtn, 150, BOX_C_Y + 4, 0, 0,
-                      psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
-            put_text("View", 168, BOX_C_Y + 8, C_WHITE);
-        }
-        skin_blit(&psx_spr_shop_xbtn, 206, BOX_C_Y + 4, 0, 0,
+        /* Button hints share the header line with the short "RESULTS:"
+         * label, right-aligned: laid out from the right edge backwards
+         * because the hint set changes between the reveal and browse
+         * phases. (With the old "LEGENDARY MONSTER:" header there was no
+         * room here and the triangle button sat on top of the text.) */
+        const int hy = BOX_C_Y + 4;
+        int x = PANEL_W - 14;
+        x -= text_width("Continue");
+        put_text("Continue", x, hy + 4, C_WHITE);
+        x -= psx_spr_shop_xbtn.w + 2;
+        skin_blit(&psx_spr_shop_xbtn, x, hy, 0, 0,
                   psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
-        put_text("Continue", 224, BOX_C_Y + 8, C_WHITE);
+        if (s_shown >= s_pull_n) {
+            x -= 12 + text_width("View");
+            put_text("View", x, hy + 4, C_WHITE);
+            x -= psx_spr_shop_tbtn.w + 2;
+            skin_blit(&psx_spr_shop_tbtn, x, hy, 0, 0,
+                      psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
+        }
     }
     const int shown = s_ceremony ? s_shown : s_pull_n;
     for (int i = 0; i < shown && i < 3; i++) {
@@ -1056,8 +1065,10 @@ static void buy(int pack) {
         s_award_q[s_award_n++] = (uint16_t)id;
         s_pull[s_pull_n++] = id;
     }
-    snprintf(s_msg, sizeof s_msg, "%s %s:",
-             k_tier_names[tier], k_packs[pack].name);
+    /* Short label: the rarity and pack are both still on screen in the
+     * highlighted row above, and the room this leaves on the header line
+     * is what lets the button hints share it. */
+    snprintf(s_msg, sizeof s_msg, "RESULTS:");
     /* The pack-open ceremony: the first card is on the table already;
      * every X flips the next, then the list can be browsed and viewed. */
     s_ceremony = 1;
