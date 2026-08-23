@@ -1,5 +1,52 @@
 # Release notes
 
+## 0.3.2
+
+Extract this over your existing install as usual. Saves and savestates from
+0.3.1 are unaffected.
+
+### New: game speed that keeps the music in tune — `GAME → SPEED`
+
+Speed up or slow down the game **without the audio changing pitch**. The
+speed control scales the frame pacer and the console's video timing
+together, so the sound hardware's own clock never moves: music and effects
+play at their proper pitch whether you are running at half speed or double.
+Handy for grinding drops at speed, or slowing a duel down to read what the
+opponent just did.
+
+### Improved: sound effects respond faster
+
+The delay between pressing a button and hearing the game answer is down
+from roughly **170 ms to about 60 ms**. Menus feel considerably crisper.
+
+### Fixed: CARD DROPS listed the previous duel's cards after a loss
+
+The extra results page describes what a duel awarded, and a duel you LOSE
+awards nothing — but the page kept showing the cards from the last duel you
+won. It now forgets a duel's cards once you leave its results screen, so a
+loss shows nothing. The chest's "New!" marking is unaffected.
+
+### New, and unfinished: CARD SHOP — `MODS → CARD SHOP WIP`
+
+**Off by default, and marked WIP for a reason: it is still being built.**
+Turn it on and the shopkeeper's menu grows a fifth row, CARD SHOP, that
+buys card packs with your starchips.
+
+What is there today: the shopkeeper asks what you are looking for in his
+own textbox; four pack types (monster, magic, equip, trap) across four
+rarities — common, uncommon, rare and legendary — priced 20 / 80 / 200 /
+800 starchips; every one of the game's 722 cards sits in a pool, so
+anything can be pulled. Buying deals the pack out one card at a time,
+and once the cards are face up you can pick one and press TRIANGLE to
+open the game's own card viewer on it. Cards land in your trunk marked
+"New!", exactly like a duel drop.
+
+Prices, rarity bands and individual card placements are yours to edit:
+the shop writes **`card_shop.ini`** next to your saves the first time it
+runs, and re-reads it whenever you leave and re-enter the shop.
+
+Expect rough edges — that is what WIP means here. Feedback welcome.
+
 ## 0.3.1
 
 Extract this over your existing install as usual. Saves and savestates from

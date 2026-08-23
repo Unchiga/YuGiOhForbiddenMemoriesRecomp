@@ -479,7 +479,7 @@ static int card_rarity(int id, int atk, int type, int droppers) {
 #define TYPE_EQUIP  23
 
 /* ---- state --------------------------------------------------------------- */
-static int      s_enabled = 1;
+static int      s_enabled;           /* off until the player opts in       */
 static int      s_row_handle;
 static int      s_gate;              /* screen signature matched            */
 static int      s_native;            /* widget is displaying OUR stream     */
@@ -1294,13 +1294,15 @@ static void shop_changed(int v) { s_enabled = v ? 1 : 0; s_dirty = 1; }
 void psx_card_shop_register_menu(void) {
     static const char *const ONOFF[] = { "OFF", "ON" };
     static const char *const HINTS[] = {
-        "A CARD SHOP ROW ON THE SHOPKEEPER MENU",
+        "WORK IN PROGRESS - OFF BY DEFAULT",
         "BUY CARD PACKS WITH STARCHIPS AT THE SHOPKEEPER",
     };
     (void)psx_game_add_start_hook(shop_register_hooks);
+    /* Ships OFF: the shop is still work in progress, so a player meets it
+     * only by choosing to switch it on. */
     s_row_handle = psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "CARD SHOP", HINTS[0],
-        ONOFF, 2, "card_shop", 1, shop_changed);
+        PSX_VM_MENU_MODS, "CARD SHOP WIP", HINTS[0],
+        ONOFF, 2, "card_shop", 0, shop_changed);
     psx_video_menu_set_row_hints(s_row_handle, HINTS);
 }
 
