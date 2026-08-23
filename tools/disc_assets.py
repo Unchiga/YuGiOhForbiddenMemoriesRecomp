@@ -91,13 +91,57 @@ MANIFEST = {
     # (xbtn's disc copy is one row MORE complete than the snapshot: the
     # sheet's first VRAM row was clobbered by an overlapping upload, and
     # the disc row 0 is the button's real top edge - 15/16 rows verify.)
-    # The card viewer's composed-canvas template: the gold card body that
-    # frames the face. One disc blob; the face rect (u 0..128, v 0..128) is
-    # streamed per card by the viewer itself, so only the two body strips
-    # around it are baked. Parked at their real chest-screen coordinates,
-    # which nothing else in the synthetic page claims.
-    'cardbody_r':  dict(x=832, y=256, w=64,  h=192, off=32661504),
-    'cardbody_b':  dict(x=768, y=384, w=64,  h=64,  off=32645120),
+    # The card viewer's canvas: the whole gold card body that frames the
+    # face, as the two 64-word columns it uploads in. Parked at their real
+    # chest-screen coordinates, which nothing else in the synthetic page
+    # claims.
+    #
+    # The LEFT column is the plate the name is printed on, the art window's
+    # surround and the description sticker. It was once baked as only its
+    # bottom 64 rows ('cardbody_b'), on the theory that the viewer streams
+    # the card's face into rows 0..128 of it - it does not. The face is a
+    # SEPARATE primitive out of (0,256)/8bpp through CLUT (0,255), drawn over
+    # the black window this art leaves for it, on the chest and the shop
+    # alike. Skipping those rows is what left the shop's card with no name
+    # plate and no body above the sticker.
+    #
+    # 256 rows, not 192: rows 192..256 are the MAGIC/TRAP variant's own
+    # bottom - the wide description sticker that replaces the monster's
+    # ATK/DFD block. One canvas serves both card types; the colour is the
+    # CLUT, (256,248) gold for a monster and (256,249) green for a magic or
+    # trap, over identical pixels. Baking only 192 rows left every magic and
+    # trap card in the shop cut off below the art.
+    #
+    # Both columns verified whole against live chest-viewer VRAM snapshots -
+    # every row, at 10 identical copies on the disc.
+    'cardbody_l':  dict(x=768, y=256, w=64,  h=256, off=32628736),
+    'cardbody_r':  dict(x=832, y=256, w=64,  h=256, off=32661504),
+    # The palettes that canvas and the viewer's stone boxes read. A 256-word
+    # -wide upload, so 512-byte rows, not the usual 128.
+    #
+    # The card body has SIX colourways in consecutive rows - (256,248) gold
+    # monster, 249 green magic, 250 pink trap, then blue, purple and orange -
+    # over one set of pixels, and the boxes read (256,247)/(272,247). The
+    # deck-builder screens and the FIRST card shop both have all of rows
+    # 244..255 resident and byte-identical; the TOURNAMENT shop has none of
+    # them, which is why the viewer there drew the face and the text and
+    # nothing else. Baking the block makes the viewer independent of which
+    # of the three shops it was opened from.
+    'clut_view':   dict(x=256, y=244, w=256, h=12, off=38420480, stride=512),
+    # The LOWER half of the (960,256) texture page, which the viewer reads for
+    # everything printed ON the card that is not its name or its face: the
+    # attribute orb, the level stars, the ATK/DFD labels and digits, and the
+    # "[ Normal Magic Card ]" / "[ Trap Card ]" subtitle strip. The deck
+    # screens and the first shop have it resident; the tournament shop has
+    # the whole half zeroed, which is why its cards came up with a bare name
+    # plate and an empty stat box.
+    'cardglyphs':  dict(x=960, y=384, w=64, h=128, off=32743424),
+    # The card BACK - the orange spiral. The viewer flips the card in from
+    # face-down, drawing the back as a stack of horizontal strips out of this
+    # page and the front out of the canvas above, so a screen missing it plays
+    # the flip with half a card. The column sits immediately after
+    # cardbody_r's 256 rows on disc, which is what its offset says.
+    'cardback':    dict(x=896, y=256, w=64, h=64,  off=32694272),
     'star':        dict(x=724, y=128, w=4,   h=16, off=32567336),
     'xbtn':        dict(x=708, y=128, w=4,   h=16, off=32567304),
     'tbtn':        dict(x=712, y=128, w=4,   h=16, off=32567312),
@@ -141,8 +185,11 @@ def build_vram(disc_path):
     with open(disc_path, 'rb') as f:
         for name, r in MANIFEST.items():
             nbytes = r['w'] * 2
+            # Most blobs upload as a 64-word-wide rect, so their rows sit
+            # STRIDE (128) bytes apart. A wider upload sets its own.
+            stride = r.get('stride', STRIDE)
             for row in range(r['h']):
-                src = read_stream(f, r['off'] + row * STRIDE, nbytes)
+                src = read_stream(f, r['off'] + row * stride, nbytes)
                 dst = ((r['y'] + row) * VRAM_W + r['x']) * 2
                 vram[dst:dst + nbytes] = src
     return bytes(vram)
@@ -235,18 +282,24 @@ def emit_shop_skin(vram, out_path, sprite_extract):
     body.append('};')
     body.append('')
 
-    def emit_raw(sym, x, y, h):
-        body.append('const uint16_t %s[64 * %d] = {' % (sym, h))
+    def emit_raw(sym, x, y, w, h):
+        body.append('const uint16_t %s[%d * %d] = {' % (sym, w, h))
         for row in range(h):
             o = ((y + row) * 1024 + x) * 2
-            r = vram[o:o + 128]
-            words = [r[i] | (r[i + 1] << 8) for i in range(0, 128, 2)]
-            body.append('    ' + ' '.join('0x%04X,' % w for w in words))
+            r = vram[o:o + w * 2]
+            words = [r[i] | (r[i + 1] << 8) for i in range(0, w * 2, 2)]
+            for c in range(0, w, 64):
+                body.append('    ' + ' '.join('0x%04X,' % v
+                                              for v in words[c:c + 64]))
         body.append('};')
         body.append('')
-    # The viewer's card-body canvas strips (see the manifest comment).
-    emit_raw('psx_shop_cardbody_r', 832, 256, 192)
-    emit_raw('psx_shop_cardbody_b', 768, 384, 64)
+    # The viewer's card-body canvas columns and its palettes (see the
+    # manifest comments).
+    emit_raw('psx_shop_cardbody_l', 768, 256, 64, 256)
+    emit_raw('psx_shop_cardbody_r', 832, 256, 64, 256)
+    emit_raw('psx_shop_clut_view', 256, 244, 256, 12)
+    emit_raw('psx_shop_cardglyphs', 960, 384, 64, 128)
+    emit_raw('psx_shop_cardback', 896, 256, 64, 64)
 
     hdr = [
         '/* Generated by tools/disc_assets.py - DO NOT EDIT BY HAND.',

@@ -247,6 +247,11 @@ static const char *const k_tier_names[SHOP_TIERS] =
     { "COMMON", "UNCOMMON", "RARE", "LEGENDARY" };
 static const int k_tier_price[SHOP_TIERS] = { 20, 80, 200, 800 };
 #define SHOP_PULL_MAX 5
+/* Rows the results box can print. A pull name is a 12-row glyph and the box
+ * is a fixed piece of the password screen's furniture, so this is a hard
+ * ceiling, not a preference: the ini's `cards` is bounded by it rather than
+ * letting a pack award cards the player is never shown. */
+#define SHOP_PULL_ROWS 3
 /* A tier the player pays for should never be a two-card lottery: any pool
  * shorter than this borrows the tier(s) below it for variety. */
 #define SHOP_POOL_MIN 12
@@ -367,7 +372,8 @@ static void shop_cfg_write_default(const char *path) {
         "\n[prices]\n"
         "common    = %d\nuncommon  = %d\nrare      = %d\nlegendary = %d\n"
         "\n[packs]\n"
-        "# cards drawn per pack\ncards = %d\n"
+        "# cards drawn per pack (1-3: the results box prints three)\n"
+        "cards = %d\n"
         "\n[monster]\n"
         "# a monster lands in the highest band its ATK reaches\n"
         "legendary_atk = %d\nrare_atk      = %d\nuncommon_atk  = %d\n"
@@ -425,7 +431,7 @@ static void shop_cfg_load(void) {
             else if (!strcmp(p, "legendary")) s_cfg_price[3] = n;
         } else if (!strcmp(sect, "packs")) {
             const int n = atoi(v);
-            if (!strcmp(p, "cards") && n >= 1 && n <= SHOP_PULL_MAX)
+            if (!strcmp(p, "cards") && n >= 1 && n <= SHOP_PULL_ROWS)
                 s_cfg_pack_cards = n;
         } else if (!strcmp(sect, "monster")) {
             const int n = atoi(v);
@@ -512,6 +518,8 @@ static uint16_t s_vs_face2[64 * 128];    /* (0,256)   face slot: from the
                                           * chest's (768,256) - measured
                                           * by diffing VRAM after a view */
 static uint16_t s_vs_clut2[256 * 1];     /* (0,255)   the face's palette */
+static uint16_t s_vs_glyphs[64 * 128];   /* (960,384) orb/stars/ATK glyphs */
+static uint16_t s_vs_back[64 * 64];      /* (896,256) the card back        */
 static int      s_vs_valid;
 static uint16_t s_award_q[SHOP_PULL_MAX];
 static int      s_award_n;
@@ -782,14 +790,45 @@ void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
         gr_vram_transfer_out(256, 240, 448,  16, s_vs_clut);
         gr_vram_transfer_out(0,   256,  64, 128, s_vs_face2);
         gr_vram_transfer_out(0,   255, 256,   1, s_vs_clut2);
+        gr_vram_transfer_out(960, 384,  64, 128, s_vs_glyphs);
+        gr_vram_transfer_out(896, 256,  64,  64, s_vs_back);
         s_vs_valid = 1;
         gr_vram_transfer_in(832, 0, 64, 96, psx_shop_tmpl_raw);
-        /* The card-body canvas, once, BEFORE the pump's first run: the
-         * viewer composes the card's name onto this plate during open, so
-         * it must already be present - and must not be re-uploaded after,
-         * or the composed name is wiped again. */
-        gr_vram_transfer_in(832, 256, 64, 192, psx_shop_cardbody_r);
-        gr_vram_transfer_in(768, 384, 64,  64, psx_shop_cardbody_b);
+        /* The card-body canvas - BOTH 64-word columns, before the pump's
+         * first run so the plate is there when the viewer draws on it.
+         * Everything that varies per card is a SEPARATE primitive over this
+         * art: the face out of (0,256)/8bpp through CLUT (0,255) into the
+         * black window, the name one textured rect per glyph out of
+         * (960,256)/4bpp through CLUT (496,248), the level stars, the
+         * attribute orb and the ATK/DFD digits. Nothing is composed INTO
+         * the canvas, which is why the whole thing can be baked.
+         *
+         * All 256 rows: the canvas carries the MAGIC/TRAP body as well as
+         * the monster one - same pixels, read through CLUT (256,249) green
+         * instead of (256,248) gold - and the magic variant's wide bottom
+         * sticker lives in rows 192..256. At 192 every magic and trap card
+         * bought here was cut off below the art. */
+        gr_vram_transfer_in(768, 256, 64, 256, psx_shop_cardbody_l);
+        gr_vram_transfer_in(832, 256, 64, 256, psx_shop_cardbody_r);
+        /* And the palettes all of that is read through. The deck screens and
+         * the FIRST shop happen to have rows 244..255 resident and identical;
+         * the TOURNAMENT shop has none of them, so there the viewer drew the
+         * streamed face and the text - which carry their own CLUTs - over a
+         * card body and stone boxes that decoded to nothing. Uploading the
+         * block makes the viewer look the same from all three shops. Inside
+         * the (256,240,448,16) rect already saved on open, so the screen's
+         * own palettes come back untouched on close. */
+        gr_vram_transfer_in(256, 244, 256, 12, psx_shop_clut_view);
+        /* The lower half of the (960,256) page: attribute orb, level stars,
+         * ATK/DFD labels and digits, and the "[ ... Card ]" subtitle strip.
+         * The card's NAME is not in here - that comes from elsewhere and drew
+         * fine at the tournament shop while everything above was blank. */
+        gr_vram_transfer_in(960, 384, 64, 128, psx_shop_cardglyphs);
+        /* The card BACK. The viewer does not cut to the face - it FLIPS the
+         * card in, drawing it as a stack of horizontal strips taken from this
+         * page while it is edge-on and from the canvas once it is face up.
+         * Without it the spin played with the back's lower half missing. */
+        gr_vram_transfer_in(896, 256, 64, 64, psx_shop_cardback);
         psx_mod_write_byte(SHOP_SUB_CARD,     (uint8_t)(s_view_card & 0xFFu));
         psx_mod_write_byte(SHOP_SUB_CARD + 1, (uint8_t)(s_view_card >> 8));
         psx_mod_write_byte(SHOP_SUB_TYPE, 0x14u);
@@ -811,6 +850,8 @@ void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
                 gr_vram_transfer_in(256, 240, 448,  16, s_vs_clut);
                 gr_vram_transfer_in(0,   256,  64, 128, s_vs_face2);
                 gr_vram_transfer_in(0,   255, 256,   1, s_vs_clut2);
+                gr_vram_transfer_in(960, 384,  64, 128, s_vs_glyphs);
+                gr_vram_transfer_in(896, 256,  64,  64, s_vs_back);
                 s_vs_valid = 0;
             }
             s_view = 0;
@@ -839,9 +880,14 @@ static void shop_register_hooks(void) {
 #define ROW_X 12
 #define ROW_Y 111
 #define PANEL_W 304
-#define PANEL_H 220
+/* 230 tall at y=5 keeps the panel centred (5px of screen top and bottom, was
+ * 10) and hands all 10 extra rows to the results box: a pull name is a 12-row
+ * glyph, so three of them, each on a plate that actually CONTAINS one and
+ * clears the box frame, needs more than the 70 the box used to have. The old
+ * highlight was SHORTER than the font and ruled a line through every name. */
+#define PANEL_H 230
 #define PANEL_X 8
-#define PANEL_Y 10
+#define PANEL_Y 5
 #define CV_W PANEL_W
 #define CV_H PANEL_H
 static uint32_t s_px[CV_W * CV_H];
@@ -855,6 +901,7 @@ static int s_img_w, s_img_h;
 #define C_BLUE    0xFF6C9CF0u   /* rare (readable on the navy field)   */
 #define C_YELLOW  0xFFF0E048u   /* legendary */
 #define C_SEL     0xFF2A3454u
+#define C_SLOT    0xFF44506Cu   /* outline of a not-yet-revealed pull */
 
 static void px_fill(int x0, int y0, int w, int h, uint32_t c) {
     if (x0 < 0) { w += x0; x0 = 0; }
@@ -985,7 +1032,7 @@ static int text_width(const char *s) {
 #define BOX_B_Y 43
 #define BOX_B_H 104
 #define BOX_C_Y 150
-#define BOX_C_H 70
+#define BOX_C_H 80
 
 static void draw_panel(void) {
     s_img_w = PANEL_W; s_img_h = PANEL_H;
@@ -1032,50 +1079,85 @@ static void draw_panel(void) {
     }
 
     if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
-    if (s_ceremony) {
-        /* Button hints share the header line with the short "RESULTS:"
-         * label, right-aligned: laid out from the right edge backwards
-         * because the hint set changes between the reveal and browse
-         * phases. (With the old "LEGENDARY MONSTER:" header there was no
-         * room here and the triangle button sat on top of the text.) */
+    /* Button hints share the header line with the short "RESULTS:" label,
+     * right-aligned. (With the old "LEGENDARY MONSTER:" header there was no
+     * room here and the triangle button sat on top of the text.)
+     * The pull list occupies the box for the rest of the visit, so once the
+     * ceremony is over this line is where BUY/CLOSE live - without it the
+     * player is left with a screen that has no legend at all. The same goes
+     * for a refusal ("NOT ENOUGH CHIPS"): the message takes the header, so
+     * the centred legend below is suppressed and this line is the only one
+     * left to carry it. */
+    if (s_pull_n || s_msg[0]) {
         const int hy = BOX_C_Y + 4;
-        int x = PANEL_W - 14;
-        x -= text_width("Continue");
-        put_text("Continue", x, hy + 4, C_WHITE);
-        x -= psx_spr_shop_xbtn.w + 2;
-        skin_blit(&psx_spr_shop_xbtn, x, hy, 0, 0,
-                  psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
-        x -= 12 + text_width("View");
-        put_text("View", x, hy + 4, C_WHITE);
-        x -= psx_spr_shop_tbtn.w + 2;
-        skin_blit(&psx_spr_shop_tbtn, x, hy, 0, 0,
-                  psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
+        const PsxSprite *btn[2];
+        const char *lbl[2];
+        if (s_ceremony) {
+            /* Reveal phase: X flips the NEXT card, it does not dismiss the
+             * list. Labelling it "Continue" there named the button it only
+             * becomes once the last card has landed. */
+            btn[0] = &psx_spr_shop_tbtn; lbl[0] = "View";
+            btn[1] = &psx_spr_shop_xbtn;
+            lbl[1] = s_shown < s_pull_n ? "Next" : "Continue";
+        } else {
+            btn[0] = &psx_spr_shop_xbtn; lbl[0] = "BUY";
+            btn[1] = &psx_spr_shop_obtn; lbl[1] = "CLOSE";
+        }
+        /* Measured then laid out LEFT to right, so the pair keeps the panel's
+         * own X-before-O order; laying it out backwards from the right edge
+         * (which is all the fixed ceremony pair needed) reversed it. */
+        int w = 0;
+        for (int i = 0; i < 2; i++)
+            w += (i ? 12 : 0) + btn[i]->w + 2 + text_width(lbl[i]);
+        int x = PANEL_W - 14 - w;
+        for (int i = 0; i < 2; i++) {
+            if (i) x += 12;
+            skin_blit(btn[i], x, hy, 0, 0, btn[i]->w, btn[i]->h);
+            x += btn[i]->w + 2;
+            put_text(lbl[i], x, hy + 4, C_WHITE);
+            x += text_width(lbl[i]);
+        }
     }
+    /* One row per card the pack will yield, revealed or not: the empty ones
+     * are drawn as the highlight's own outline, so the pack size reads from
+     * the first frame and every X visibly FILLS a waiting slot instead of
+     * growing the list from nowhere.
+     *
+     * A row is 16 tall for a 12-row glyph: the plate spans y-2..y+13, so its
+     * rules land OUTSIDE the ink - which is what the 10-tall bar on an 11px
+     * pitch could not do (it ruled a line straight through the middle of
+     * every name it was meant to be highlighting). The pitch is 16 to match,
+     * because at 15 the next row's outline landed on the highlight's own
+     * bottom rule and erased it. */
     const int shown = s_ceremony ? s_shown : s_pull_n;
-    for (int i = 0; i < shown && i < 3; i++) {
-        const int y = BOX_C_Y + 19 + i * 11;
+    for (int i = 0; i < s_pull_n && i < SHOP_PULL_ROWS; i++) {
+        const int y = BOX_C_Y + 23 + i * 16;
+        if (i >= shown) {
+            px_fill(12, y - 2, PANEL_W - 24, 1, C_SLOT);
+            px_fill(12, y + 13, PANEL_W - 24, 1, C_SLOT);
+            px_fill(12, y - 2, 1, 16, C_SLOT);
+            px_fill(PANEL_W - 13, y - 2, 1, 16, C_SLOT);
+            continue;
+        }
         if (s_ceremony && i == s_card_sel) {
-            /* Hovered card: a bar that stays inside its own 11px row (the
-             * old one was 12px tall and bled into the neighbours), with
-             * gold edges and a left accent so it reads as this game's
-             * furniture rather than a flat rectangle. */
-            px_fill(12, y - 1, PANEL_W - 24, 10, C_SEL);
-            px_fill(12, y - 1, PANEL_W - 24, 1, C_GOLD);
-            px_fill(12, y + 8, PANEL_W - 24, 1, C_GOLD);
-            px_fill(12, y - 1, 3, 10, C_GOLD);
+            px_fill(12, y - 2, PANEL_W - 24, 16, C_SEL);
+            px_fill(12, y - 2, PANEL_W - 24, 1, C_GOLD);
+            px_fill(12, y + 13, PANEL_W - 24, 1, C_GOLD);
+            px_fill(12, y - 2, 3, 16, C_GOLD);
         }
         const char *nm = psx_card_db_name(s_pull[i]);
         snprintf(line, sizeof line, "%.30s", nm ? nm : "?");
         put_text(line, 20, y, C_WHITE);
     }
     if (!s_pull_n && !s_msg[0]) {
-        /* The password screen's own OK/END buttons, relabelled. */
-        skin_blit(&psx_spr_shop_xbtn, 88, BOX_C_Y + 24, 0, 0,
+        /* Nothing bought yet: the box is empty, so the password screen's own
+         * OK/END buttons get the middle of it. */
+        skin_blit(&psx_spr_shop_xbtn, 88, BOX_C_Y + 28, 0, 0,
                   psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
-        put_text("BUY", 108, BOX_C_Y + 28, C_WHITE);
-        skin_blit(&psx_spr_shop_obtn, 160, BOX_C_Y + 24, 0, 0,
+        put_text("BUY", 108, BOX_C_Y + 32, C_WHITE);
+        skin_blit(&psx_spr_shop_obtn, 160, BOX_C_Y + 28, 0, 0,
                   psx_spr_shop_obtn.w, psx_spr_shop_obtn.h);
-        put_text("CLOSE", 180, BOX_C_Y + 28, C_WHITE);
+        put_text("CLOSE", 180, BOX_C_Y + 32, C_WHITE);
     }
 }
 
@@ -1146,6 +1228,25 @@ static void restore_stock_code(void) {
 
 void psx_card_shop_tick(void) {
     if (!s_enabled) { restore_stock_code(); return; }
+    /* Stage the stream, the label-table entry and the four code immediates
+     * from the moment the game is up, NOT only while the gate is open.
+     *
+     * The game has THREE shopkeeper screens and all three run this same
+     * routine - the geometry literals at 0x8002F008.. and the dispatch chain
+     * at 0x8002F35C.. are one shared open/dispatch, and all three menus draw
+     * label stream 17 - so staging is global by nature, not per-shop.
+     *
+     * It has to be, because the menu widget latches the table entry when it
+     * OPENS, and the gate cannot be up before that on every screen: it armed
+     * early at the first shop only through `greeting_live()`, which matches
+     * one hard-coded string id (1086). The tournament shop's greeting is a
+     * different string (1527), so there the gate first went up on signature 2
+     * - the menu already on screen, already latched onto the STOCK stream -
+     * and CARD SHOP simply was not in the list. Staging unconditionally means
+     * whichever shop the player walks into has the entry repointed before its
+     * menu opens. `restore_stock_code()` still puts every byte back the frame
+     * the mod is switched off. */
+    if (psx_mod_game_started()) assert_stream();
     const int gate = screen_match();
     if (gate != s_gate) { s_gate = gate; s_dirty = 1; }
     if (!gate) {
@@ -1160,10 +1261,6 @@ void psx_card_shop_tick(void) {
         s_native = 0;
         return;
     }
-
-    /* Stage the stream + table for the next natural open, every frame: the
-     * overlay reload and savestate loads both restore stock bytes. */
-    assert_stream();
 
     const int native = widget_on_our_stream();
     if (native != s_native) { s_native = native; s_dirty = 1; }
@@ -1346,14 +1443,15 @@ static void shop_changed(int v) { s_enabled = v ? 1 : 0; s_dirty = 1; }
 void psx_card_shop_register_menu(void) {
     static const char *const ONOFF[] = { "OFF", "ON" };
     static const char *const HINTS[] = {
-        "WORK IN PROGRESS - OFF BY DEFAULT",
+        "TURN ON TO BUY CARD PACKS AT THE SHOPKEEPER",
         "BUY CARD PACKS WITH STARCHIPS AT THE SHOPKEEPER",
     };
     (void)psx_game_add_start_hook(shop_register_hooks);
-    /* Ships OFF: the shop is still work in progress, so a player meets it
-     * only by choosing to switch it on. */
+    /* Ships OFF, like the other MODS rows: it adds a row to a menu the game
+     * already has and grants cards, so a player meets it only by choosing
+     * to switch it on. */
     s_row_handle = psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "CARD SHOP WIP", HINTS[0],
+        PSX_VM_MENU_MODS, "CARD SHOP", HINTS[0],
         ONOFF, 2, "card_shop", 0, shop_changed);
     psx_video_menu_set_row_hints(s_row_handle, HINTS);
 }

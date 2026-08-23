@@ -151,6 +151,43 @@ just long enough for the capture to finish, then **reverts itself**: the
 moment the last portrait is stored, the flags it set are cleared again and
 your save is bit-for-bit what your campaign earned.
 
+### 🛒 Card shop — `MODS → CARD SHOP`
+
+![The card shop's pack panel: MONSTER / MAGIC / EQUIP / TRAP rows with a rarity and a starchip price each, and a RESULTS box listing the three cards a legendary monster pack just yielded.](docs/screenshots/card-shop.png)
+
+Starchips pile up with nothing to spend them on. This gives the shopkeeper's
+menu a fifth row that **buys card packs**.
+
+Four pack types — monster, magic, equip, trap — across four rarities, priced
+20 / 80 / 200 / 800 starchips. **All 722 cards sit in a pool**, so anything
+can come out. A pack deals its cards one at a time: each **X** turns over the
+next waiting slot, then you can move between them and press **TRIANGLE** to
+open the game's own card viewer on whichever one you like. Bought cards land
+in your trunk marked **New!**, exactly like a duel drop.
+
+It works at **all three** of the game's shopkeepers — the campaign one, the
+tournament's card convention, and the third — and looks the same at each.
+
+Prices, rarity bands and where individual cards sit are yours. The shop writes
+**`card_shop.ini`** next to your saves on first run and re-reads it whenever
+you leave the shop and come back:
+
+```ini
+[prices]
+legendary = 800
+
+[packs]
+cards = 3          ; 1-3, the results box prints three
+
+[monster]
+legendary_atk = 2500   ; a monster lands in the highest band its ATK reaches
+
+[cards]
+Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
+```
+
+Delete the file for the defaults back.
+
 ### 🖥️ Widescreen — `VIEW → WIDESCREEN` *(experimental)*
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).

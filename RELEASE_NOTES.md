@@ -1,5 +1,51 @@
 # Release notes
 
+## 0.3.3
+
+Extract this over your existing install as usual. Saves, savestates and your
+`card_shop.ini` from 0.3.2 are unaffected.
+
+### CARD SHOP is finished — `MODS → CARD SHOP`
+
+![The card shop's pack panel](docs/screenshots/card-shop.png)
+
+0.3.2 shipped it as `CARD SHOP WIP`. The WIP is gone: the shop now works the
+same at **all three** of the game's shopkeepers and its card viewer is
+indistinguishable from the deck builder's.
+
+**It works at every shop now.** The row was only appearing at the campaign
+shop. The other two — the tournament's card convention and the third — opened
+their menu before the mod had staged its labels, so `CARD SHOP` simply was not
+in the list. It is staged from the moment the game is running now, so whichever
+shopkeeper you walk up to has it.
+
+**Cards look right in the viewer.** TRIANGLE on a card you just bought opens
+the game's own card viewer, and at the two shops that never stock its art that
+came up as a bare face over an empty frame — no name plate, no card body, no
+stone panels, no orb, no stars, no ATK/DFD, and the flip-in animation playing
+with half a card back. All of it is baked from your disc and lent to the viewer
+for as long as it is open, then handed back. Monsters, magic, equip, traps and
+rituals all read correctly, at every shop.
+
+**The pack-open ceremony reads better.** Every card a pack will yield shows as
+an empty slot from the moment you buy, so you can see how many are coming and
+each **X** fills one. The highlight no longer draws a line through the name it
+is highlighting, the rows have room to breathe, and the button legend is
+honest: **X** says *Next* while cards are still turning over and *Continue*
+once they are all up, and **X BUY / O CLOSE** comes back afterwards instead of
+leaving the panel with no legend at all.
+
+`cards` in `card_shop.ini` is limited to 1–3, which is what the results box can
+print. It used to accept 5 and hand you two cards it never showed you.
+
+### Fixed: the save-state menu could be hidden behind the game
+
+**F7** opened the slot list and took your keys, but anything the mods drew in
+the game's own picture — the card shop's panel most obviously — was composited
+on top of it, so on a full-screen panel you could not see the menu you were
+driving. Menus, the rewind bar and the volume readout now sit above everything
+the game is wearing.
+
 ## 0.3.2
 
 Extract this over your existing install as usual. Saves and savestates from

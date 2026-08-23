@@ -43,8 +43,11 @@ extern const uint16_t psx_shop_tmpl_raw[64 * 96];
  * (u 0..128, v 128..192), as raw VRAM words at their (768,256)-page
  * coordinates. Re-uploaded around the pump because the shop screen has
  * no RAM copy of this asset for the viewer's own compose to read. */
-extern const uint16_t psx_shop_cardbody_r[64 * 192];
-extern const uint16_t psx_shop_cardbody_b[64 * 64];
+extern const uint16_t psx_shop_cardbody_l[64 * 256];
+extern const uint16_t psx_shop_cardbody_r[64 * 256];
+extern const uint16_t psx_shop_clut_view[256 * 12];
+extern const uint16_t psx_shop_cardglyphs[64 * 128];
+extern const uint16_t psx_shop_cardback[64 * 64];
 
 #ifdef __cplusplus
 }
