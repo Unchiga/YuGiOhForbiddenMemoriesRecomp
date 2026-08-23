@@ -54,6 +54,7 @@
 #include "psx_card_db.h"
 #include "psx_drop_db.h"
 #include "psx_fusion_font.h"
+#include "gpu_render.h"
 #include "psx_game_hooks.h"
 #include "psx_shop_skin.h"
 #include "psx_video_menu.h"
@@ -496,6 +497,22 @@ static int      s_card_sel;          /* browse highlight after the reveal   */
 static int      s_ceremony;          /* 1 from buy until X in browse mode   */
 static int      s_view;              /* 0 idle, 1 requested, 2 viewer alive */
 static uint16_t s_view_card;
+/* The shop screen never stocks the viewer's template atlas, and the viewer
+ * streams each card's face into pages the shop is actively displaying. So
+ * around every viewer open: save the three VRAM regions it touches, upload
+ * the baked template to (832,0), and put everything back on close - which
+ * is also what removes the "distorted card in the corner" the face upload
+ * used to leave in the shop's own room texture. */
+static uint16_t s_vs_tmpl[64 * 96];      /* (832,0)   template area  */
+static uint16_t s_vs_face[128 * 256];    /* (768,256) body canvas    */
+static uint16_t s_vs_clut[448 * 16];     /* (256,240) palette band   */
+static uint16_t s_vs_face2[64 * 128];    /* (0,256)   face slot: from the
+                                          * SHOP the viewer streams each
+                                          * card's art here, not to the
+                                          * chest's (768,256) - measured
+                                          * by diffing VRAM after a view */
+static uint16_t s_vs_clut2[256 * 1];     /* (0,255)   the face's palette */
+static int      s_vs_valid;
 static uint16_t s_award_q[SHOP_PULL_MAX];
 static int      s_award_n;
 static char     s_msg[30];
@@ -760,6 +777,19 @@ void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
      * subscreen dispatcher once per frame until it clears the command byte
      * (the viewer's Circle). */
     if (s_view == 1) {
+        gr_vram_transfer_out(832,   0,  64,  96, s_vs_tmpl);
+        gr_vram_transfer_out(768, 256, 128, 256, s_vs_face);
+        gr_vram_transfer_out(256, 240, 448,  16, s_vs_clut);
+        gr_vram_transfer_out(0,   256,  64, 128, s_vs_face2);
+        gr_vram_transfer_out(0,   255, 256,   1, s_vs_clut2);
+        s_vs_valid = 1;
+        gr_vram_transfer_in(832, 0, 64, 96, psx_shop_tmpl_raw);
+        /* The card-body canvas, once, BEFORE the pump's first run: the
+         * viewer composes the card's name onto this plate during open, so
+         * it must already be present - and must not be re-uploaded after,
+         * or the composed name is wiped again. */
+        gr_vram_transfer_in(832, 256, 64, 192, psx_shop_cardbody_r);
+        gr_vram_transfer_in(768, 384, 64,  64, psx_shop_cardbody_b);
         psx_mod_write_byte(SHOP_SUB_CARD,     (uint8_t)(s_view_card & 0xFFu));
         psx_mod_write_byte(SHOP_SUB_CARD + 1, (uint8_t)(s_view_card >> 8));
         psx_mod_write_byte(SHOP_SUB_TYPE, 0x14u);
@@ -775,6 +805,14 @@ void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
         psx_dispatch_call(cpu, SHOP_SUB_PUMP, SHOP_SUB_RET);
         *cpu = saved;
         if (g_psx_call_bail || psx_mod_read_byte(SHOP_SUB_CMD) == 0u) {
+            if (s_vs_valid) {
+                gr_vram_transfer_in(832,   0,  64,  96, s_vs_tmpl);
+                gr_vram_transfer_in(768, 256, 128, 256, s_vs_face);
+                gr_vram_transfer_in(256, 240, 448,  16, s_vs_clut);
+                gr_vram_transfer_in(0,   256,  64, 128, s_vs_face2);
+                gr_vram_transfer_in(0,   255, 256,   1, s_vs_clut2);
+                s_vs_valid = 0;
+            }
             s_view = 0;
             s_dirty = 1;
         }
@@ -1007,19 +1045,25 @@ static void draw_panel(void) {
         x -= psx_spr_shop_xbtn.w + 2;
         skin_blit(&psx_spr_shop_xbtn, x, hy, 0, 0,
                   psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
-        if (s_shown >= s_pull_n) {
-            x -= 12 + text_width("View");
-            put_text("View", x, hy + 4, C_WHITE);
-            x -= psx_spr_shop_tbtn.w + 2;
-            skin_blit(&psx_spr_shop_tbtn, x, hy, 0, 0,
-                      psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
-        }
+        x -= 12 + text_width("View");
+        put_text("View", x, hy + 4, C_WHITE);
+        x -= psx_spr_shop_tbtn.w + 2;
+        skin_blit(&psx_spr_shop_tbtn, x, hy, 0, 0,
+                  psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
     }
     const int shown = s_ceremony ? s_shown : s_pull_n;
     for (int i = 0; i < shown && i < 3; i++) {
         const int y = BOX_C_Y + 19 + i * 11;
-        if (s_ceremony && s_shown >= s_pull_n && i == s_card_sel)
-            px_fill(10, y - 2, PANEL_W - 20, 12, C_SEL);
+        if (s_ceremony && i == s_card_sel) {
+            /* Hovered card: a bar that stays inside its own 11px row (the
+             * old one was 12px tall and bled into the neighbours), with
+             * gold edges and a left accent so it reads as this game's
+             * furniture rather than a flat rectangle. */
+            px_fill(12, y - 1, PANEL_W - 24, 10, C_SEL);
+            px_fill(12, y - 1, PANEL_W - 24, 1, C_GOLD);
+            px_fill(12, y + 8, PANEL_W - 24, 1, C_GOLD);
+            px_fill(12, y - 1, 3, 10, C_GOLD);
+        }
         const char *nm = psx_card_db_name(s_pull[i]);
         snprintf(line, sizeof line, "%.30s", nm ? nm : "?");
         put_text(line, 20, y, C_WHITE);
@@ -1111,6 +1155,7 @@ void psx_card_shop_tick(void) {
         if (s_pools_built) { s_pools_built = 0; s_cfg_loaded = 0; }
         s_ceremony = 0;
         s_view = 0;
+        s_vs_valid = 0;
         say_reset();
         s_native = 0;
         return;
@@ -1233,9 +1278,16 @@ void psx_card_shop_tick(void) {
         /* The game's card viewer is up: every button is its. The hook
          * clears s_view when the viewer's own Circle closes it. */
     } else if (s_ceremony && s_shown < s_pull_n) {
-        /* Reveal phase: X flips the next card; everything else waits. */
+        /* Reveal phase: X flips the next card. The newest card is hovered
+         * from the moment it lands, so TRIANGLE can view it right away. */
+        s_card_sel = s_shown - 1;
         if (np & SHOP_NP_CROSS) {
-            s_shown++; sfx_req(SHOP_SE_FLIP); eat |= SHOP_NP_CROSS; s_dirty = 1;
+            s_shown++; s_card_sel = s_shown - 1;
+            sfx_req(SHOP_SE_FLIP); eat |= SHOP_NP_CROSS; s_dirty = 1;
+        }
+        if (np & SHOP_NP_TRIANGLE) {
+            s_view = 1; s_view_card = (uint16_t)s_pull[s_card_sel];
+            s_dirty = 1;
         }
         eat |= (uint16_t)(np & (SHOP_NP_UP | SHOP_NP_DOWN | SHOP_NP_LEFT |
                                 SHOP_NP_RIGHT | SHOP_NP_CIRCLE |

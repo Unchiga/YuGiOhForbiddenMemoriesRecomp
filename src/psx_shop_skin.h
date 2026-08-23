@@ -32,6 +32,20 @@ extern const PsxSprite psx_spr_shop_obtn;
 extern const PsxSprite psx_spr_shop_arrow;
 extern const PsxSprite psx_spr_shop_arrow2;   /* second animation frame */
 
+/* The card viewer's gold template atlas as RAW VRAM words (the same disc
+ * blob the game uploads to (832,0) on the chest/deck screens). The shop
+ * screen never loads it, so the mod uploads this before spawning the
+ * viewer there. 64 words x 96 rows. */
+extern const uint16_t psx_shop_tmpl_raw[64 * 96];
+
+/* The viewer's composed card-body canvas, minus the face rect it streams
+ * per card: the right strip (canvas u 128..256) and the bottom strip
+ * (u 0..128, v 128..192), as raw VRAM words at their (768,256)-page
+ * coordinates. Re-uploaded around the pump because the shop screen has
+ * no RAM copy of this asset for the viewer's own compose to read. */
+extern const uint16_t psx_shop_cardbody_r[64 * 192];
+extern const uint16_t psx_shop_cardbody_b[64 * 64];
+
 #ifdef __cplusplus
 }
 #endif
