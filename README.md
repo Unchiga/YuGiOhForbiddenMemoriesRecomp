@@ -153,10 +153,11 @@ your save is bit-for-bit what your campaign earned.
 
 ### 🛒 Card shop — `MODS → CARD SHOP`
 
-![The card shop's pack panel: MONSTER / MAGIC / EQUIP / TRAP rows with a rarity and a starchip price each, and a RESULTS box listing the three cards a legendary monster pack just yielded.](docs/screenshots/card-shop.png)
+![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
 
-Starchips pile up with nothing to spend them on. This gives the shopkeeper's
-menu a fifth row that **buys card packs**.
+The card shop has never sold a card. This makes it an actual card shop: the
+shopkeeper's menu grows a fifth row that **buys card packs** with your
+starchips.
 
 Four pack types — monster, magic, equip, trap — across four rarities, priced
 20 / 80 / 200 / 800 starchips. **All 722 cards sit in a pool**, so anything
@@ -164,9 +165,6 @@ can come out. A pack deals its cards one at a time: each **X** turns over the
 next waiting slot, then you can move between them and press **TRIANGLE** to
 open the game's own card viewer on whichever one you like. Bought cards land
 in your trunk marked **New!**, exactly like a duel drop.
-
-It works at **all three** of the game's shopkeepers — the campaign one, the
-tournament's card convention, and the third — and looks the same at each.
 
 Prices, rarity bands and where individual cards sit are yours. The shop writes
 **`card_shop.ini`** next to your saves on first run and re-reads it whenever
@@ -302,8 +300,8 @@ and uses yours if you already have them.
 
 ### Which dump
 
-`.cue` is preferred, with its `.bin` beside it; `.bin`, `.img`, `.iso`, `.car`
-and `.chd` also work.
+`.cue` is preferred, with its `.bin` beside it; `.bin`, `.img`, `.iso` and
+`.car` also work.
 
 This build is compiled from the USA release, serial **SLUS-01411**. A PAL,
 Japanese or Greatest Hits disc is a different program and cannot run here. The
