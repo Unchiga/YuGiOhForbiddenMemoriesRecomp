@@ -59,7 +59,7 @@ static int deck_resident(uint32_t save_base) {
     return 1;
 }
 
-static int save_is_live(void) {
+int psx_ygo_save_is_live(void) {
     return psx_mod_game_started()
         && deck_resident(PSX_SAVE_LIVE)
         && deck_resident(PSX_SAVE_MIRROR);
@@ -93,7 +93,7 @@ static uint32_t s_sc_last = 0;
 static int      s_sc_tracking = 0;
 
 static void free_spending_tick(void) {
-    if (!g_free_spending || !save_is_live()) {
+    if (!g_free_spending || !psx_ygo_save_is_live()) {
         s_sc_tracking = 0;
         return;
     }
@@ -264,7 +264,7 @@ static void lp_changed(int value) {
  * would display correctly and then be overwritten. */
 static void starchips_changed(int value) {
     if (value <= 0) return;
-    if (!save_is_live()) { refuse(s_starchips_row, "StarChips"); return; }
+    if (!psx_ygo_save_is_live()) { refuse(s_starchips_row, "StarChips"); return; }
     psx_mod_write_word(PSX_STARCHIPS_ADDR, (uint32_t)value);
     s_sc_tracking = 0;   /* re-baseline so the guard does not refund this */
     host_osd_push("StarChips set", 1200);
@@ -334,7 +334,7 @@ static int ui_copy_is_trunk(void) {
 
 static void all_cards_changed(int value) {
     if (value <= 0) return;
-    if (!save_is_live()) { refuse(s_all_cards_row, "All cards"); return; }
+    if (!psx_ygo_save_is_live()) { refuse(s_all_cards_row, "All cards"); return; }
     const int ui_is_trunk = ui_copy_is_trunk();
     const uint8_t n = (uint8_t)(value > 3 ? 3 : value);
     for (uint32_t i = 0; i < PSX_TRUNK_LEN; i++) {
@@ -416,7 +416,7 @@ static void reveal_changed(int value) {
         reveal_revert("Portrait reveal reverted");
         return;
     }
-    if (!save_is_live()) { refuse(s_reveal_row, "Reveal portraits"); return; }
+    if (!psx_ygo_save_is_live()) { refuse(s_reveal_row, "Reveal portraits"); return; }
     if (!psx_duelist_icon_cache_missing()) {
         host_osd_push("Every portrait is already captured", 2000);
         if (s_reveal_row >= 0) psx_video_menu_set_row(s_reveal_row, 0);

@@ -32,6 +32,13 @@ void psx_ygo_cheats_register_menu(void);
  * Cheap and self-disabling when the rows are off or no game is running. */
 void psx_ygo_cheats_tick(void);
 
+/* Is a real save resident? psx_mod_game_started() is NOT this question - it is
+ * already true through the intro, the title and name entry. This is the
+ * 40-card deck signature measured across 12 savestates plus those screens.
+ * Anything that reads or writes save data shares THIS one, so a second copy
+ * cannot drift into a stricter test than the one that was validated. */
+int  psx_ygo_save_is_live(void);
+
 #ifdef __cplusplus
 }
 #endif

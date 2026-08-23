@@ -293,7 +293,7 @@ static void handle_drop_missing_state(int id, const char *json)
 static void handle_drop_viewer(int id, const char *json)
 {
     (void)json;
-    char buf[768];
+    char buf[640];
     if (!psx_drop_viewer_state_json(buf, sizeof(buf))) {
         send_err(id, "state unavailable"); return;
     }
@@ -323,7 +323,7 @@ static void handle_drop_viewer_set(int id, const char *json)
         && open < 0) {
         send_err(id, "viewer is closed"); return;
     }
-    char buf[768];
+    char buf[640];
     psx_drop_viewer_state_json(buf, sizeof(buf));
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -440,9 +440,28 @@ static void handle_card_shop(int id, const char *json)
 {
     (void)json;
     extern int  psx_card_shop_state_json(char *, unsigned);
-    char buf[640];
+    char buf[768];
     if (psx_card_shop_state_json(buf, sizeof(buf)) <= 0) {
         send_err(id, "state unavailable"); return;
+    }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* card_shop_card name=<card> — the rarity the config resolved for one card and
+ * the pools it actually sits in. "That card came out of the wrong pack" is
+ * otherwise only observable by buying packs until it turns up again, and a
+ * pinned card silently demoted because its name did not match the config looks
+ * exactly like a pinning that was never applied. */
+static void handle_card_shop_card(int id, const char *json)
+{
+    extern int psx_card_shop_card_json(char *, unsigned, const char *);
+    char name[48];
+    if (!json_get_str(json, "name", name, sizeof(name))) {
+        send_err(id, "missing name"); return;
+    }
+    char buf[512];
+    if (psx_card_shop_card_json(buf, sizeof(buf), name) <= 0) {
+        send_err(id, "card db not ready (load a save first)"); return;
     }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -662,6 +681,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_edits",        handle_drop_edits);
     (void)psx_debug_add_command("duelist_icons",     handle_duelist_icons);
     (void)psx_debug_add_command("card_shop",         handle_card_shop);
+    (void)psx_debug_add_command("card_shop_card",    handle_card_shop_card);
     (void)psx_debug_add_command("card_drops_list",   handle_card_drops_list);
     (void)psx_debug_add_command("card_drops_p3",     handle_card_drops_p3);
     (void)psx_debug_add_command("card_drops_set",    handle_card_drops_set);

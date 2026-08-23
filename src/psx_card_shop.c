@@ -58,6 +58,7 @@
 #include "psx_game_hooks.h"
 #include "psx_shop_skin.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_cheats.h"
 
 /* ---- measured addresses -------------------------------------------------- */
 #define SHOP_STATE_ADDR   0x8009B23Au   /* campaign overlay state: 0xE00D   */
@@ -259,7 +260,13 @@ static const int k_tier_price[SHOP_TIERS] = { 20, 80, 200, 800 };
 /* Home-tier placements the user pinned by name; matched against the game's
  * own decoded names so no id table can rot. */
 static const char *const k_force_legendary[] = {
-    "Exodia the Forbidden One",      /* the win condition itself */
+    /* The game's own decoded name for the head is "Exodia the Forbidden" -
+     * no "One", unlike its four limbs. Pinned as "Exodia the Forbidden One"
+     * this matched NOTHING, so the pin was inert and the head fell through to
+     * the ATK band: 1000 ATK put the win condition in the 80-starchip
+     * UNCOMMON monster pack. `card_shop_card name=<card>` reports cfg_mask 0
+     * for any pin that misses like this. */
+    "Exodia the Forbidden",          /* the win condition itself */
     "Swords of Revealing Light",
     "Raigeki",
     "Megamorph",
@@ -543,18 +550,33 @@ static uint32_t rng_next(void) {
     return s_rng;
 }
 
-static int deck_resident(uint32_t base) {
-    int prev = 0;
+/* Is a real save resident? Shared with the CHEATS rows rather than reimplemented
+ * here: this module carried its OWN deck_resident() that additionally demanded
+ * the 40 slots be in non-decreasing card-id order. Nothing guarantees that - it
+ * happened to hold for every save this was developed against, so the extra rule
+ * looked free, and it silently refused to sell to any player whose deck was
+ * stored in another order ("NO SAVE LOADED" on a perfectly good save).
+ * psx_ygo_save_is_live() is the signature that was actually measured, across 12
+ * savestates plus the intro, title and name-entry screens. */
+static int save_live(void) {
+    return psx_ygo_save_is_live();
+}
+
+/* Why the gate refused, for the debug server: which of the two copies failed
+ * and on which slot. "NO SAVE LOADED" is otherwise indistinguishable between a
+ * genuinely absent save and a signature that does not fit this player's. */
+static int save_gate_detail(uint32_t base, int *bad_slot, int *bad_val) {
     for (int i = 0; i < 40; i++) {
         const int id = (int)psx_mod_read_half(base + (uint32_t)i * 2u);
-        if (id < 1 || id > PSX_CARD_DB_COUNT || id < prev) return 0;
-        prev = id;
+        if (id < 1 || id > PSX_CARD_DB_COUNT) {
+            if (bad_slot) *bad_slot = i;
+            if (bad_val)  *bad_val  = id;
+            return 0;
+        }
     }
     return 1;
 }
-static int save_live(void) {
-    return deck_resident(SHOP_SAVE_LIVE) && deck_resident(SHOP_SAVE_MIRROR);
-}
+
 
 static void build_pools(void) {
     if (s_pools_built || !psx_card_db_ready()) return;
@@ -1456,7 +1478,53 @@ void psx_card_shop_register_menu(void) {
     psx_video_menu_set_row_hints(s_row_handle, HINTS);
 }
 
+/* Where one card landed. Reports the mask the config resolved for its NAME
+ * (0 means the config never matched it, which is the failure that silently
+ * demotes a pinned card to the ATK/droppers default), and every [pack][tier]
+ * pool that holds its id. */
+int psx_card_shop_card_json(char *out, unsigned cap, const char *name) {
+    if (!name || !name[0] || !psx_card_db_ready()) return 0;
+    build_pools();
+    int id = 0;
+    for (int i = 1; i <= PSX_CARD_DB_COUNT; i++) {
+        const char *nm = psx_card_db_name(i);
+        if (nm && name_in(nm, (const char *const *)&(const char *){ name }, 1)) {
+            id = i;
+            break;
+        }
+    }
+    if (!id)
+        return snprintf(out, cap, "\"found\":false,\"name\":\"%.32s\"", name);
+    int atk = 0, def = 0, type = 0;
+    (void)psx_card_db_stats(id, &atk, &def, &type);
+    const int mask = cfg_mask_for(psx_card_db_name(id));
+    int n = snprintf(out, cap,
+        "\"found\":true,\"id\":%d,\"name\":\"%.32s\",\"type\":%d,\"atk\":%d,"
+        "\"cfg_mask\":%d,\"pools\":[",
+        id, psx_card_db_name(id), type, atk, mask);
+    int first = 1;
+    for (int p = 0; p < SHOP_PACKS; p++)
+        for (int t = 0; t < SHOP_TIERS; t++)
+            for (int i = 0; i < s_pool_n[p][t]; i++)
+                if (s_pool[p][t][i] == (uint16_t)id) {
+                    n += snprintf(out + n,
+                                  (n < (int)cap) ? cap - (unsigned)n : 0,
+                                  "%s{\"pack\":\"%s\",\"tier\":\"%s\"}",
+                                  first ? "" : ",",
+                                  k_packs[p].name, k_tier_names[t]);
+                    first = 0;
+                    break;
+                }
+    n += snprintf(out + n, (n < (int)cap) ? cap - (unsigned)n : 0, "]");
+    return n;
+}
+
 int psx_card_shop_state_json(char *out, unsigned cap) {
+    int bad_slot = -1, bad_val = -1;
+    const int dk_live   = save_gate_detail(SHOP_SAVE_LIVE, &bad_slot, &bad_val);
+    const int dk_mirror = save_gate_detail(SHOP_SAVE_MIRROR,
+                                           dk_live ? &bad_slot : NULL,
+                                           dk_live ? &bad_val : NULL);
     const int t_state = psx_mod_read_half(SHOP_STATE_ADDR) == 0xE00Du;
     const int t_menu  = psx_mod_read_word(SHOP_MENUFLAG) == 1u;
     const int t_sig   = psx_mod_read_byte(SHOP_SIG_A) == 0x08u &&
@@ -1471,7 +1539,9 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         "\"say\":%d,\"say_table\":%u,\"dlg_mode\":%u,\"dlg_id\":%u,"
         "\"cer\":%d,\"shown\":%d,\"csel\":%d,\"view\":%d,\"sub_cmd\":%u,"
         "\"pools\":[%d,%d,%d,%d],"
-        "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u",
+        "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u,"
+        "\"save_live\":%d,\"deck_live\":%d,\"deck_mirror\":%d,"
+        "\"deck_bad_slot\":%d,\"deck_bad_val\":%d",
         t_state, t_menu, t_sig,
         widget_on_menu17(), greeting_live(),
         (unsigned)(psx_mod_read_word(SHOP_H_PATCH_ADDR) == SHOP_H_FIVE),
@@ -1492,5 +1562,6 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         s_pool_n[1][0] + s_pool_n[1][1] + s_pool_n[1][2] + s_pool_n[1][3],
         s_pool_n[2][0] + s_pool_n[2][1] + s_pool_n[2][2] + s_pool_n[2][3],
         s_pool_n[3][0] + s_pool_n[3][1] + s_pool_n[3][2] + s_pool_n[3][3],
-        s_buys, s_denied, s_opens, s_remaps);
+        s_buys, s_denied, s_opens, s_remaps,
+        save_live(), dk_live, dk_mirror, bad_slot, bad_val);
 }

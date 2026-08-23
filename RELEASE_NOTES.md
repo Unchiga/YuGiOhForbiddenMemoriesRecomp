@@ -1,5 +1,36 @@
 # Release notes
 
+## 0.3.4
+
+Extract this over your existing install as usual. Saves, savestates and your
+`card_shop.ini` are unaffected.
+
+### Fixed: the card shop refused to sell, saying NO SAVE LOADED
+
+The shop checks that a real save is resident before it will take your
+starchips, and its check was too strict: as well as requiring the 40 cards in
+your deck to be valid, it required them to be stored in ascending card-id
+order. Nothing guarantees that. Every save this was developed against happened
+to be in that order, so the extra rule never showed up here — but any player
+whose deck sat in a different order was told **NO SAVE LOADED** on a perfectly
+good save and could not buy anything.
+
+The shop now shares the same save check the CHEATS rows use, which is the one
+that was actually measured against a dozen different saves.
+
+### Fixed: Exodia's head could be bought from an 80-starchip pack
+
+`card_shop.ini` pins cards to a rarity by name, and the pin for the head read
+`Exodia the Forbidden One`. The game's own name for it is **`Exodia the
+Forbidden`** — no "One", unlike its four limbs — so the pin matched nothing and
+the head fell through to the ATK band. At 1000 ATK that put the game's win
+condition in the cheapest **UNCOMMON** monster pack. It is legendary now, as
+intended.
+
+If you already have a `card_shop.ini`, it still holds the old spelling. Fix
+that one line to `Exodia the Forbidden = legendary`, or delete the file to get
+a fresh one — the rest of your edits are worth keeping.
+
 ## 0.3.3
 
 Extract this over your existing install as usual. Saves, savestates and your
