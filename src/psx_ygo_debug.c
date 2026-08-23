@@ -440,7 +440,7 @@ static void handle_card_shop(int id, const char *json)
 {
     (void)json;
     extern int  psx_card_shop_state_json(char *, unsigned);
-    char buf[384];
+    char buf[640];
     if (psx_card_shop_state_json(buf, sizeof(buf)) <= 0) {
         send_err(id, "state unavailable"); return;
     }

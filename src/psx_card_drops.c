@@ -155,6 +155,13 @@ static int      s_cd_chest_armed;  /* builder seen, overlay not yet written */
  * from before a duel keeps that duel's list; harmless, and it beats the
  * alternative of the list vanishing whenever a state is loaded. */
 static int      s_cd_have_duel;
+/* Like s_cd_have_duel, but scoped to ONE results screen: the drops page must
+ * describe the duel whose results are on screen, never the last one that
+ * awarded something. The roll (a win-only path - a loss never calls it) sets
+ * it; the tick clears it once the results screen has been gone for a few
+ * frames. Without this, losing a duel after a winning one showed the previous
+ * duel's cards on the drops page. */
+static int      s_cd_page_duel;
 static int      s_cd_overlays;     /* overlay passes actually written */
 
 void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
@@ -405,6 +412,7 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
     s_cd_new_distinct = 0;
     s_cd_awarded_total = 0;
     s_cd_have_duel = 1;
+    s_cd_page_duel = 1;
 
     int extra = g_card_drops - 1;
     if (extra <= 0) return;
@@ -570,7 +578,7 @@ static int      s_cd_p3_applies;      /* corrections taken (observability) */
 static int      s_cd_p3_overrides;    /* widget overrides taken */
 
 static int cd_p3_gate(void) {
-    return s_cd_have_duel && s_cd_awarded_total > 1;
+    return s_cd_page_duel && s_cd_awarded_total > 1;
 }
 
 /* The page's rows in display order: cards the player owned none of first,
@@ -762,6 +770,14 @@ void psx_card_drops_tick(void) {
         stale = 0;
     } else if (stale < 1000) {
         stale++;
+        /* The results screen is gone: this duel's card record must not
+         * survive into the next duel's results (see s_cd_page_duel). */
+        if (stale == 64 && s_cd_page_duel) {
+            s_cd_page_duel = 0;
+            s_cd_awarded_total = 0;
+            memset(s_cd_copies_this_duel, 0, sizeof s_cd_copies_this_duel);
+            memset(s_cd_was_new_this_duel, 0, sizeof s_cd_was_new_this_duel);
+        }
     }
     uint8_t rows[PSX_CD_OVERLAY_ROWS] = { 0 };
     const int on = s_cd_p3_active && stale < 8;

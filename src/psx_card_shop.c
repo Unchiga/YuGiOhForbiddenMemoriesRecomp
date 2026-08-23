@@ -46,6 +46,7 @@
 #include "psx_card_shop.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cpu_state.h"
@@ -112,6 +113,36 @@
 #define SHOP_SE_CURSOR  0x06u
 #define SHOP_SE_DENY    0x09u
 #define SHOP_SE_BUY     0x30u
+#define SHOP_SE_LEAVE   0x08u   /* the dispatch chain's LEAVE SHOP sound */
+#define SHOP_SE_FLIP    0x0Cu   /* the password screen's confirm click   */
+
+/* The game's subscreen mailbox and pump. Screens with subscreens (chest,
+ * deck build) write a request into gp-relative bytes and call the pump
+ * every frame; command 2 with type 0x14 is THE CARD VIEWER (the triangle
+ * viewer from duels and the deck builder). Measured at the chest: writing
+ * card id + type + command from the debug server alone opened the viewer,
+ * art streamed from disc and all - the pump reads only the mailbox and
+ * allocates from system pools, so its a0 is ignorable. The shop screen
+ * never pumps, so while our viewer is up the driver-entry hook pumps once
+ * per frame; the pump clears the command byte back to 0 when the viewer
+ * closes on Circle. */
+#define SHOP_SUB_CARD   0x8009B246u   /* u16 card id for the viewer        */
+#define SHOP_SUB_TYPE   0x8009B24Bu   /* 0x14 on every chest viewer open   */
+#define SHOP_SUB_CMD    0x8009B254u   /* 2 = spawn; pump acks with |0x80   */
+#define SHOP_SUB_PUMP   0x8002892Cu
+#define SHOP_SUB_RET    0x80033C48u   /* the chest tick's own return site  */
+/* NOTE: 0x800282E8 (the viewer entry's first call) is a full screen
+ * teardown, not a backdrop clear - calling it per frame wiped the
+ * viewer's own draw list and left the shop room showing. The viewer
+ * composites over whatever the shop already drew, which reads fine. */
+
+/* The game's own card award (trunk count + the 15-slot New! ring). Called
+ * with the DUEL reward's return address so the CARD DROPS extended New!
+ * tracker counts shop cards exactly like duel drops. */
+#define SHOP_AWARD_FN   0x80021894u
+#define SHOP_AWARD_RET  0x80021F1Cu
+
+#define SHOP_NP_TRIANGLE 0x0010u     /* byte-swapped new-press bit */
 #define SHOP_CHIPS_ADDR   0x801D07E0u
 #define SHOP_SAVE_LIVE    0x801D0200u
 #define SHOP_SAVE_MIRROR  0x801D3200u
@@ -264,16 +295,178 @@ static int name_in(const char *nm, const char *const *list, int n) {
 }
 #define NAME_IN(nm, list) name_in(nm, list, (int)(sizeof list / sizeof *list))
 
+/* ---- card_shop.ini ------------------------------------------------------- */
+/* A plain, hand-editable file in the player-data directory (beside
+ * menu_settings.ini and the savestates). Written with the built-in values
+ * the first time the shop builds its pools, so the file itself documents
+ * every knob; edited values are picked up on the next pool build (leaving
+ * the shop screen, or a savestate load, is enough).
+ *
+ *   [prices]      one price per rarity
+ *   [monster]     the ATK cut-offs for monster rarity
+ *   [pools]       min_choices, the variety floor
+ *   [cards]       NAME = RARITY lines, one per forced placement, where
+ *                 RARITY is common|uncommon|rare|legendary, optionally
+ *                 two of them ("rare+legendary") for a card that should
+ *                 appear in both pools.
+ */
+#define SHOP_INI_NAME "card_shop.ini"
+#define SHOP_CFG_FORCED_MAX 64
+
+typedef struct { char name[40]; uint8_t mask; } ShopForced;
+static int        s_cfg_price[SHOP_TIERS] = { 20, 80, 200, 800 };
+static int        s_cfg_atk[3]            = { 2500, 1600, 850 };
+static int        s_cfg_pool_min          = SHOP_POOL_MIN;
+static int        s_cfg_pack_cards        = 3;
+static ShopForced s_cfg_forced[SHOP_CFG_FORCED_MAX];
+static int        s_cfg_forced_n;
+static int        s_cfg_loaded;
+
+static int shop_ini_path(char *out, unsigned cap) {
+    const char *dir = psx_mod_player_data_dir();
+    if (!dir || !dir[0]) return 0;
+    const int n = snprintf(out, cap, "%s/%s", dir, SHOP_INI_NAME);
+    return n > 0 && (unsigned)n < cap;
+}
+
+static void cfg_trim(char *s) {
+    char *e = s + strlen(s);
+    while (e > s && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' ||
+                     e[-1] == '\t')) *--e = 0;
+}
+
+static int cfg_rarity_mask(const char *v) {
+    static const char *const names[SHOP_TIERS] =
+        { "common", "uncommon", "rare", "legendary" };
+    int mask = 0;
+    for (const char *p = v; *p; ) {
+        while (*p == ' ' || *p == '+' || *p == ',') p++;
+        if (!*p) break;
+        for (int t = 0; t < SHOP_TIERS; t++) {
+            const char *a = p, *b = names[t];
+            while (*b && *a) {
+                char ca = *a; if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+                if (ca != *b) break;
+                a++; b++;
+            }
+            if (!*b) { mask |= 1 << t; p = a; break; }
+        }
+        while (*p && *p != '+' && *p != ',') p++;
+    }
+    return mask;
+}
+
+static void shop_cfg_write_default(const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f,
+        "# CARD SHOP - pack prices, rarity bands and card placements.\n"
+        "# Edit and reload the shop screen (leaving and re-entering the\n"
+        "# shop rebuilds the pools). Delete this file to restore defaults.\n"
+        "\n[prices]\n"
+        "common    = %d\nuncommon  = %d\nrare      = %d\nlegendary = %d\n"
+        "\n[packs]\n"
+        "# cards drawn per pack\ncards = %d\n"
+        "\n[monster]\n"
+        "# a monster lands in the highest band its ATK reaches\n"
+        "legendary_atk = %d\nrare_atk      = %d\nuncommon_atk  = %d\n"
+        "\n[pools]\n"
+        "# a pool shorter than this borrows whole tiers below it\n"
+        "min_choices = %d\n"
+        "\n[cards]\n"
+        "# NAME = rarity   (or rare+legendary to put a card in both)\n",
+        s_cfg_price[0], s_cfg_price[1], s_cfg_price[2], s_cfg_price[3],
+        s_cfg_pack_cards, s_cfg_atk[0], s_cfg_atk[1], s_cfg_atk[2],
+        s_cfg_pool_min);
+    for (unsigned i = 0; i < sizeof k_force_legendary / sizeof *k_force_legendary; i++)
+        fprintf(f, "%s = legendary\n", k_force_legendary[i]);
+    for (unsigned i = 0; i < sizeof k_force_rare / sizeof *k_force_rare; i++) {
+        const char *nm = k_force_rare[i];
+        fprintf(f, "%s = %s\n", nm,
+                NAME_IN(nm, k_dual_rare_legendary) ? "rare+legendary" : "rare");
+    }
+    fclose(f);
+}
+
+static void shop_cfg_load(void) {
+    if (s_cfg_loaded) return;
+    s_cfg_loaded = 1;
+    char path[512];
+    if (!shop_ini_path(path, sizeof path)) return;
+    FILE *f = fopen(path, "r");
+    if (!f) { shop_cfg_write_default(path); return; }
+    s_cfg_forced_n = 0;
+    char line[160], sect[24] = "";
+    while (fgets(line, sizeof line, f)) {
+        cfg_trim(line);
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p || *p == '#' || *p == ';') continue;
+        if (*p == '[') {
+            char *e = strchr(p, ']');
+            if (!e) continue;
+            *e = 0;
+            snprintf(sect, sizeof sect, "%s", p + 1);
+            continue;
+        }
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = 0;
+        char *v = eq + 1;
+        while (*v == ' ' || *v == '\t') v++;
+        cfg_trim(p);
+        if (!strcmp(sect, "prices")) {
+            const int n = atoi(v);
+            if (n <= 0) continue;
+            if      (!strcmp(p, "common"))    s_cfg_price[0] = n;
+            else if (!strcmp(p, "uncommon"))  s_cfg_price[1] = n;
+            else if (!strcmp(p, "rare"))      s_cfg_price[2] = n;
+            else if (!strcmp(p, "legendary")) s_cfg_price[3] = n;
+        } else if (!strcmp(sect, "packs")) {
+            const int n = atoi(v);
+            if (!strcmp(p, "cards") && n >= 1 && n <= SHOP_PULL_MAX)
+                s_cfg_pack_cards = n;
+        } else if (!strcmp(sect, "monster")) {
+            const int n = atoi(v);
+            if (n < 0) continue;
+            if      (!strcmp(p, "legendary_atk")) s_cfg_atk[0] = n;
+            else if (!strcmp(p, "rare_atk"))      s_cfg_atk[1] = n;
+            else if (!strcmp(p, "uncommon_atk"))  s_cfg_atk[2] = n;
+        } else if (!strcmp(sect, "pools")) {
+            const int n = atoi(v);
+            if (!strcmp(p, "min_choices") && n >= 0) s_cfg_pool_min = n;
+        } else if (!strcmp(sect, "cards")) {
+            const int mask = cfg_rarity_mask(v);
+            if (!mask || s_cfg_forced_n >= SHOP_CFG_FORCED_MAX) continue;
+            ShopForced *e = &s_cfg_forced[s_cfg_forced_n++];
+            snprintf(e->name, sizeof e->name, "%s", p);
+            e->mask = (uint8_t)mask;
+        }
+    }
+    fclose(f);
+}
+
+/* A card's configured placement mask, 0 if the file does not mention it. */
+static int cfg_mask_for(const char *nm) {
+    for (int i = 0; i < s_cfg_forced_n; i++)
+        if (name_in(nm, (const char *const *)&(const char *){ s_cfg_forced[i].name }, 1))
+            return s_cfg_forced[i].mask;
+    return 0;
+}
+
 /* Home tiers: monsters by the user's ATK brackets (2500+ legendary,
  * 1600-2450 rare, 850-1550 uncommon, the rest common), everything else by
  * how hard the game guards it (droppers = how many of the 39 duelists ever
  * drop it; 0 means password-only in the stock game). */
 static int card_rarity(int id, int atk, int type, int droppers) {
     const char *nm = psx_card_db_name(id);
-    if (NAME_IN(nm, k_force_legendary)) return 3;
-    if (NAME_IN(nm, k_force_rare))      return 2;
+    const int m = cfg_mask_for(nm);
+    if (m) {   /* the file wins; its home tier is the highest bit set */
+        for (int t = SHOP_TIERS - 1; t >= 0; t--) if (m & (1 << t)) return t;
+    }
     if (type <= 19)
-        return atk >= 2500 ? 3 : atk >= 1600 ? 2 : atk >= 850 ? 1 : 0;
+        return atk >= s_cfg_atk[0] ? 3 : atk >= s_cfg_atk[1] ? 2
+             : atk >= s_cfg_atk[2] ? 1 : 0;
     if (droppers == 0) return 2;
     if (droppers <= 3) return 1;
     return 0;
@@ -298,6 +491,13 @@ static int      s_anim;              /* arrow animation frame               */
 static uint32_t s_rng = 0x5EEDCA5Du;
 static int      s_pull[SHOP_PULL_MAX];
 static int      s_pull_n;
+static int      s_shown;             /* pack-open ceremony: cards revealed  */
+static int      s_card_sel;          /* browse highlight after the reveal   */
+static int      s_ceremony;          /* 1 from buy until X in browse mode   */
+static int      s_view;              /* 0 idle, 1 requested, 2 viewer alive */
+static uint16_t s_view_card;
+static uint16_t s_award_q[SHOP_PULL_MAX];
+static int      s_award_n;
 static char     s_msg[30];
 static uint16_t s_stock_entry;       /* table[17] before our repoint        */
 static int      s_say;               /* 0 idle, 1 kick pending, 2 line up   */
@@ -333,6 +533,7 @@ static int save_live(void) {
 
 static void build_pools(void) {
     if (s_pools_built || !psx_card_db_ready()) return;
+    shop_cfg_load();
     static uint8_t droppers[PSX_CARD_DB_COUNT + 1];
     memset(droppers, 0, sizeof droppers);
     for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
@@ -363,16 +564,18 @@ static void build_pools(void) {
         hpack[id] = (int8_t)pack;
         home[id] = (uint8_t)t;
         s_pool[pack][t][s_pool_n[pack][t]++] = (uint16_t)id;
-        /* The user's dual placements sit in rare AND legendary. */
-        if (t == 2 && NAME_IN(psx_card_db_name(id), k_dual_rare_legendary))
-            s_pool[pack][3][s_pool_n[pack][3]++] = (uint16_t)id;
+        /* A card listed with two rarities appears in both pools. */
+        const int m = cfg_mask_for(psx_card_db_name(id));
+        for (int tt = 0; tt < SHOP_TIERS; tt++)
+            if (tt != t && (m & (1 << tt)))
+                s_pool[pack][tt][s_pool_n[pack][tt]++] = (uint16_t)id;
     }
     /* Variety floor: a short pool borrows whole tiers below it until it
      * offers a real spread (a legendary TRAP pack would otherwise be a
      * three-card lottery - the game only has 18 traps). */
     for (int p = 0; p < SHOP_PACKS; p++)
         for (int t = SHOP_TIERS - 1; t >= 1; t--)
-            for (int tt = t - 1; tt >= 0 && s_pool_n[p][t] < SHOP_POOL_MIN; tt--)
+            for (int tt = t - 1; tt >= 0 && s_pool_n[p][t] < s_cfg_pool_min; tt--)
                 for (int id = 1; id <= PSX_CARD_DB_COUNT; id++)
                     if (hpack[id] == p && home[id] == (uint8_t)tt)
                         s_pool[p][t][s_pool_n[p][t]++] = (uint16_t)id;
@@ -534,9 +737,15 @@ static void sfx_req(uint8_t id) {
  * so the driver call in flight is untouched (the card_drops $ra rule). */
 void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
     (void)address;
-    if (!s_enabled) { s_sfx_n = 0; return; }
-    if (s_sfx_n) {
+    if (!s_enabled) { s_sfx_n = 0; s_award_n = 0; s_view = 0; return; }
+    if (s_sfx_n || s_award_n) {
         CPUState saved = *cpu;
+        for (int i = 0; i < s_award_n; i++) {
+            cpu->pc = 0;
+            cpu->gpr[4] = s_award_q[i];
+            cpu->gpr[31] = SHOP_AWARD_RET;
+            psx_dispatch_call(cpu, SHOP_AWARD_FN, SHOP_AWARD_RET);
+        }
         for (int i = 0; i < s_sfx_n; i++) {
             cpu->pc = 0;
             cpu->gpr[4] = s_sfx_q[i];
@@ -545,6 +754,31 @@ void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
         }
         *cpu = saved;
         s_sfx_n = 0;
+        s_award_n = 0;
+    }
+    /* The card viewer: post the mailbox request, then pump the game's own
+     * subscreen dispatcher once per frame until it clears the command byte
+     * (the viewer's Circle). */
+    if (s_view == 1) {
+        psx_mod_write_byte(SHOP_SUB_CARD,     (uint8_t)(s_view_card & 0xFFu));
+        psx_mod_write_byte(SHOP_SUB_CARD + 1, (uint8_t)(s_view_card >> 8));
+        psx_mod_write_byte(SHOP_SUB_TYPE, 0x14u);
+        psx_mod_write_byte(SHOP_SUB_CMD,  0x02u);
+        s_view = 2;
+    }
+    if (s_view == 2) {
+        CPUState saved = *cpu;
+        cpu->pc = 0;
+        cpu->gpr[4] = 0;
+        cpu->gpr[5] = 0;
+        cpu->gpr[31] = SHOP_SUB_RET;
+        psx_dispatch_call(cpu, SHOP_SUB_PUMP, SHOP_SUB_RET);
+        *cpu = saved;
+        if (g_psx_call_bail || psx_mod_read_byte(SHOP_SUB_CMD) == 0u) {
+            s_view = 0;
+            s_dirty = 1;
+        }
+        return;   /* the viewer owns input; leave the arrows alone */
     }
     if (!s_open && !s_say) return;
     const uint16_t np = psx_mod_read_half(SHOP_PAD_NEW_ADDR);
@@ -755,15 +989,31 @@ static void draw_panel(void) {
         }
         skin_blit(&psx_spr_shop_star, 234, y - 4, 0, 0,
                   psx_spr_shop_star.w, psx_spr_shop_star.h);
-        snprintf(line, sizeof line, "%d", k_tier_price[tier]);
+        snprintf(line, sizeof line, "%d", s_cfg_price[tier]);
         put_text(line, 254, y, C_GOLD);
     }
 
     if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
-    for (int i = 0; i < s_pull_n && i < 3; i++) {
+    if (s_ceremony) {
+        /* Ceremony hints on the header line: X flips cards during the
+         * reveal; once all are open, TRIANGLE views the picked one. */
+        if (s_shown >= s_pull_n) {
+            skin_blit(&psx_spr_shop_tbtn, 150, BOX_C_Y + 4, 0, 0,
+                      psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
+            put_text("View", 168, BOX_C_Y + 8, C_WHITE);
+        }
+        skin_blit(&psx_spr_shop_xbtn, 206, BOX_C_Y + 4, 0, 0,
+                  psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
+        put_text("Continue", 224, BOX_C_Y + 8, C_WHITE);
+    }
+    const int shown = s_ceremony ? s_shown : s_pull_n;
+    for (int i = 0; i < shown && i < 3; i++) {
+        const int y = BOX_C_Y + 19 + i * 11;
+        if (s_ceremony && s_shown >= s_pull_n && i == s_card_sel)
+            px_fill(10, y - 2, PANEL_W - 20, 12, C_SEL);
         const char *nm = psx_card_db_name(s_pull[i]);
         snprintf(line, sizeof line, "%.30s", nm ? nm : "?");
-        put_text(line, 20, BOX_C_Y + 19 + i * 11, C_WHITE);
+        put_text(line, 20, y, C_WHITE);
     }
     if (!s_pull_n && !s_msg[0]) {
         /* The password screen's own OK/END buttons, relabelled. */
@@ -777,17 +1027,9 @@ static void draw_panel(void) {
 }
 
 /* ---- purchase ------------------------------------------------------------ */
-static void grant_card(int id) {
-    const uint32_t off = SHOP_TRUNK_OFF + (uint32_t)(id - 1);
-    const uint8_t cur = psx_mod_read_byte(SHOP_SAVE_LIVE + off);
-    const uint8_t nxt = cur < 250u ? (uint8_t)(cur + 1u) : cur;
-    psx_mod_write_byte(SHOP_SAVE_LIVE + off, nxt);
-    psx_mod_write_byte(SHOP_SAVE_MIRROR + off, nxt);
-}
-
 static void buy(int pack) {
     const int tier = s_tier[pack];
-    const int price = k_tier_price[tier];
+    const int price = s_cfg_price[tier];
     build_pools();
     if (!s_pools_built || !s_pool_n[pack][tier]) {
         snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET");
@@ -805,14 +1047,22 @@ static void buy(int pack) {
     sfx_req(SHOP_SE_BUY);
     psx_mod_write_word(SHOP_CHIPS_ADDR, chips - (uint32_t)price);
     s_pull_n = 0;
-    for (int i = 0; i < k_packs[pack].cards && i < SHOP_PULL_MAX; i++) {
+    s_award_n = 0;
+    for (int i = 0; i < s_cfg_pack_cards && i < SHOP_PULL_MAX; i++) {
         const int n = s_pool_n[pack][tier];
         const int id = s_pool[pack][tier][rng_next() % (uint32_t)n];
-        grant_card(id);
+        /* Granted through the game's own award (trunk + New! ring) from
+         * the driver-entry hook - see SHOP_AWARD_FN. */
+        s_award_q[s_award_n++] = (uint16_t)id;
         s_pull[s_pull_n++] = id;
     }
     snprintf(s_msg, sizeof s_msg, "%s %s:",
              k_tier_names[tier], k_packs[pack].name);
+    /* The pack-open ceremony: the first card is on the table already;
+     * every X flips the next, then the list can be browsed and viewed. */
+    s_ceremony = 1;
+    s_shown = 1;
+    s_card_sel = 0;
     s_buys++;
 }
 
@@ -845,6 +1095,11 @@ void psx_card_shop_tick(void) {
     if (gate != s_gate) { s_gate = gate; s_dirty = 1; }
     if (!gate) {
         if (s_open) { s_open = 0; s_dirty = 1; }
+        /* Re-read card_shop.ini and rebuild pools on the next visit, so an
+         * edit takes effect by walking out of the shop and back in. */
+        if (s_pools_built) { s_pools_built = 0; s_cfg_loaded = 0; }
+        s_ceremony = 0;
+        s_view = 0;
         say_reset();
         s_native = 0;
         return;
@@ -864,6 +1119,25 @@ void psx_card_shop_tick(void) {
      * the menu's done-path legitimately parks other values here. */
     if (native && psx_mod_read_byte(SHOP_COUNT_ADDR) == 4u)
         psx_mod_write_byte(SHOP_COUNT_ADDR, (uint8_t)SHOP_ROWS);
+    /* A popup (count parked at 2) saves and restores the menu cursor in
+     * STOCK indexing: backing out of RETURN TO TITLE's confirm restored 2 -
+     * BUILD DECK on the five-row menu - while the highlight still stood on
+     * row 3, so the next DOWN looked eaten and an UP jumped two rows.
+     * Remember the row the popup opened from and undo the off-by-one for
+     * the rows our insert shifted. */
+    if (native) {
+        static int last5cur = -1, popup_from = -1;
+        const uint8_t n = psx_mod_read_byte(SHOP_COUNT_ADDR);
+        const int cur = (int)psx_mod_read_byte(SHOP_CURSOR_ADDR);
+        if (n == (uint8_t)SHOP_ROWS) {
+            if (popup_from >= 2 && cur == popup_from - 1)
+                psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)popup_from);
+            popup_from = -1;
+            last5cur = (int)psx_mod_read_byte(SHOP_CURSOR_ADDR);
+        } else if (n == 2u && popup_from < 0) {
+            popup_from = last5cur;
+        }
+    }
     if (!native) {
         /* Menu is showing stock labels (pre-repoint open, or a savestate
          * taken before this feature). Behave as absent: no fifth row, no
@@ -918,7 +1192,12 @@ void psx_card_shop_tick(void) {
             return;
         }
         if (np & SHOP_NP_CROSS) {
-            if (cursor == SHOP_ROW) {
+            /* The cursor byte is shared with every popup the screen opens
+             * (SAVE?'s NO is also index 1, with count parked at 2), so the
+             * accept requires OUR five-row count too - X on a popup row
+             * must never start the shop. */
+            if (cursor == SHOP_ROW &&
+                psx_mod_read_byte(SHOP_COUNT_ADDR) == (uint8_t)SHOP_ROWS) {
                 /* CARD SHOP: with the dispatch chain shifted, the game's own
                  * default case handles this press (nothing). The shopkeeper
                  * asks his line first; the panel opens when it is dismissed
@@ -939,12 +1218,38 @@ void psx_card_shop_tick(void) {
      * Pinned here it lands on the row that does nothing. */
     psx_mod_write_byte(SHOP_CURSOR_ADDR, (uint8_t)SHOP_ROW);
     uint16_t eat = 0;
-    if (np & SHOP_NP_UP)    { s_sel = (s_sel + SHOP_PACKS - 1) % SHOP_PACKS; eat |= SHOP_NP_UP; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
-    if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
-    if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
-    if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
-    if (np & SHOP_NP_CROSS) { buy(s_sel); eat |= SHOP_NP_CROSS; s_dirty = 1; }
-    if (np & SHOP_NP_CIRCLE){ s_open = 0; eat |= SHOP_NP_CIRCLE; s_dirty = 1; }
+    if (s_view) {
+        /* The game's card viewer is up: every button is its. The hook
+         * clears s_view when the viewer's own Circle closes it. */
+    } else if (s_ceremony && s_shown < s_pull_n) {
+        /* Reveal phase: X flips the next card; everything else waits. */
+        if (np & SHOP_NP_CROSS) {
+            s_shown++; sfx_req(SHOP_SE_FLIP); eat |= SHOP_NP_CROSS; s_dirty = 1;
+        }
+        eat |= (uint16_t)(np & (SHOP_NP_UP | SHOP_NP_DOWN | SHOP_NP_LEFT |
+                                SHOP_NP_RIGHT | SHOP_NP_CIRCLE |
+                                SHOP_NP_TRIANGLE));
+    } else if (s_ceremony) {
+        /* Browse phase: pick a card, TRIANGLE views it, X continues. */
+        if (np & SHOP_NP_UP)   { s_card_sel = (s_card_sel + s_pull_n - 1) % s_pull_n; sfx_req(SHOP_SE_CURSOR); eat |= SHOP_NP_UP; s_dirty = 1; }
+        if (np & SHOP_NP_DOWN) { s_card_sel = (s_card_sel + 1) % s_pull_n;            sfx_req(SHOP_SE_CURSOR); eat |= SHOP_NP_DOWN; s_dirty = 1; }
+        if (np & SHOP_NP_TRIANGLE) {
+            s_view = 1; s_view_card = (uint16_t)s_pull[s_card_sel];
+            eat |= SHOP_NP_TRIANGLE; s_dirty = 1;
+        }
+        if (np & (SHOP_NP_CROSS | SHOP_NP_CIRCLE)) {
+            s_ceremony = 0; sfx_req(SHOP_SE_CURSOR);
+            eat |= (uint16_t)(np & (SHOP_NP_CROSS | SHOP_NP_CIRCLE));
+            s_dirty = 1;
+        }
+    } else {
+        if (np & SHOP_NP_UP)    { s_sel = (s_sel + SHOP_PACKS - 1) % SHOP_PACKS; eat |= SHOP_NP_UP; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+        if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+        if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+        if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+        if (np & SHOP_NP_CROSS) { buy(s_sel); eat |= SHOP_NP_CROSS; s_dirty = 1; }
+        if (np & SHOP_NP_CIRCLE){ s_open = 0; eat |= SHOP_NP_CIRCLE; sfx_req(SHOP_SE_LEAVE); s_dirty = 1; }
+    }
     if (eat)
         psx_mod_write_half(SHOP_PAD_NEW_ADDR, (uint16_t)(np & ~eat));
     static uint32_t last_chips;
@@ -959,6 +1264,7 @@ void psx_card_shop_tick(void) {
 int psx_card_shop_image(const uint32_t **px, int *w, int *h) {
     if (!s_gate || !s_native) return 0;
     if (!s_open) return 0;   /* all five rows are native; no band */
+    if (s_view) return 0;    /* the game's card viewer has the screen */
     draw_panel();
     *px = s_px; *w = s_img_w; *h = s_img_h;
     return 1;
@@ -1000,6 +1306,7 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         "\"tier\":%d,\"count_byte\":%u,\"cursor\":%u,\"chips\":%u,"
         "\"table17\":%u,\"stock_entry\":%u,\"widget_cur\":%u,"
         "\"say\":%d,\"say_table\":%u,\"dlg_mode\":%u,\"dlg_id\":%u,"
+        "\"cer\":%d,\"shown\":%d,\"csel\":%d,\"view\":%d,\"sub_cmd\":%u,"
         "\"pools\":[%d,%d,%d,%d],"
         "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u",
         t_state, t_menu, t_sig,
@@ -1016,6 +1323,8 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         (unsigned)psx_mod_read_half(SHOP_LBL_TABLE + SHOP_SAY_ID * 2u),
         (unsigned)psx_mod_read_byte(SHOP_DLG_MODE),
         (unsigned)psx_mod_read_half(SHOP_DLG_ID),
+        s_ceremony, s_shown, s_card_sel, s_view,
+        (unsigned)psx_mod_read_byte(SHOP_SUB_CMD),
         s_pool_n[0][0] + s_pool_n[0][1] + s_pool_n[0][2] + s_pool_n[0][3],
         s_pool_n[1][0] + s_pool_n[1][1] + s_pool_n[1][2] + s_pool_n[1][3],
         s_pool_n[2][0] + s_pool_n[2][1] + s_pool_n[2][2] + s_pool_n[2][3],

@@ -93,6 +93,7 @@ MANIFEST = {
     # the disc row 0 is the button's real top edge - 15/16 rows verify.)
     'star':        dict(x=724, y=128, w=4,   h=16, off=32567336),
     'xbtn':        dict(x=708, y=128, w=4,   h=16, off=32567304),
+    'tbtn':        dict(x=712, y=128, w=4,   h=16, off=32567312),
     'obtn':        dict(x=720, y=128, w=4,   h=16, off=32567328),
     'arrow':       dict(x=728, y=160, w=4,   h=16, off=32571440),
     'arrow2':      dict(x=728, y=192, w=4,   h=16, off=32575536),
@@ -198,6 +199,7 @@ def emit_shop_skin(vram, out_path, sprite_extract):
         ('shop_field',  sprite_extract.decode(vram, AX + 16, 280, 112, 72, 4, B)),
         ('shop_star',   sprite_extract.decode(vram, 704 * 4 + 80, 128, 16, 16, 4, S)),
         ('shop_xbtn',   sprite_extract.decode(vram, 704 * 4 + 16, 128, 16, 16, 4, (512, 252))),
+        ('shop_tbtn',   sprite_extract.decode(vram, 704 * 4 + 32, 128, 16, 16, 4, (512, 252))),
         ('shop_obtn',   sprite_extract.decode(vram, 704 * 4 + 64, 128, 16, 16, 4, (512, 252))),
         ('shop_arrow',  sprite_extract.decode(vram, 704 * 4 + 96, 160, 16, 16, 4, (544, 252))),
         ('shop_arrow2', sprite_extract.decode(vram, 704 * 4 + 96, 192, 16, 16, 4, (544, 252))),
