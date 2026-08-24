@@ -1,5 +1,39 @@
 # Release notes
 
+## 0.3.5
+
+Extract this over your existing install as usual. Saves, savestates and your
+settings are unaffected.
+
+### New: `AUDIO → AUTO SLOW FOR AUDIO`, and it starts off
+
+`GAME → SPEED` runs the game faster without speeding the music up. When a scene
+is heavy enough that your machine cannot hold the faster cadence, the emulator
+used to quietly step the speed back down to protect the sound.
+
+That is now a choice, and it is **off by default**. You keep the speed you
+picked; if a scene is too heavy for it, the sound is what suffers. Turn the new
+row on to have the emulator ease the speed down instead — a dip in speed rather
+than sound that breaks up. On a machine that can hold the speed you asked for,
+neither setting does anything at all.
+
+### Fixed: setup failed after moving the extracted folder
+
+Extracting the release, running setup, and then moving the folder somewhere
+else — Downloads to Desktop, typically — made the next run fail with
+
+```
+CMake step for psx_libchdr failed: 1
+```
+
+and a wall of CMake output that explained neither what was wrong nor what to do
+about it. A build tree records the absolute path it was configured in, so moving
+one invalidates it. Setup now notices and starts that step fresh instead of
+failing.
+
+If you hit this on 0.3.3 or 0.3.4, deleting the `build-release` folder inside
+the moved copy fixes it without needing this update.
+
 ## 0.3.4
 
 Extract this over your existing install as usual. Saves, savestates and your
