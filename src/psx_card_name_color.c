@@ -1,4 +1,4 @@
-/* psx_card_text_color.c — tint a card's on-screen text by how rare it is.
+/* psx_card_name_color.c — tint a card's on-screen text by how rare it is.
  *
  * The stock game draws every card's text in the same colour. This colours it
  * by rarity, where "rarity" is drop scarcity — specifically, the single BEST
@@ -80,11 +80,11 @@
  * the player-data directory, written with the built-in values the first
  * time colours are built, so the file documents its own defaults.
  *
- *   [tiers]   both the max-weight cut-off AND the colour for each of the
- *             six rarity tiers (default/uncommon/rare/super_rare/ultra_rare/
- *             legendary) are tunable here — a card takes the first tier,
- *             rarest first, whose cut-off it does not exceed, and is
- *             painted that tier's chosen colour
+ *   [tiers]   both the max-weight threshold AND the colour for each of the
+ *             six rarity tiers (legendary/ultra_rare/super_rare/rare/
+ *             uncommon/default, rarest first) are tunable here — a card
+ *             takes the first tier whose threshold it does not exceed,
+ *             and is painted that tier's chosen colour
  *   [cards]   NAME = colour overrides, matched against the game's own
  *             decoded names (see psx_card_db.c) so no id table can rot
  */
@@ -232,7 +232,7 @@ static uint8_t s_tier_color[RARITY_TIERS] = {
 };
 /* Weight is out of 2048 (~20 is ~1%, per the CARD DROPS docs). This
  * project's own estimate — tune freely. */
-static int s_tier_threshold[RARITY_TIERS] = { 0, 20, 60, 150, 400, 2048 };
+static int s_tier_threshold[RARITY_TIERS] = { 2, 8, 12 ,20,32, 2048 };
 
 /* TIER_DEFAULT excluded — it is always the fallback, never sorted in.
  * Recomputed once per build_colors() from whatever s_tier_threshold ends up
@@ -504,14 +504,23 @@ static int s_enabled = 1;
  * no ambiguity to narrow.
  *
  * func_80036C14 delivers one DECODED character at a time as a1 — a simple
- * cipher (space=0x00, 'A'-'Z'=0x60-0x79, apostrophe=0x66, 'a'-'z'=0x81-0x9A)
- * that is NOT the frequency code s_name[] was decoded from (psx_card_db.c's
- * table), but resolves to the same plain ASCII either way, so comparing
- * decoded characters against s_name[id] one at a time works. */
+ * cipher (space=0x00, 'A'-'Z'=0x60-0x79, 'a'-'z'=0x81-0x9A) that is NOT the
+ * frequency code s_name[] was decoded from (psx_card_db.c's table), but
+ * resolves to the same plain ASCII either way, so comparing decoded
+ * characters against s_name[id] one at a time works.
+ *
+ * 0x66 IS 'G' (0x66-0x60=6, 'A'+6='G'), not an apostrophe. An earlier
+ * version special-cased 0x66 as apostrophe (inherited from an even earlier,
+ * different matching approach, never re-verified against this one) and it
+ * silently broke every name containing the letter G — confirmed live
+ * 2026-08 by tracing "Gate Guardian": its real first glyph is 0x66, which
+ * the special case intercepted before the A-Z range ever ran, so the name
+ * could never match past its own first character. Apostrophe's real code
+ * in this cipher is not yet known; ' names (e.g. "Fiend's Hand") will only
+ * colour up to the apostrophe until it is found. */
 static char glyph_ascii(unsigned code)
 {
     if (code == 0x00u) return ' ';
-    if (code == 0x66u) return '\'';
     if (code >= 0x60u && code <= 0x79u) return (char)('A' + (int)(code - 0x60u));
     if (code >= 0x81u && code <= 0x9Au) return (char)('a' + (int)(code - 0x81u));
     return 0;   /* not a name-stream code: an escape, a digit run, etc. */
