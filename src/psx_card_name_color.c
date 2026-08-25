@@ -1,92 +1,56 @@
-/* psx_card_name_color.c — tint a card's on-screen text by how rare it is.
+/* psx_card_name_color.c — tints a card's on-screen text by drop rarity.
  *
- * The stock game draws every card's text in the same colour. This colours it
- * by rarity, where "rarity" is drop scarcity — specifically, the single BEST
- * odds any one duelist ever gives the card (see the rarity model section
- * below), not just how many duelists carry it. Nothing on the disc is
- * touched — the mod only overrides the glyph colour byte the text engine is
- * about to use.
+ * Rarity is the best odds any one duelist gives the card, scaled by that
+ * duelist's tier and the drop's rank band (see the rarity model section
+ * below). Nothing on disc is touched — the mod only overrides the glyph
+ * colour byte the text engine is about to draw.
  *
- * SCOPE: THE NAME, AND ONLY THE NAME — CONFIRMED BY CONTENT, NOT BY CALL SITE
- * ------------------------------------------------------------------------
- * Two things had to be found before this worked, in this order:
+ * WHICH CARD, WHICH TEXT
+ * -----------------------
+ * func_80037DA4 is the text engine; it draws a card's name, type, Guardian
+ * Stars and description through the same code path, so its $ra alone can't
+ * tell a name apart from the rest. What it CAN give reliably is the card:
+ * at $ra == CARD_NAME_CALLER, 0x8009B338 already holds the id of the card
+ * being drawn (Data Crystal's RAM map calls this "Selected card ID"; this
+ * repo's psx_card_shop.c also uses it, as SHOP_SIG_A).
  *
- * 1. WHICH CARD. func_80037DA4 is the text engine, called from many places.
- *    A first version gated on $ra == 0x80038B98 ("the return site inside the
- *    card-name dispatcher"), assuming that address was specific to drawing a
- *    NAME. It is not: a debug trace on a real CARD VIEW screen (2026-08)
- *    showed that exact $ra firing for the type line, Guardian Stars and
- *    description too — thousands of consecutive entries, no gaps — because
- *    it is the return site for ANY text a card-info widget draws, not the
- *    name specifically. It only looked name-specific on the CHEST/deck-list
- *    screens because nothing else there is drawn as real text (ATK/DEF/id
- *    are sprite digits). So $ra alone answers "is this widget drawing SOME
- *    piece of a card's info", never "is this the name".
+ * Telling the name apart from the rest needs the glyphs themselves.
+ * func_80036C14 delivers one decoded character at a time; matching it
+ * position-by-position against the card's already-known name (never
+ * searching for it) is safe, since no type line or description can equal a
+ * card's full name character for character.
  *
- *    What $ra == 0x80038B98 DOES reliably give is WHICH card: at that entry,
- *    a0 is the widget and 0x8009B338 already holds the id of the card whose
- *    info is about to be drawn:
- *
- *        0x8009B338  u16  "Selected card ID"
- *
- *    documented by the community RAM map for this exact game (Data Crystal,
- *    Yu-Gi-Oh! Forbidden Memories:RAM map) and the SAME address this repo
- *    already names SHOP_SIG_A in psx_card_shop.c (a fixed byte there, on
- *    the shopkeeper's menu — one scratch cell meaning different things on
- *    different screens, normal for this game). Confirmed live via the
- *    framework's debug-server RAM poll (scripts/wtrace_id.py peek, now
- *    removed): polling it while scrolling the CHEST screen produced exactly
- *    the on-screen card ids in order (240, 241, 276, 283, 326, 335, 336,
- *    387, 402, 421, 475, 524, 547, 609, 635, ...).
- *
- * 2. WHICH PIECE OF TEXT. Knowing the card, not which of its text elements
- *    is drawing, needs the glyphs themselves — but ONLY as a check against
- *    the one already-known target string (the card's decoded name), never
- *    to search for it among all 722 cards (that earlier, much less certain
- *    approach was tried and abandoned for the id lookup above; reusing the
- *    same glyph-decoding here is a different, narrower job with a single
- *    known answer to confirm, not a search). func_80036C14 delivers one
- *    DECODED character at a time as a1; matching it position-by-position
- *    against the card's name is safe because a type line, Guardian Star
- *    label or description can never coincidentally equal a card's full name
- *    character for character. See the glyph-match section below.
- *
- * THE COLOUR IS STICKY, SO EVERY RUN STARTS FROM WHITE
- * ------------------------------------------------------
+ * THE COLOUR IS STICKY
+ * ----------------------
  * func_80036C14's a0 is the glyph record; byte +84 is its colour index, and
- * writing it does not just paint one glyph — later glyphs on the SAME widget
- * keep using whatever was last written there, until something changes it
- * again. An early version of this mod (colour set once at $ra ==
- * 0x80038B98, one glyph write, never reset) relied on that entry meaning
- * "the name" and ended up colouring the type line, Guardian Stars and
- * description too, everywhere the entry fired. The fix now is symmetric at
- * the level that is actually reliable: every CARD_NAME_CALLER entry first
- * reverts the widget to white and arms a fresh, unconfirmed match against
- * the known card name; the glyph hook then re-applies the rarity colour
- * ONLY glyph by glyph while that match keeps holding, and stops the moment
- * it does not. A type line or description therefore never gets touched at
- * all — the revert already ran before its first glyph, and the match never
- * starts succeeding against a name it is not.
+ * it stays applied to every later glyph on that widget until overwritten
+ * again. So each CARD_NAME_CALLER entry first reverts the widget to white
+ * and arms an unconfirmed match against the card's name; the glyph hook
+ * then re-applies the rarity colour only while that match keeps holding. A
+ * type line or description is never touched, because a match against it
+ * never starts succeeding.
  *
- * The palette. psx_card_drops.c's "f8 0a nn" escape comment names 00/01/02/
- * 03/05 as white/gold/blue/green/"red-salmon"; measured colour on screen and
- * this project's own naming (see the COL_* constants below) differs slightly
- * — 01 reads as yellow and 05 as orange, with 06 a separate, distinct red:
- *     00 white   01 yellow   02 blue   03 green   04 grey   05 orange   06 red
+ * THE PALETTE
+ * ------------
+ * Usable colour indices: 0 white, 1 yellow, 2 blue, 3 green, 4 grey,
+ * 5 orange, 6 red. Nothing past 6 renders as a usable colour.
  *
  * card_name_color.ini
  * --------------------
- * Same shape as card_shop.c's card_shop.ini: a plain, hand-editable file in
- * the player-data directory, written with the built-in values the first
- * time colours are built, so the file documents its own defaults.
+ * A plain, hand-editable file in the player-data directory, written with
+ * the built-in defaults the first time colours are built.
  *
- *   [tiers]   both the max-weight threshold AND the colour for each of the
- *             six rarity tiers (legendary/ultra_rare/super_rare/rare/
- *             uncommon/default, rarest first) are tunable here — a card
- *             takes the first tier whose threshold it does not exceed,
- *             and is painted that tier's chosen colour
- *   [cards]   NAME = colour overrides, matched against the game's own
- *             decoded names (see psx_card_db.c) so no id table can rot
+ *   [tiers]                    threshold and colour for each of the six
+ *                              rarity tiers (legendary/ultra_rare/
+ *                              super_rare/rare/uncommon/default, rarest
+ *                              first) — a card takes the first tier whose
+ *                              threshold it does not exceed
+ *   [duelist_tier_multipliers] name a duelist tier and give it a multiplier
+ *   [duelist_tiers]            DUELIST NAME = tier name, from the list above
+ *   [rank_multipliers]         multiplier for each rank band: s_a_pow,
+ *                              b_c_d, s_a_tec
+ *   [cards]                    NAME = colour overrides, matched against the
+ *                              game's own decoded card names
  */
 
 #include <stdint.h>
@@ -104,39 +68,21 @@
 
 #define PSX_TEXT_FN        0x80037DA4u
 #define PSX_GLYPH_FN        0x80036C14u  /* per-decoded-character callback */
-#define CARD_NAME_CALLER   0x80038B98u   /* $ra when func_80037DA4 draws a
-                                          * card-info widget's text (name,
-                                          * type, Guardian Stars, or the
-                                          * description — see the glyph-match
-                                          * section below for why) */
-#define PSX_SELECTED_CARD  0x8009B338u   /* u16, "Selected card ID" (Data Crystal) */
+#define CARD_NAME_CALLER   0x80038B98u   /* $ra for any card-info widget's text */
+#define PSX_SELECTED_CARD  0x8009B338u   /* u16, id of the card being drawn */
 
 #define CARD_COUNT PSX_DROP_DB_CARDS     /* 722 */
 
 #define GLYPH_COLOR_OFF  84u
 #define COL_WHITE   0u
-#define COL_YELLOW  1u   /* psx_card_drops.c's "f8 0a nn" comment calls this
-                          * "gold"; measured live, it renders as yellow. */
+#define COL_YELLOW  1u
 #define COL_BLUE    2u
 #define COL_GREEN   3u
-/* 4 is undocumented by psx_card_drops.c's "f8 0a nn" comment (it lists
- * 00/01/02/03/05) but confirmed live 2026-08: it renders as a distinct dim
- * grey, not garbage. Not used by the default ladder below; still available
- * for [cards] overrides. */
-#define COL_GREY    4u
-#define COL_ORANGE  5u   /* psx_card_drops.c calls this "red-salmon"; it
-                          * actually renders as orange/amber. */
-#define COL_RED     6u   /* confirmed live 2026-08: a second, distinct,
-                          * brighter red past COL_ORANGE. */
-/* THE PALETTE STOPS HERE. Confirmed live 2026-08 by tinting real cards on
- * the CHEST screen across the ENTIRE 0-32 range: 7-10 and 32 make the NAME
- * TEXT INVISIBLE (everything else on the row — id, ATK/DEF, icons — still
- * draws fine, so this is not a crash, the colour byte just has no usable
- * glyph past this point); 16 renders as a near-black maroon; 20 and 21
- * render as visible but corrupted (colour bleed / a solid garbage block) —
- * none of it is a real additional colour, all of it reads as the renderer
- * being fed an index with no defined palette entry. Nothing past 6 is
- * worth exposing as a name here — do not keep re-probing this. */
+#define COL_GREY    4u    /* usable, just not part of the default ladder */
+#define COL_ORANGE  5u
+#define COL_RED     6u
+/* Nothing past 6 is a usable colour — the renderer has no palette entry
+ * for it (invisible text, corrupted glyphs, or a near-black maroon). */
 
 /* ---- name decoding, so [cards] overrides can be matched by NAME ----------
  * Same RAM map and frequency-code table as psx_card_db.c. */
@@ -199,58 +145,46 @@ static int name_ieq(const char *a, const char *b)
 }
 
 /* ---- rarity model ---------------------------------------------------------
- * Six tiers, RAREST first: legendary, ultra_rare, super_rare, rare,
- * uncommon, default. A card takes the FIRST tier, rarest first, whose
- * threshold it does not exceed. The value tested against that threshold is
- * the card's MAX WEIGHT: the single BEST odds any one duelist ever gives
- * it — the highest raw weight, out of PSX_DROP_DB_TOTAL (2048; the same
- * denominator the drop table viewer's percentages use), this card reaches
- * in any (duelist, band) entry. Not "how many duelists drop it" (the CARD
- * SHOP's measure, and this mod's first cut) — that treats a card 20
- * duelists each drop at a 1-in-2048 sliver the same as one they all drop
- * generously; max weight tells them apart. legendary (weight 0) still means
- * "nobody drops it at all".
+ * Six tiers, rarest first: legendary, ultra_rare, super_rare, rare,
+ * uncommon, default. A card takes the first tier, rarest first, whose
+ * threshold it does not exceed. The value compared is the card's rarity
+ * SCORE: the best score any one (duelist, rank band) entry gives it —
  *
- * The engine's usable palette is only 0-6 (see COL_RED's comment above), so
- * six tiers get six distinct colours, one each. The thresholds below are
- * this project's own estimate, spaced across the 0-2048 weight range —
- * they, and all six colours, are configurable via card_name_color.ini
- * [tiers].
+ *     score = weight * duelist_tier_multiplier * rank_multiplier
  *
- * THE THRESHOLD VALUES DECIDE THE RARITY ORDER, NOT THE TIER NAMES.
- * "legendary" is not hard-coded as rarest; it just ships with the smallest
- * threshold. Every session, the five non-default tiers are re-sorted by
- * their (possibly ini-edited) threshold, ascending, and checked in THAT
- * order — so setting, say, uncommon_threshold below legendary_threshold
- * genuinely makes uncommon the new rarest tier, no relabelling needed.
- * default has no threshold of its own and is always the fallback,
- * regardless of what the other five say. */
+ * weight is the raw drop weight (out of PSX_DROP_DB_TOTAL = 2048);
+ * duelist_tier_multiplier comes from the duelist's [duelist_tiers] tier
+ * (ini [duelist_tier_multipliers]; unassigned duelists use "default");
+ * rank_multiplier comes from ini [rank_multipliers] for that entry's S/A
+ * POW, B/C/D or S/A TEC band. All multipliers default to 1, so a stock ini
+ * uses the max raw weight. legendary (score 0) means no duelist drops it.
+ *
+ * THRESHOLD VALUES DECIDE THE RARITY ORDER, NOT THE TIER NAMES. The five
+ * non-default tiers are re-sorted by threshold, ascending, every session,
+ * so editing a threshold can change which tier is rarest without
+ * relabelling anything. default has no threshold and is always the
+ * fallback. */
 enum { TIER_LEGENDARY, TIER_ULTRA_RARE, TIER_SUPER_RARE, TIER_RARE,
        TIER_UNCOMMON, TIER_DEFAULT, RARITY_TIERS };
 static uint8_t s_tier_color[RARITY_TIERS] = {
     COL_BLUE, COL_RED, COL_ORANGE, COL_YELLOW, COL_GREEN, COL_WHITE,
 };
-/* Weight is out of 2048 (~20 is ~1%, per the CARD DROPS docs). This
- * project's own estimate — tune freely. */
-static int s_tier_threshold[RARITY_TIERS] = { 2, 8, 12 ,20,32, 2048 };
+/* Compared against a card's rarity score, not raw weight, once multipliers
+ * are edited away from 1. Tunable via [tiers]. */
+static double s_tier_threshold[RARITY_TIERS] = { 2, 5, 7, 11, 16, 2048 };
 
-/* TIER_DEFAULT excluded — it is always the fallback, never sorted in.
- * Recomputed once per build_colors() from whatever s_tier_threshold ends up
- * holding (defaults or ini), so an edited ordering takes effect the same
- * way an edited number does. */
+/* TIER_DEFAULT excluded — always the fallback. Recomputed once per
+ * build_colors() from s_tier_threshold (defaults or ini). */
 static int s_tier_order[TIER_DEFAULT];
 
 static void sort_tiers_by_threshold(void)
 {
     for (int i = 0; i < TIER_DEFAULT; i++)
         s_tier_order[i] = i;
-    /* TIER_DEFAULT elements: a plain insertion sort is simplest and fast
-     * enough at this size. Stable, so tied thresholds keep their original
-     * legendary/ultra_rare/super_rare/rare/uncommon order rather than
-     * shuffling. */
+    /* Small, stable insertion sort: ties keep their original tier order. */
     for (int i = 1; i < TIER_DEFAULT; i++) {
         const int key = s_tier_order[i];
-        const int key_threshold = s_tier_threshold[key];
+        const double key_threshold = s_tier_threshold[key];
         int j = i - 1;
         while (j >= 0 && s_tier_threshold[s_tier_order[j]] > key_threshold) {
             s_tier_order[j + 1] = s_tier_order[j];
@@ -258,6 +192,91 @@ static void sort_tiers_by_threshold(void)
         }
         s_tier_order[j + 1] = key;
     }
+}
+
+/* ---- duelist tiers & rank multipliers --------------------------------------
+ * Two multipliers feed a card's rarity score: which tier a duelist belongs
+ * to, and which rank band (S/A POW, B/C/D, S/A TEC) the drop came from.
+ * Tougher duelists get a lower multiplier, so a card a hard opponent drops
+ * generously still reads as rarer than one an easy opponent drops rarely.
+ * Both are tunable via [duelist_tier_multipliers]/[duelist_tiers]/
+ * [rank_multipliers]; the values below are just the shipped defaults. */
+#define DUELIST_TIER_MAX 16
+typedef struct { char name[24]; double multiplier; } DuelistTierDef;
+static DuelistTierDef s_duelist_tier[DUELIST_TIER_MAX] = {
+    { "default",   1.0  },
+    { "tutorial",  2.0  },
+    { "rookie",    1.5  },
+    { "normal",    1.0  },
+    { "tough",     0.75 },
+    { "boss",      0.5  },
+    { "superboss", 0.25 },
+};
+static int s_duelist_tier_n = 7;
+
+#define DUELIST_ASSIGN_MAX (PSX_DROP_DB_DUELISTS + 8)
+typedef struct { char duelist[32]; char tier[24]; } DuelistTierAssign;
+static DuelistTierAssign s_duelist_assign[DUELIST_ASSIGN_MAX] = {
+    { "Simon Muran",        "tutorial"  },
+    { "Teana",               "tutorial"  },
+    { "Jono",                "tutorial"  },
+    { "Villager1",           "tutorial"  },
+    { "Villager2",           "tutorial"  },
+    { "Villager3",           "tutorial"  },
+    { "Seto",                "normal"    },
+    { "Heishin",             "boss"      },
+    { "Rex Raptor",          "normal"    },
+    { "Weevil Underwood",    "normal"    },
+    { "Mai Valentine",       "normal"    },
+    { "Bandit Keith",        "normal"    },
+    { "Shadi",               "tough"     },
+    { "Yami Bakura",         "tough"     },
+    { "Pegasus",             "boss"      },
+    { "Isis",                "boss"      },
+    { "Kaiba",               "boss"      },
+    { "Mage Soldier",        "rookie"    },
+    { "Jono 2nd",            "normal"    },
+    { "Teana 2nd",           "normal"    },
+    { "Ocean Mage",          "tough"     },
+    { "High Mage Secmeton",  "tough"     },
+    { "Forest Mage",         "tough"     },
+    { "High Mage Anubisius", "tough"     },
+    { "Mountain Mage",       "tough"     },
+    { "High Mage Atenza",    "tough"     },
+    { "Desert Mage",         "tough"     },
+    { "High Mage Martis",    "tough"     },
+    { "Meadow Mage",         "tough"     },
+    { "High Mage Kepura",    "tough"     },
+    { "Labyrinth Mage",      "boss"      },
+    { "Seto 2nd",            "boss"      },
+    { "Guardian Sebek",      "boss"      },
+    { "Guardian Neku",       "boss"      },
+    { "Heishin 2nd",         "boss"      },
+    { "Seto 3rd",            "superboss" },
+    { "DarkNite",            "superboss" },
+    { "Nitemare",            "superboss" },
+    { "Duel Master K",       "superboss" },
+};
+static int s_duelist_assign_n = 39;
+
+/* Order matches PSX_DROP_DB's PsxDropDbDuelist.tier[]: S/A POW, B/C/D,
+ * S/A TEC. Keyed in the ini as s_a_pow / b_c_d / s_a_tec. */
+static double s_rank_multiplier[PSX_DROP_DB_TIERS] = { 0.75, 1.0, 0.5 };
+
+static double duelist_tier_multiplier(const char *tier_name)
+{
+    for (int i = 0; i < s_duelist_tier_n; i++)
+        if (name_ieq(s_duelist_tier[i].name, tier_name))
+            return s_duelist_tier[i].multiplier;
+    return 1.0;   /* tier named in [duelist_tiers] but never defined above */
+}
+
+static double duelist_multiplier_for(const char *duelist_name)
+{
+    for (int i = 0; i < s_duelist_assign_n; i++)
+        if (name_ieq(s_duelist_assign[i].duelist, duelist_name))
+            return duelist_tier_multiplier(s_duelist_assign[i].tier);
+    return duelist_tier_multiplier("default");   /* never assigned a tier */
 }
 
 /* Per-card rarity colour, indexed by id. Built once from the baked drop DB,
@@ -287,12 +306,8 @@ static void ini_trim(char *s)
                      e[-1] == ' '  || e[-1] == '\t')) *--e = 0;
 }
 
-/* Named colours are the ones this project has actually seen rendered; the
- * text engine's colour byte may support more (its consumer is a per-glyph
- * record field this codebase has not traced past — offset 22 there is
- * reused by too many unrelated structures to follow statically). A plain
- * number (e.g. "color = 4") is passed straight through un-named, so a value
- * can be tried live before anyone gives it a name here. */
+/* A plain number (e.g. "color = 4") is passed straight through un-named,
+ * for any value that doesn't have a name below. */
 static int color_name_to_val(const char *v, uint8_t *out)
 {
     if (name_ieq(v, "white"))  { *out = COL_WHITE;  return 1; }
@@ -334,38 +349,51 @@ static void ini_write_default(const char *path)
         "\n[tiers]\n"
         "# Six tiers, rarest to most common: legendary, ultra_rare,\n"
         "# super_rare, rare, uncommon, default. A card gets the rarest\n"
-        "# tier whose threshold it does not exceed; default is the\n"
-        "# catch-all with no threshold. Thresholds decide the order, not\n"
-        "# the tier names - the lowest threshold is always rarest.\n"
+        "# tier whose threshold it does not exceed. Thresholds decide\n"
+        "# the order, not the tier names.\n"
         "#\n"
-        "# threshold = best drop odds any duelist gives the card, as a\n"
-        "# weight out of 2048 (lower = rarer). Estimates - tune freely.\n"
-        "#\n"
-        "# color = white|yellow|orange|red|blue|green|grey, or a number\n"
-        "# 0-6 (higher numbers render broken, not a new colour).\n"
-        "legendary_threshold   = %d\n"
+        "# threshold = best rarity score any duelist gives the card:\n"
+        "# weight (out of 2048) times the multipliers below.\n"
+        "# color = white|yellow|orange|red|blue|green|grey, or a number 0-6.\n"
+        "legendary_threshold   = %g\n"
         "legendary_color       = %s\n"
-        "ultra_rare_threshold  = %d\n"
+        "ultra_rare_threshold  = %g\n"
         "ultra_rare_color      = %s\n"
-        "super_rare_threshold  = %d\n"
+        "super_rare_threshold  = %g\n"
         "super_rare_color      = %s\n"
-        "rare_threshold        = %d\n"
+        "rare_threshold        = %g\n"
         "rare_color            = %s\n"
-        "uncommon_threshold    = %d\n"
+        "uncommon_threshold    = %g\n"
         "uncommon_color        = %s\n"
         "default_color         = %s\n"
-        "\n[cards]\n"
-        "# NAME = color, one per line, overrides the tier for that card.\n"
-        "# Blank or invalid values are ignored (falls back to [tiers]).\n"
-        "#\n"
-        "# Every card is listed below, commented out, at white. Uncomment\n"
-        "# a line and change its color to pin that card.\n",
+        "\n[duelist_tier_multipliers]\n"
+        "# Name a duelist tier and give it a multiplier, applied to every\n"
+        "# card that tier's duelists can drop. \"default\" always exists.\n",
         s_tier_threshold[TIER_LEGENDARY],  color_val_to_name(s_tier_color[TIER_LEGENDARY]),
         s_tier_threshold[TIER_ULTRA_RARE], color_val_to_name(s_tier_color[TIER_ULTRA_RARE]),
         s_tier_threshold[TIER_SUPER_RARE], color_val_to_name(s_tier_color[TIER_SUPER_RARE]),
         s_tier_threshold[TIER_RARE],       color_val_to_name(s_tier_color[TIER_RARE]),
         s_tier_threshold[TIER_UNCOMMON],   color_val_to_name(s_tier_color[TIER_UNCOMMON]),
         color_val_to_name(s_tier_color[TIER_DEFAULT]));
+    for (int i = 0; i < s_duelist_tier_n; i++)
+        fprintf(f, "%-9s = %g\n", s_duelist_tier[i].name, s_duelist_tier[i].multiplier);
+    fprintf(f,
+        "\n[duelist_tiers]\n"
+        "# DUELIST NAME = tier name (must be defined above). Blank,\n"
+        "# invalid or undefined tiers fall back to a multiplier of 1.\n");
+    for (int i = 0; i < s_duelist_assign_n; i++)
+        fprintf(f, "%s = %s\n", s_duelist_assign[i].duelist, s_duelist_assign[i].tier);
+    fprintf(f,
+        "\n[rank_multipliers]\n"
+        "# Multiplier for each rank band: s_a_pow, b_c_d, s_a_tec.\n"
+        "s_a_pow = %g\n"
+        "b_c_d   = %g\n"
+        "s_a_tec = %g\n"
+        "\n[cards]\n"
+        "# NAME = color, overrides the tier for that card. Blank or\n"
+        "# invalid values fall back to [tiers]. Every card is listed\n"
+        "# below, commented out; uncomment and set a color to pin one.\n",
+        s_rank_multiplier[0], s_rank_multiplier[1], s_rank_multiplier[2]);
     for (int id = 1; id <= CARD_COUNT; id++)
         if (s_name[id][0])
             fprintf(f, "# %s = white\n", s_name[id]);
@@ -413,7 +441,7 @@ static void ini_load(void)
             else if (!strncmp(p, "default_", 8))      tier = TIER_DEFAULT;
             if (tier < 0) continue;
             if (strstr(p, "threshold")) {
-                const int n = atoi(v);
+                const double n = atof(v);
                 if (n >= 0) s_tier_threshold[tier] = n;
             } else if (strstr(p, "color") || strstr(p, "colour")) {
                 uint8_t col;
@@ -427,6 +455,31 @@ static void ini_load(void)
                      sizeof s_override[0].name, "%s", p);
             s_override[s_override_n].color = col;
             s_override_n++;
+        } else if (!strcmp(sect, "duelist_tier_multipliers")) {
+            if (!p[0]) continue;
+            int i;
+            for (i = 0; i < s_duelist_tier_n; i++)
+                if (name_ieq(s_duelist_tier[i].name, p)) break;
+            if (i == s_duelist_tier_n) {
+                if (s_duelist_tier_n >= DUELIST_TIER_MAX) continue;
+                snprintf(s_duelist_tier[i].name, sizeof s_duelist_tier[0].name, "%s", p);
+                s_duelist_tier_n++;
+            }
+            s_duelist_tier[i].multiplier = atof(v);
+        } else if (!strcmp(sect, "duelist_tiers")) {
+            if (!p[0] || !v[0]) continue;
+            if (s_duelist_assign_n >= DUELIST_ASSIGN_MAX) continue;
+            snprintf(s_duelist_assign[s_duelist_assign_n].duelist,
+                     sizeof s_duelist_assign[0].duelist, "%s", p);
+            snprintf(s_duelist_assign[s_duelist_assign_n].tier,
+                     sizeof s_duelist_assign[0].tier, "%s", v);
+            s_duelist_assign_n++;
+        } else if (!strcmp(sect, "rank_multipliers")) {
+            int t = -1;
+            if      (name_ieq(p, "s_a_pow")) t = 0;
+            else if (name_ieq(p, "b_c_d"))   t = 1;
+            else if (name_ieq(p, "s_a_tec")) t = 2;
+            if (t >= 0) s_rank_multiplier[t] = atof(v);
         }
     }
     fclose(f);
@@ -451,25 +504,31 @@ static void build_colors(void)
     ini_load();
     sort_tiers_by_threshold();
 
-    /* max_weight[card] = the single best (highest) raw weight, out of
-     * PSX_DROP_DB_TOTAL (2048), any one duelist ever gives this card. */
-    static uint16_t max_weight[CARD_COUNT + 1];
-    memset(max_weight, 0, sizeof max_weight);
-    for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++)
-        for (int t = 0; t < PSX_DROP_DB_TIERS; t++)
+    /* card_rarity[card] = the single best (highest) rarity SCORE — weight *
+     * duelist tier multiplier * rank multiplier, see the rarity model
+     * comment above — any one (duelist, band) entry ever gives this card. */
+    static double card_rarity[CARD_COUNT + 1];
+    memset(card_rarity, 0, sizeof card_rarity);
+    for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
+        const double dmult = duelist_multiplier_for(PSX_DROP_DB[d].name);
+        for (int t = 0; t < PSX_DROP_DB_TIERS; t++) {
+            const double rmult = s_rank_multiplier[t];
             for (int i = 0; i < PSX_DROP_DB[d].count[t]; i++) {
                 const int c = PSX_DROP_DB[d].tier[t][i].card;
                 const uint16_t w = PSX_DROP_DB[d].tier[t][i].weight;
-                if (c >= 1 && c <= CARD_COUNT && w > max_weight[c])
-                    max_weight[c] = w;
+                const double r = (double)w * dmult * rmult;
+                if (c >= 1 && c <= CARD_COUNT && r > card_rarity[c])
+                    card_rarity[c] = r;
             }
+        }
+    }
     for (int id = 1; id <= CARD_COUNT; id++) {
         const int ov = override_for(id);
         if (ov >= 0) {
             s_card_color[id] = (uint8_t)ov;
             continue;
         }
-        const int n = (int)max_weight[id];
+        const double n = card_rarity[id];
         uint8_t col = s_tier_color[TIER_DEFAULT];
         for (int i = 0; i < TIER_DEFAULT; i++) {
             const int t = s_tier_order[i];
@@ -480,44 +539,23 @@ static void build_colors(void)
     s_color_built = 1;
 }
 
-/* MODS > CARD NAME COLOR. On by default — this is purely cosmetic (never
- * touches a save), so there is nothing to opt into the way DROP MISSING
- * CARDS' save-shaped change has. */
+/* On by default: purely cosmetic, nothing to opt into. */
 static int s_enabled = 1;
 
 /* ---- confirming a run of glyphs actually IS the card's name ---------------
+ * CARD_NAME_CALLER fires for every piece of text a card-info widget draws
+ * (name, type, Guardian Stars, description), not just the name. The id
+ * from PSX_SELECTED_CARD says which card; telling the name apart from the
+ * rest needs the glyphs, matched against the one already-known target
+ * (s_name[id]) rather than searched for — a type line or description can
+ * never coincidentally equal a card's full name.
  *
- * $ra == CARD_NAME_CALLER fires for EVERY piece of text a card-info widget
- * draws — name, type, Guardian Stars, description — not just the name
- * (confirmed live 2026-08: a debug log showed thousands of consecutive
- * "is_name" entries with no gaps while browsing a CARD VIEW screen, where
- * the type line and description are real text, unlike the CHEST/deck-list
- * screens where nothing else is drawn as text and this filter happens to
- * work by coincidence). So the id from 0x8009B338 says WHICH card; telling
- * the name apart from the card's other text needs the glyphs themselves.
- *
- * Unlike the earlier, abandoned attempt to identify a card FROM its glyphs
- * (narrowing over all 722 names, unreliable — see the file's SCOPE note
- * history), this only ever checks ONE already-known target: does the text
- * about to stream match s_name[id] exactly? A type line or description
- * cannot coincidentally equal a card's full name, so matching is safe with
- * no ambiguity to narrow.
- *
- * func_80036C14 delivers one DECODED character at a time as a1 — a simple
- * cipher (space=0x00, 'A'-'Z'=0x60-0x79, 'a'-'z'=0x81-0x9A) that is NOT the
- * frequency code s_name[] was decoded from (psx_card_db.c's table), but
- * resolves to the same plain ASCII either way, so comparing decoded
- * characters against s_name[id] one at a time works.
- *
- * 0x66 IS 'G' (0x66-0x60=6, 'A'+6='G'), not an apostrophe. An earlier
- * version special-cased 0x66 as apostrophe (inherited from an even earlier,
- * different matching approach, never re-verified against this one) and it
- * silently broke every name containing the letter G — confirmed live
- * 2026-08 by tracing "Gate Guardian": its real first glyph is 0x66, which
- * the special case intercepted before the A-Z range ever ran, so the name
- * could never match past its own first character. Apostrophe's real code
- * in this cipher is not yet known; ' names (e.g. "Fiend's Hand") will only
- * colour up to the apostrophe until it is found. */
+ * func_80036C14 delivers one decoded character at a time: space=0x00,
+ * 'A'-'Z'=0x60-0x79, 'a'-'z'=0x81-0x9A. This is a different cipher from the
+ * frequency code s_name[] was decoded from, but resolves to the same ASCII
+ * either way, so comparing them works. Apostrophe's code in this cipher is
+ * not known; names containing one (e.g. "Fiend's Hand") only colour up to
+ * the apostrophe. */
 static char glyph_ascii(unsigned code)
 {
     if (code == 0x00u) return ' ';
@@ -526,10 +564,8 @@ static char glyph_ascii(unsigned code)
     return 0;   /* not a name-stream code: an escape, a digit run, etc. */
 }
 
-/* The widget currently expecting name-glyphs, the position matched so far
- * against s_match_target, and whether the match is still alive. Reset at
- * every CARD_NAME_CALLER entry (a new run is starting); consumed glyph by
- * glyph in the glyph hook. */
+/* State for matching one widget's incoming glyphs against s_match_target.
+ * Reset at every CARD_NAME_CALLER entry; consumed glyph by glyph below. */
 static uint32_t    s_match_obj;
 static int         s_match_active;
 static int         s_match_pos;
