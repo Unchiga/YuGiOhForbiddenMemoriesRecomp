@@ -1,5 +1,66 @@
 # Release notes
 
+## 0.3.6
+
+Extract this over your existing install as usual. Saves, savestates and your
+settings are unaffected.
+
+### New: `MODS → CARD NAME COLOR`
+
+Contributed by **yamyi**, who also brought widescreen in 0.3.1.
+
+A card's name is tinted by how hard that card is to farm, so the chest, the
+deck builder and every card screen tell you at a glance what is worth keeping.
+It is **on by default** — it only ever changes the colour of text, never what
+the game does.
+
+Rarity here is the card's **best drop odds anywhere**: the single highest
+weight any one duelist gives it, out of 2048. That is deliberately not "how
+many duelists drop it" — a card twenty duelists each drop at a sliver is
+harder to farm than one that only two drop generously, and only the best-odds
+reading tells those apart. It comes from the same drop data baked from your
+disc that the Drop Table Manager and CARD SHOP already use.
+
+Six tiers, rarest first: **legendary** (blue), **ultra_rare** (red),
+**super_rare** (orange), **rare** (yellow), **uncommon** (green) and
+**default** (white). The 82 cards no duelist drops at all are legendary, which
+is what makes Exodia's legs blue.
+
+As it ships, colour marks out the scarce tail and the bulk of the collection
+stays white — about 290 of the 722 cards take a colour. If you would rather
+the tiers spread evenly across everything, that is one file away.
+
+**Every threshold and every colour is yours to change.** The mod writes
+`card_name_color.ini` next to your saves on first run:
+
+```ini
+[tiers]
+legendary_threshold   = 2
+legendary_color       = blue
+ultra_rare_threshold  = 8
+ultra_rare_color      = red
+```
+
+The *numbers* decide the rarity order, not the tier names — put
+`uncommon_threshold` below `legendary_threshold` and uncommon genuinely
+becomes the rarest tier. A ladder of `0 / 13 / 26 / 40 / 58`, for instance,
+puts roughly a sixth of the collection in each band.
+
+The file also lists **all 722 cards** commented out under `[cards]`, so pinning
+one card to a colour regardless of its drop rate is a matter of uncommenting a
+line:
+
+```ini
+[cards]
+Blue-eyes White Dragon = blue
+```
+
+Names are matched against the game's own text, so no pin can go stale.
+
+Note for anyone editing colours by hand: this engine has **seven** usable text
+colours (0–6 — white, yellow, orange, red, blue, green, grey). Numbers above
+that do not render as a new colour, they render as nothing or as garbage.
+
 ## 0.3.5
 
 Extract this over your existing install as usual. Saves, savestates and your
