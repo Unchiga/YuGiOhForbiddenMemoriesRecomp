@@ -1,5 +1,71 @@
 # Release notes
 
+## 0.3.7
+
+Extract this over your existing install as usual. Saves, savestates and your
+settings are unaffected — but see the note at the end of this section if you
+already have a `card_name_color.ini`.
+
+### `CARD NAME COLOR` weighs how hard the duelist is, not just the odds
+
+Contributed by **yamyi**.
+
+0.3.6 read a card's rarity as its **best raw drop odds anywhere** — the single
+highest weight any one duelist gives it. That treats a generous drop from
+Nitemare exactly like an equally generous drop from a Villager, which is not
+what "rare" feels like when you are actually farming it.
+
+Rarity is now a **score**, not a raw weight:
+
+```
+score = drop weight  ×  duelist multiplier  ×  rank-band multiplier
+```
+
+A card still takes the best score it reaches anywhere — same "best odds win"
+idea as before — but a hard opponent's drops now count as scarcer than an easy
+opponent's at the same weight.
+
+The shipped duelist tiers run **tutorial ×2**, **rookie ×1.5**, **normal ×1**,
+**tough ×0.75**, **boss ×0.5**, **superboss ×0.25**, so a card you can only
+realistically get off Seto 3rd, DarkNite, Nitemare or Duel Master K reads
+several tiers rarer than the same weight off Jono. The three rank bands are
+weighted too: **S/A POW ×0.75**, **B/C/D ×1**, **S/A TEC ×0.5**.
+
+All of it is tunable. `card_name_color.ini` gains three sections:
+
+```ini
+[duelist_tier_multipliers]
+superboss = 0.25
+
+[duelist_tiers]
+Nitemare = superboss
+
+[rank_multipliers]
+s_a_tec = 0.5
+```
+
+Set every multiplier to `1` and you get 0.3.6's plain max-weight behaviour
+back exactly. The tier thresholds moved to suit the new scale
+(`2 / 5 / 7 / 11 / 16`), and as before it is the *numbers* that decide the
+rarity order, not the tier names.
+
+As it ships, colour again marks out the scarce end of the collection: roughly
+230 of the 722 cards take a colour on a fresh install and the rest stay white.
+A ladder nearer `0 / 13 / 26 / 40 / 58` spreads the six tiers evenly across
+everything, if that is what you would rather see.
+
+### If you already have a `card_name_color.ini`
+
+**It is kept, and it is not upgraded.** The file is only written when it is
+absent, so an existing one keeps its 0.3.6 thresholds and never gains the three
+new sections — you get the new duelist and rank weighting applied against the
+old numbers, which colours rather more of the collection than a fresh install
+does, and you cannot tune the new multipliers until the sections exist.
+
+**Delete the file to get a current one.** It is rewritten on the next launch,
+with every new section present and all 722 cards listed for pinning. Worth
+saving any `[cards]` pins you want to keep first.
+
 ## 0.3.6
 
 Extract this over your existing install as usual. Saves, savestates and your
