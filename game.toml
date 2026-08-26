@@ -113,6 +113,24 @@ mod_function_entry_funcs = [
     #             Listed now because regeneration must be done in ONE pass.
     "0x80035AF0",
     "0x800393B0",
+    # ---- MODE SELECT CIRCLE CONFIRM ----------------------------------------
+    # 0x8003CC38  the routine that reads the RAW BIOS pad buffer at 0x800EF668
+    #             (status, id, active-low buttons at +2) and feeds the
+    #             auto-repeat engine func_8003CCD8, which derives every
+    #             downstream word: 0x8009B390/394/398/3A4 and the accumulators
+    #             at 0x8009B3B0/B4. Its ENTRY is the only choke point both of
+    #             mode-select's drivers sit downstream of.
+    #
+    #             Clearing those derived words instead cannot work, and the
+    #             reason is worth recording: the fresh-load scene loop consumes
+    #             them BEFORE func_80012D4C runs, so an entry hook there lands
+    #             on already-consumed values and the frame-end refresh then
+    #             overwrites it. That is why five other addresses were listed
+    #             here at various points -- 0x80012D4C, 0x80012DB8, 0x8002D58C,
+    #             0x80074170, 0x800742E8 -- and why none of them fixed it.
+    #             Neutralising the raw buffer makes the outputs be BORN
+    #             cleared, so there is no ordering left to lose.
+    "0x8003CC38",
 ]
 
 [runtime]

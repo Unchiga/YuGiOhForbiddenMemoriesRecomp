@@ -17,6 +17,7 @@
 #include "psx_card_shop.h"
 #include "psx_cd_overlay.h"
 #include "psx_fusion_overlay.h"
+#include "psx_mode_select_confirm.h"
 #include "psx_rank_meter.h"
 #include "psx_ygo_overlays.h"
 
@@ -84,5 +85,21 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
         (void)psx_guest_overlay_register(&shop);
         psx_card_shop_register_menu();
         (void)psx_game_add_frame_hook(psx_card_shop_tick);
+    }
+    /* MODE SELECT CIRCLE CONFIRM. Last, so its prompt draws over everything
+     * else a title/mode-select screen could have on it. Registers its own
+     * vblank hook and pad filter — it has to sample at the guest's cadence,
+     * not the host's, and it takes the pad while the prompt is up. */
+    {
+        PsxGuestOverlay confirm = {
+            psx_mode_select_confirm_image,
+            psx_mode_select_confirm_origin,
+            NULL,
+            psx_mode_select_confirm_needs_present,
+            -1,
+            NULL,
+        };
+        (void)psx_guest_overlay_register(&confirm);
+        psx_mode_select_confirm_register();
     }
 }
