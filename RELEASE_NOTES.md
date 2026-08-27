@@ -1,5 +1,61 @@
 # Release notes
 
+## 0.3.8
+
+Extract this over your existing install as usual. Saves, savestates and your
+settings are unaffected.
+
+### New: `MODS → CONFIRM MENU CIRCLE EXIT`
+
+Contributed by **yamyi**.
+
+On the mode-select screen — CAMPAIGN, FREE DUEL, BUILD DECK, LIBRARY, PASSWORD,
+SAVE — Circle drops you straight back to the title menu with no confirmation,
+so one stray press loses your place.
+
+The new row raises a **RETURN TO TITLE?** prompt instead. Cross confirms,
+Circle cancels, Left and Right choose, and **NO is the default**, so a mistaken
+press costs nothing. The prompt is drawn from the game's own artwork — the
+password screen's box and the card-name font — so it looks like something the
+game shipped with.
+
+The row ships **on**. Turn it off and Circle behaves exactly as it always did.
+
+### Fixed: the fusion hint suggested combinations that do not fuse
+
+`VIEW → FUSION HINT` could recommend three cards ending on a big monster that
+fuses with nothing — the reported case was Amazon of the Seas, then Tentacle
+Plant, then **Gate Guardian**, offered as a 3750 attack "fusion".
+
+The first two really do fuse. The third does not, and when a card does not
+fuse the game simply leaves it standing — so the hint was scoring the line at
+Gate Guardian's own printed attack and calling it the best fusion in the hand.
+Following it discarded two cards to play a card that was already playable on
+its own.
+
+The hint now only offers a line whose **last** step is a real fusion. Some
+hands that used to show a suggestion will correctly show none: that means
+there was never a fusion there, only a big card the hint was dressing up.
+
+### Fixed: the game could run too fast while a screen sat still
+
+Reported while viewing a card and while standing on the overworld, with
+`GAME → SPEED` set to 1. Turning vsync off made it behave.
+
+The emulator holds 60 Hz one of two ways: a wall-clock timer, or by letting
+your display's vsync do it. When vsync was doing it — vsync on, and a display
+running at about 60 Hz — the timer stands down so the two cannot fight. But a
+screen that never changes skips being redrawn at all, and with nothing being
+drawn there was no vsync to wait for either, so nothing was holding the speed
+down.
+
+Still screens are exactly where it showed: a duel is always animating, so it
+kept being redrawn and kept its timing. Now the picture is always sent when
+vsync is the one keeping time.
+
+This only ever affected vsync on together with a roughly 60 Hz display. If you
+had vsync off, or a 120/144/240 Hz display, nothing about your setup changes.
+
 ## 0.3.7
 
 Extract this over your existing install as usual. Saves, savestates and your
