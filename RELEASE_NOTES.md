@@ -1,5 +1,51 @@
 # Release notes
 
+## 0.3.9
+
+Extract this over your existing install as usual. Saves, savestates and your
+settings are unaffected.
+
+### Changed: `VIDEO → VSYNC` now starts OFF
+
+It used to start ON, which put everyone with a 60 Hz monitor onto a code path
+that turned out to be wrong in two different ways — see the two fixes below.
+Both are fixed, but OFF is the setting every report describes as smooth, so
+that is where it now starts.
+
+If you had already turned it off, nothing changes. If you leave it on, you may
+now see some tearing that you did not before; that is the trade, and it is the
+one that keeps the picture moving evenly.
+
+### Fixed: stutter on a 60 Hz monitor with vsync on
+
+The game held a perfect 60 frames a second and still looked wrong, which is
+what made this hard to pin down — every counter said it was fine.
+
+With vsync on and a roughly 60 Hz monitor, the emulator handed its timing over
+to your display and stood its own timer down. Measured over 300 frames, that
+left individual frames lasting anywhere from 10 to 24 ms instead of a steady
+16.7 — only about half landed where they should. The *average* stayed exactly
+right, so nothing reported a problem while the picture visibly juddered.
+
+The emulator's own timer now keeps time in every case. The same measurement
+after the change: **100% of frames on target.**
+
+### Fixed: `GAME → SPEED` above 1 ran at normal speed, with broken audio
+
+On a 60 Hz monitor with vsync on, x2 ran at about x1 and the sound broke up
+badly. The display was pacing the game at 60 frames a second when x2 needs
+120, and the emulator had already halved its internal timing on the
+assumption those frames would arrive — so the sound chip got half the time it
+needed. Setting a speed while the game was running also did nothing at all
+until something else happened to refresh it. Both fixed.
+
+### Fixed: a card you already have in your deck no longer shows as `New!`
+
+Winning a card you already own showed it as **New!** on the results page if
+your only copies were in your deck. Building a deck moves cards out of your
+trunk, so a card you play with and hold no spares of looked like one you had
+never seen. It now counts your deck as well.
+
 ## 0.3.8
 
 Extract this over your existing install as usual. Saves, savestates and your
