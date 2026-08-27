@@ -116,6 +116,15 @@ static int g_card_drops = PSX_VM_CARD_DROPS_DEFAULT;
  * The two mirrors (0x801D3250, 0x80105D98) only matter for a bulk EDIT; this
  * is a read of the authoritative copy. */
 #define PSX_DROP_TRUNK_BASE         0x801D024Fu /* + card_id */
+/* The 40-card DECK, at the head of the same save struct the trunk sits in
+ * (trunk is that struct + 0x50, which is why the two bases differ by 0x50).
+ * One u16 card id per slot. Owning a card in the deck does NOT show up in the
+ * trunk count: building a deck MOVES copies out of the trunk, so a card you
+ * play with and hold no spares of reads trunk 0. See psx_ygo_cheats.c, which
+ * documents the same struct and uses this array's shape to tell a live save
+ * from boot-time garbage. */
+#define PSX_DROP_DECK_BASE          0x801D0200u
+#define PSX_DROP_DECK_N             40u
 #define PSX_DROP_CARD_ID_MAX        722
 
 /* Observability for the hook, queryable as `card_drops_state`. Without it the
@@ -449,6 +458,32 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
     }
 }
 
+/* Does the player already hold this card in the DECK?
+ *
+ * The trunk count alone is not "do I own one". A deck slot holds a copy that
+ * has been moved out of the trunk, so a card sitting in the deck with no
+ * spares reads trunk 0 and looked brand new -- reported from a results page
+ * marking Twin-headed Thunder Dragon New! while a copy was in the deck being
+ * played with.
+ *
+ * Validated the way psx_ygo_cheats.c validates it: every one of the 40 slots
+ * must be a real card id. On any screen where the save is not resident the
+ * region is zeros, and a zero fails the range test, so an unreadable deck
+ * answers "not found" and the trunk test decides alone -- the old behaviour,
+ * which is the safe direction to fail. Marking a genuinely new card as owned
+ * would silently hide it; the reverse is merely the bug we already had. */
+static int cd_owned_in_deck(uint32_t id)
+{
+    uint16_t slot[PSX_DROP_DECK_N];
+    for (uint32_t i = 0; i < PSX_DROP_DECK_N; i++) {
+        slot[i] = (uint16_t)psx_mod_read_half(PSX_DROP_DECK_BASE + i * 2u);
+        if (slot[i] < 1u || slot[i] > PSX_DROP_CARD_ID_MAX) return 0;
+    }
+    for (uint32_t i = 0; i < PSX_DROP_DECK_N; i++)
+        if (slot[i] == (uint16_t)id) return 1;
+    return 0;
+}
+
 /* Every award on the duel-drop path, recorded for the extended New! list.
  * Deliberately NOT guarded by s_cd_busy: the extras this mod grants go through
  * the same award entry (cd_award_one dispatches with $ra = the duel-drop call
@@ -462,11 +497,14 @@ void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
     if (!s_cd_new_this_duel[id]) {
         s_cd_new_this_duel[id] = 1;
         s_cd_new_distinct++;
-        /* Pre-award trunk byte: 0 means the player owned none of this card
-         * until now. Read HERE, at the entry hook, because the very next thing
-         * the guest does is increment it. */
+        /* Pre-award trunk byte: 0 means the player holds no SPARE of this
+         * card. Read HERE, at the entry hook, because the very next thing the
+         * guest does is increment it. A deck copy is not counted there, so ask
+         * the deck too -- New! means "you owned none of this", and a card you
+         * are actively playing with does not qualify. */
         s_cd_was_new_this_duel[id] =
-            (psx_mod_read_byte(PSX_DROP_TRUNK_BASE + id) == 0) ? 1u : 0u;
+            (psx_mod_read_byte(PSX_DROP_TRUNK_BASE + id) == 0 &&
+             !cd_owned_in_deck(id)) ? 1u : 0u;
     }
     if (s_cd_copies_this_duel[id] < 255u) s_cd_copies_this_duel[id]++;
     s_cd_awarded_total++;
