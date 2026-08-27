@@ -450,21 +450,32 @@ static int line_better(const BestLine *a, const BestLine *b)
     return (s_rank_by_def ? a->atk : a->def) > (s_rank_by_def ? b->atk : b->def);
 }
 
-/* `fused` says at least one step of this line was a REAL fusion. Without it
- * every pair of cards looks like a line, because a step that does not fuse
+/* `last_fused` says the step that produced `carry` was a REAL fusion. Without
+ * it every pair of cards looks like a line, because a step that does not fuse
  * still leaves the incoming card standing -- so the search would happily
  * "recommend" two unrelated cards whose only effect is discarding the first.
  * A hand with no fusions in it must come back empty, not come back with the
- * biggest card in it dressed up as a suggestion. */
+ * biggest card in it dressed up as a suggestion.
+ *
+ * It tracks the LAST step, not whether the line fused ANYWHERE. A sticky flag
+ * looks equivalent and is not: once any step fused it stayed set, so a line
+ * could fuse early, then take a step that does NOT fuse -- leaving the
+ * incoming card standing as the result -- and still be recorded, scored at
+ * that card's printed attack. Measured in a live duel: Amazon of the Seas +
+ * Tentacle Plant fuse to 638, then 638 + Gate Guardian does not fuse, and the
+ * search returned Gate Guardian at 3750 as a three-card "fusion". Its real
+ * effect is discarding the first two cards to play a card that was already
+ * playable on its own, which is why a line whose last step does not fuse is
+ * never worth recommending. */
 static void best_search(const PsxFusionCard *hand, int n, uint8_t used,
                         uint16_t carry, int bonus, int depth, uint8_t *path,
-                        int fused, BestLine *best)
+                        int last_fused, BestLine *best)
 {
     /* Belt and braces on the recursion depth. `n` cannot exceed the hand size,
      * but that is only provable at the call site, and this writes into a
      * fixed-size array on every level -- so bound it where the writes are. */
     if (depth > PSX_FUSION_HAND_MAX) return;
-    if (depth >= 2 && fused) {
+    if (depth >= 2 && last_fused) {
         BestLine cand;
         cand.result = carry;
         cand.len = depth;
@@ -484,7 +495,7 @@ static void best_search(const PsxFusionCard *hand, int n, uint8_t used,
         if (!depth) nbonus = 0;
         path[depth] = hand[i].slot;
         best_search(hand, n, (uint8_t)(used | (1u << i)), next, nbonus,
-                    depth + 1, path, fused || kind != PSX_FUSION_NONE, best);
+                    depth + 1, path, kind != PSX_FUSION_NONE, best);
     }
 }
 
