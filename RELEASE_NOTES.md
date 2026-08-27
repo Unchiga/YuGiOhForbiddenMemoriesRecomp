@@ -12,9 +12,7 @@ that turned out to be wrong in two different ways — see the two fixes below.
 Both are fixed, but OFF is the setting every report describes as smooth, so
 that is where it now starts.
 
-If you had already turned it off, nothing changes. If you leave it on, you may
-now see some tearing that you did not before; that is the trade, and it is the
-one that keeps the picture moving evenly.
+If you had already turned it off, nothing changes.
 
 ### Fixed: stutter on a 60 Hz monitor with vsync on
 
