@@ -96,6 +96,8 @@ static int      s_dirty;          /* the overlay needs a present */
 static uint16_t s_latch;          /* buttons the entry hook took, ACTIVE HIGH */
 static int      s_leaving;        /* frames left driving a confirmed YES */
 static uint16_t s_hold_raw;       /* raw bits masked until the player lets go */
+static uint16_t s_raw_prev = 0xFFFFu; /* last raw pad word, for edge detection */
+static int      s_want_open;      /* opening Circle eaten; raise on next tick */
 
 /* YES first, NO second, matching the game's own LOAD? popup. */
 #define SEL_YES 0
@@ -123,6 +125,7 @@ static void prompt_close(void) {
     s_open = 0;
     s_latch = 0;
     s_leaving = 0;
+    s_want_open = 0;
     /* Arm the release latch: a button still held must not reappear as a
      * fresh press the frame after the prompt closes. */
     s_hold_raw = 0xFFFFu;
@@ -137,25 +140,43 @@ static void prompt_close(void) {
  * upstream of everything derived from it. */
 static void on_frame_entry(struct CPUState *cpu, uint32_t address) {
     (void)cpu; (void)address;
+    const uint16_t hw    = psx_mod_read_half(RAW_PAD_BTN_ADDR);
+    const uint16_t newly = (uint16_t)(~hw & s_raw_prev);
+    s_raw_prev = hw;
+
     if (s_leaving) {
         /* Hand the screen a Circle and nothing else; the repeat engine makes
          * it a genuine new-press and the screen runs its own leave. */
         psx_mod_write_half(RAW_PAD_BTN_ADDR, (uint16_t)(0xFFFFu & ~RAW_CIRCLE));
         return;
     }
+
     if (s_open) {
-        const uint16_t hw    = psx_mod_read_half(RAW_PAD_BTN_ADDR);
-        const uint16_t taken = (uint16_t)(~hw & RAW_EAT_MASK);
-        if (taken) {
-            /* Byte-swapped, matching the layout used below. */
-            s_latch |= swap16(taken);
-            psx_mod_write_half(RAW_PAD_BTN_ADDR, (uint16_t)(hw | RAW_EAT_MASK));
-        }
+        /* Mask everything HELD, but latch only rising EDGES. Latching held
+         * bits answers the prompt with the very press that opened it: the
+         * player is still holding Circle when the box appears, and a level
+         * test reads that as a cancel on the next frame. */
+        const uint16_t held = (uint16_t)(~hw & RAW_EAT_MASK);
+        const uint16_t edge = (uint16_t)(newly & RAW_EAT_MASK);
+        if (edge) s_latch |= swap16(edge);   /* byte-swapped, as used below */
+        if (held) psx_mod_write_half(RAW_PAD_BTN_ADDR,
+                                     (uint16_t)(hw | RAW_EAT_MASK));
         return;
     }
+
+    /* Take the OPENING Circle too, before the screen ever sees it. Letting it
+     * through instead starts the game's leave, whose transition animation
+     * plays for the ~17 frames before the destination can be steered -- so the
+     * player watched the screen begin to leave and then snap back. Eaten here,
+     * no leave begins and the prompt is simply there. */
+    if (g_enabled && (newly & RAW_CIRCLE) &&
+        on_mode_select(psx_mod_read_byte(MENU_ID_ADDR))) {
+        s_want_open = 1;
+        s_hold_raw |= RAW_CIRCLE;
+    }
+
     if (s_hold_raw) {
         /* Keep only the bits still held, reporting them released. */
-        const uint16_t hw = psx_mod_read_half(RAW_PAD_BTN_ADDR);
         s_hold_raw = (uint16_t)(s_hold_raw & ~hw);
         if (s_hold_raw)
             psx_mod_write_half(RAW_PAD_BTN_ADDR, (uint16_t)(hw | s_hold_raw));
@@ -222,6 +243,20 @@ static void guard_tick(void) {
         return;
     }
 
+    if (s_want_open) {
+        s_want_open = 0;
+        if (g_enabled && on_mode_select(id)) {
+            s_open  = 1;
+            s_sel   = SEL_NO;
+            s_latch = 0;
+            s_dirty = 1;
+        }
+        return;
+    }
+
+    /* Fallback: a leave that started anyway (the eat missed, or the row was
+     * entered by some other path). Steering the destination still keeps the
+     * player put, it just costs the transition animation. */
     if (g_enabled && landed && on_mode_select(s_prev_id)) {
         /* Circle's exit landed. Send it back and hold the decision open. */
         psx_mod_write_byte(MENU_ID_ADDR, s_prev_id);
