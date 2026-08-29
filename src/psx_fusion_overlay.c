@@ -328,11 +328,36 @@ static void redraw(void)
 }
 
 /* Build the line and the badge set this frame should show. */
+/* Is the card-detail view up? Holding Triangle in a duel opens a full-screen
+ * card inspector over the field, and the hand stays "pickable" underneath it --
+ * every gate built from the selection table still reads true -- so the hint
+ * kept drawing its pick-order badges and result name straight through the card
+ * being examined.
+ *
+ * 0x8009B140 is 0 with the inspector closed and 0x0D while it is open.
+ * Established by a three-way RAM diff (closed / Triangle held / released,
+ * keeping only bytes that changed and reverted), then confirmed live in both
+ * contexts it can be opened from: over a field monster, and from hand view at
+ * turn start where the hint is actually on screen. 0x8009B254 (0 -> 0x82)
+ * tracks it exactly and is the cross-check; 0x8009B248 also moves but takes
+ * several values, so it is animation state rather than the flag. */
+#define PSX_FUSION_CARD_DETAIL 0x8009B140u
+
+static int card_detail_open(void)
+{
+    return psx_mod_read_byte(PSX_FUSION_CARD_DETAIL) != 0u;
+}
+
 static void compose(char *out, int cap, uint8_t *badges)
 {
     out[0] = 0;
     memset(badges, 0, PSX_FUSION_HAND_MAX);
     if (s_mode == PSX_FUSION_HINT_OFF || !psx_fusion_db_ready()) return;
+    /* Empty content, not an early return from the tick: the tick diffs against
+     * what it last drew, so composing nothing is what makes it redraw and
+     * clear the canvas. Returning from the tick instead would leave the badges
+     * on screen until something else happened to change them. */
+    if (card_detail_open()) return;
 
     PsxFusionCard hand[PSX_FUSION_HAND_MAX];
     if (psx_fusion_assist_hand(hand, PSX_FUSION_HAND_MAX) < 2) return;
