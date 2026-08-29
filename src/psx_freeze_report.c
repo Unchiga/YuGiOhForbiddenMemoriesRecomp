@@ -64,8 +64,25 @@
 /* Guest vblanks the predicate must hold before firing. These are GUEST time,
  * not wall time: the hook runs on the guest's cadence, so at game speed 3 the
  * wall-clock wait is a third of the nominal figure. 60 vblanks ~ 1 second. */
-#define FR_HOLD_IN_DUEL  600   /* ~10 s guest,  ~3.3 s wall at speed 3 */
-#define FR_HOLD_ELSE    1200   /* ~20 s guest; loads live out here     */
+#define FR_HOLD_IN_DUEL  900   /* ~15 s guest, ~5 s wall at speed 3 */
+
+/* IN A DUEL ONLY, and that is not conservatism -- it is the only safe scope.
+ *
+ * 0x8009B0F4 is the engine-wide pending mask, not a duel one. FMV playback
+ * holds it for as long as the movie runs, so the first build of this detector
+ * put "GAME FROZEN" over the intro movie on a perfectly healthy launch. No
+ * timeout fixes that: a movie can legitimately hold the mask for minutes, so
+ * any threshold long enough to clear an FMV is too long to be a useful freeze
+ * report, and any threshold short enough to be useful fires on the FMV.
+ *
+ * Scoping to mode 0xC3 removes the whole class -- movies, loads, boot and the
+ * menus are all outside it -- and costs nothing that matters, because the bug
+ * this exists to catch is a duel that stops advancing. A duel motionless for
+ * fifteen seconds is unambiguous in a way "the engine is busy" never was.
+ *
+ * A false positive here is far more expensive than a missed freeze: every
+ * player meets the intro, and a scary banner on first launch discredits every
+ * later report the feature produces. */
 
 /* ---- rolling history --------------------------------------------------- */
 
@@ -218,8 +235,8 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
 
     fprintf(f, "freeze #        : %u this session\n", s_fire_count);
     fprintf(f, "guest frame     : %llu\n", (unsigned long long)now->frame);
-    fprintf(f, "held for        : %d guest vblanks\n\n",
-            now->mode == FR_MODE_IN_DUEL ? FR_HOLD_IN_DUEL : FR_HOLD_ELSE);
+    fprintf(f, "held for        : %d guest vblanks, in a duel\n\n",
+            FR_HOLD_IN_DUEL);
 
     fprintf(f, "-- the blocker --------------------------------------------\n");
     fprintf(f, "word[0x8009B0F4] : %08X   wait=%d gate=%d pump=%d\n",
@@ -339,7 +356,7 @@ static void fire(const FrSample *now)
 static void freeze_tick(void)
 {
     FrSample now;
-    int stuck, limit;
+    int stuck;
 
     if (!psx_mod_game_started()) return;
 
@@ -351,7 +368,8 @@ static void freeze_tick(void)
         s_have_last = 1;
     }
 
-    stuck = ((now.busy & FR_BUSY_WAIT) | now.busy2) != 0u;
+    stuck = ((now.busy & FR_BUSY_WAIT) | now.busy2) != 0u &&
+            now.mode == FR_MODE_IN_DUEL;
     if (!stuck) {
         /* Out of the wait: re-arm for a later episode and drop the banner. */
         s_hold = 0;
@@ -374,8 +392,7 @@ static void freeze_tick(void)
 
     if (s_fired) return;
 
-    limit = (now.mode == FR_MODE_IN_DUEL) ? FR_HOLD_IN_DUEL : FR_HOLD_ELSE;
-    if (++s_hold >= limit) {
+    if (++s_hold >= FR_HOLD_IN_DUEL) {
         s_fired = 1;
         fire(&now);
     }
