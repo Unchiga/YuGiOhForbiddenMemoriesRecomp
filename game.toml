@@ -143,11 +143,15 @@ memcard_dir = "saves"
 # reads as a sluggish UI rather than as an audio setting. That default is sized
 # for streamed-stage production gaps this title does not have.
 #
-# Measured here at 60 ms, in the menus and across a duel's disc load (this
-# game's worst audio-production stall): lowest ring fill 51.8 ms, zero
-# underruns. 40 ms also ran clean in menus but leaves little reserve for the
-# load, so 60 keeps roughly a duel-load's worth of headroom.
-buffer_ms = 60
+# Measured here at 60 ms, in the menus and across a duel's disc load: lowest
+# ring fill 51.8 ms, zero underruns. That held on this machine and did not
+# generalise - players report audio cutting every few seconds at 1x, and 60 ms
+# is a third of the 180 ms ecosystem default, leaving very little reserve on a
+# machine with less emulation headroom than the one it was measured on.
+# A duel's disc load measures 473-759 ms, which no plausible cushion covers,
+# but the per-frame variance on a slower CPU is what a bigger cushion absorbs.
+# 120 ms doubles the reserve and keeps input-to-sound well under the default.
+buffer_ms = 120
 
 [video]
 renderer = "opengl"
