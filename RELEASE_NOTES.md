@@ -8,8 +8,8 @@ dump**, because your save states are affected in that one case.
 
 ### Changed: the game always uses the BIOS it ships with
 
-This build ships OpenBIOS and now always uses it, unless you deliberately ask
-for something else on the command line.
+This build ships OpenBIOS and now always uses it. There is no longer any way to
+run it on anything else.
 
 It used to go looking. If a file called `SCPH1001.BIN` existed anywhere in any
 folder above the install — a folder you might never have thought of as being
@@ -45,8 +45,10 @@ because it does not happen on the developer's machine.
 
 When it happens now, a box appears on screen saying so, and the game writes
 `freeze_report.txt` next to your saves along with an automatic save state.
-**Please send both.** Together they are enough to reproduce the freeze exactly,
-which is the one thing that has been missing.
+**Please send both to the Discord** —
+[discord.gg/SR8qWG9Ve](https://discord.gg/SR8qWG9Ve), also linked from the
+GitHub page. Together they are enough to reproduce the freeze exactly, which is
+the one thing that has been missing.
 
 The box only appears when the game really is stuck. Nothing you can do in
 normal play triggers it.

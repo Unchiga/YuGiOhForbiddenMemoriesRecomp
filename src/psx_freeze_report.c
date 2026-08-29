@@ -229,9 +229,16 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
 
     fprintf(f, "Yu-Gi-Oh Forbidden Memories Recompiled - freeze report\n");
     fprintf(f, "======================================================\n\n");
+    /* The destination belongs in the FILE, not only in the release notes.
+     * This gets attached to a message, forwarded, and read months later by
+     * someone who never saw the notes -- it has to say what it is and where it
+     * goes on its own. */
     fprintf(f, "Written automatically because the game stopped advancing while\n"
-               "still running. Please send this file to the developer, together\n"
-               "with the save state named at the bottom if there is one.\n\n");
+               "still running. Please send this file, and the save state named\n"
+               "at the bottom if there is one, to the Discord:\n\n"
+               "    https://discord.gg/SR8qWG9Ve\n\n"
+               "(also linked from the GitHub page). Together they reproduce the\n"
+               "freeze exactly, which is what has been missing.\n\n");
 
     fprintf(f, "freeze #        : %u this session\n", s_fire_count);
     fprintf(f, "guest frame     : %llu\n", (unsigned long long)now->frame);
@@ -343,11 +350,11 @@ static void fire(const FrSample *now)
         snprintf(l1, sizeof l1, "SAVED: freeze_report.txt + STATE %d",
                  s_save_slot);
         banner_set("GAME FROZEN - THIS IS A KNOWN BUG", l1,
-                   "PLEASE SEND BOTH TO THE DEVELOPER");
+                   "SEND BOTH TO discord.gg/SR8qWG9Ve");
     } else {
         banner_set("GAME FROZEN - THIS IS A KNOWN BUG",
                    "SAVED: freeze_report.txt (NO SLOT)",
-                   "PRESS F10 > SAVE STATE, SEND BOTH");
+                   "PRESS F10 > SAVE STATE, THEN SEND");
     }
     s_visible = 1;
     s_dirty   = 1;
@@ -387,7 +394,7 @@ static void freeze_tick(void)
         if (savestate_take_save_failed())
             banner_set("GAME FROZEN - THIS IS A KNOWN BUG",
                        "SAVED: freeze_report.txt (FAILED)",
-                       "PRESS F10 > SAVE STATE, SEND BOTH");
+                       "PRESS F10 > SAVE STATE, THEN SEND");
     }
 
     if (s_fired) return;
