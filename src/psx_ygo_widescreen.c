@@ -14,10 +14,10 @@
 #include "mod_plugins.h"
 #include "psx_video_menu.h"
 
-static const char *const WS_LABELS[] = { "OFF", "16:9" };
+static const char *const WS_LABELS[] = { "Off", "16:9" };
 static const char *const WS_HINTS[]  = {
-    "NATIVE 4:3",
-    "STRETCH TO 16:9 - EXPERIMENTAL"
+    "Native 4:3",
+    "Stretch to 16:9 \xe2\x80\x94 experimental"
 };
 
 static void ygo_widescreen_row_changed(int value) {
@@ -34,7 +34,7 @@ PSX_MOD_CONSTRUCTOR(psx_register_ygo_widescreen_plugin) {
         "psx.widescreen", ygo_widescreen_activate);
     {
         const int h = psx_video_menu_add_option(
-            PSX_VM_MENU_VIEW, "WIDESCREEN", WS_HINTS[0],
+            PSX_VM_MENU_VIEW, "Widescreen", WS_HINTS[0],
             WS_LABELS, 2, "widescreen", 0, ygo_widescreen_row_changed);
         psx_video_menu_set_row_hints(h, WS_HINTS);
     }

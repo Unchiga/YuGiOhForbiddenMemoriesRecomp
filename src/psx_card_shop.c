@@ -1463,17 +1463,17 @@ int psx_card_shop_needs_present(void) {
 static void shop_changed(int v) { s_enabled = v ? 1 : 0; s_dirty = 1; }
 
 void psx_card_shop_register_menu(void) {
-    static const char *const ONOFF[] = { "OFF", "ON" };
+    static const char *const ONOFF[] = { "Off", "On" };
     static const char *const HINTS[] = {
-        "TURN ON TO BUY CARD PACKS AT THE SHOPKEEPER",
-        "BUY CARD PACKS WITH STARCHIPS AT THE SHOPKEEPER",
+        "Turn on to buy card packs at the shopkeeper",
+        "Buy card packs with starchips at the shopkeeper",
     };
     (void)psx_game_add_start_hook(shop_register_hooks);
     /* Ships OFF, like the other MODS rows: it adds a row to a menu the game
      * already has and grants cards, so a player meets it only by choosing
      * to switch it on. */
     s_row_handle = psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "CARD SHOP", HINTS[0],
+        PSX_VM_MENU_MODS, "Card shop", HINTS[0],
         ONOFF, 2, "card_shop", 0, shop_changed);
     psx_video_menu_set_row_hints(s_row_handle, HINTS);
 }

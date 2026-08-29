@@ -515,13 +515,13 @@ void psx_rank_logic_tick(void) {
 /* VIEW > DUEL RANK. The hint changes with the selection, so each choice
  * carries its own -- a single hint could only describe one of four states. */
 static const char *const RANK_LABELS[] = {
-    "OFF", "IN GAME", "IN GAME + SCORE", "OVERLAY TEXT"
+    "Off", "In game", "In game + score", "Overlay text"
 };
 static const char *const RANK_HINTS[] = {
-    "SHOW LIVE RANK IN DUEL",
-    "GAME SPRITES BESIDE THE FIELD BOX",
-    "SPRITES PLUS THE 0-99 SCORE",
-    "TEXT IN THE CORNER - NEVER COVERED"
+    "Show live rank in duel",
+    "Game sprites beside the field box",
+    "Sprites plus the 0-99 score",
+    "Text in the corner \xe2\x80\x94 never covered"
 };
 
 static void rank_row_changed(int value) {
@@ -536,7 +536,7 @@ PSX_MOD_CONSTRUCTOR(psx_rank_logic_install) {
 
 void psx_rank_logic_register_menu(void) {
     const int h = psx_video_menu_add_option(
-        PSX_VM_MENU_VIEW, "DUEL RANK", RANK_HINTS[0],
+        PSX_VM_MENU_VIEW, "Duel rank", RANK_HINTS[0],
         RANK_LABELS, 4, "rank_meter", PSX_VM_RANK_INGAME, rank_row_changed);
     psx_video_menu_set_row_hints(h, RANK_HINTS);
 }

@@ -481,10 +481,10 @@ static void enabled_changed(int value) {
 }
 
 void psx_mode_select_confirm_register(void) {
-    static const char *const ONOFF[] = { "OFF", "ON" };
+    static const char *const ONOFF[] = { "Off", "On" };
     static const char *const HINTS[] = {
-        "CIRCLE DROPS CAMPAIGN/FREE DUEL/ETC STRAIGHT TO TITLE, AS STOCK",
-        "CIRCLE ASKS BEFORE DROPPING CAMPAIGN/FREE DUEL/ETC TO TITLE",
+        "Circle drops campaign / free duel / etc straight to title, as stock",
+        "Circle asks before dropping campaign / free duel / etc to title",
     };
     (void)psx_game_add_vblank_hook(guard_tick);
     /* One hook: the entry of the routine that reads the raw pad buffer,
@@ -492,7 +492,7 @@ void psx_mode_select_confirm_register(void) {
     (void)psx_mod_register_function_entry_plugin(
         "ygofm.mode_select_confirm.rawpad", 0x8003CC38u, on_frame_entry);
     const int row = psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "CONFIRM MENU CIRCLE EXIT", HINTS[1],
+        PSX_VM_MENU_MODS, "Confirm menu circle exit", HINTS[1],
         ONOFF, 2, "confirm_menu_circle_exit", 1, enabled_changed);
     psx_video_menu_set_row_hints(row, HINTS);
 }

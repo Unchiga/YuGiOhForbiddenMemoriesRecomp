@@ -106,6 +106,7 @@ starvation_dump.jsonl
 /ENVIRONMENT.md
 /MOD_LOADER_FINDINGS.md
 /MOD_LOADER_PROMPT.md
+/MENU_REDESIGN_PROMPT.md
 /game_modtest.toml
 
 # Debug spill from runtime launches.

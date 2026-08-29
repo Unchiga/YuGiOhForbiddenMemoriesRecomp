@@ -1916,8 +1916,8 @@ static void row_activate(void)
 void psx_drop_viewer_register_menu(void)
 {
     (void)psx_video_menu_add_action(
-        PSX_VM_MENU_VIEW, "DROP TABLE MANAGER",
-        "VIEW AND MANAGE DROP TABLES",
+        PSX_VM_MENU_VIEW, "Drop table manager",
+        "View and manage drop tables",
         row_activate);
 }
 

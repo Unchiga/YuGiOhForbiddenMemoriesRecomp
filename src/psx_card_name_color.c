@@ -620,7 +620,7 @@ static void card_name_glyph(CPUState *cpu, uint32_t address)
     }
 }
 
-static const char *const ONOFF[] = { "OFF", "ON" };
+static const char *const ONOFF[] = { "Off", "On" };
 
 static void card_name_color_enabled_changed(int value)
 {
@@ -630,8 +630,8 @@ static void card_name_color_enabled_changed(int value)
 static void card_name_color_register_menu(void)
 {
     (void)psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "CARD NAME COLOR",
-        "TINTS CARD NAMES BY DROP RARITY",
+        PSX_VM_MENU_MODS, "Card name color",
+        "Tints card names by drop rarity",
         ONOFF, 2, "card_name_color", 1, card_name_color_enabled_changed);
 }
 

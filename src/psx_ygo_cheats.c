@@ -441,33 +441,33 @@ static void reveal_tick(void) {
 
 /* --- the rows ------------------------------------------------------------ */
 
-static const char *const ONOFF_LABELS[] = { "OFF", "ON" };
+static const char *const ONOFF_LABELS[] = { "Off", "On" };
 static const char *const ONOFF_HINTS[]  = {
-    "REFUND ANY STARCHIP SPEND",
-    "PURCHASES REFUNDED - EARNINGS STILL COUNT"
+    "Refund any starchip spend",
+    "Purchases refunded \xe2\x80\x94 earnings still count"
 };
 static const char *const ALLCARDS_LABELS[] = {
-    "OFF", "1 OF EACH", "2 OF EACH", "3 OF EACH"
+    "Off", "1 of each", "2 of each", "3 of each"
 };
 static const char *const ALLCARDS_HINTS[] = {
-    "FILL THE TRUNK WITH EVERY CARD",
-    "APPLY WITH THE CHEST CLOSED",
-    "APPLY WITH THE CHEST CLOSED",
-    "APPLY WITH THE CHEST CLOSED"
+    "Fill the trunk with every card",
+    "Apply with the chest closed",
+    "Apply with the chest closed",
+    "Apply with the chest closed"
 };
 static const char *const OPPHAND_HINTS[] = {
-    "THEIR HAND STAYS HIDDEN",
-    "THEIR HAND IS DRAWN LIKE YOURS"
+    "Their hand stays hidden",
+    "Their hand is drawn like yours"
 };
 static const char *const FACEUP_HINTS[] = {
-    "THEY MAY SET CARDS FACE DOWN",
-    "THEIR SET CARDS PLAY FACE UP - NO FLIP ON ATTACK"
+    "They may set cards face down",
+    "Their set cards play face up \xe2\x80\x94 no flip on attack"
 };
 #ifndef PSX_NO_DEBUG_TOOLS
-static const char *const REVEAL_LABELS[] = { "OFF", "ON" };
+static const char *const REVEAL_LABELS[] = { "Off", "On" };
 static const char *const REVEAL_HINTS[]  = {
-    "SHOW EVERY FREE DUEL PORTRAIT, TEMPORARILY",
-    "REVERTS ITSELF ONCE ALL PORTRAITS ARE CAPTURED"
+    "Show every free duel portrait, temporarily",
+    "Reverts itself once all portraits are captured"
 };
 #endif
 
@@ -484,7 +484,7 @@ void psx_ygo_cheats_register_menu(void) {
      * slider spans 1..9999 because the game's LP display is four digits, even
      * though the patched addiu would allow up to 32767. */
     h = psx_video_menu_add_number(
-        PSX_VM_MENU_CHEATS, "LIFE POINTS", "8000 IS STOCK. ENTER TO TYPE",
+        PSX_VM_MENU_CHEATS, "Life points", "8000 is stock. Enter to type",
         1, 9999, /*slider*/1, "life_points",
         PSX_VM_LIFE_POINTS_DEFAULT, lp_changed);
     psx_video_menu_set_row_mark(h, PSX_VM_LIFE_POINTS_DEFAULT);
@@ -492,28 +492,28 @@ void psx_ygo_cheats_register_menu(void) {
     /* Also a preference: the per-frame guard writes one duel-display flag and
      * touches no save data, so it carries a settings key too. */
     h = psx_video_menu_add_option(
-        PSX_VM_MENU_CHEATS, "SHOW OPPONENT HAND", OPPHAND_HINTS[0],
+        PSX_VM_MENU_CHEATS, "Show opponent hand", OPPHAND_HINTS[0],
         ONOFF_LABELS, 2, "show_opponent_hand", 0, show_opp_hand_changed);
     psx_video_menu_set_row_hints(h, OPPHAND_HINTS);
 
     h = psx_video_menu_add_option(
-        PSX_VM_MENU_CHEATS, "FORCE FACE UP", FACEUP_HINTS[0],
+        PSX_VM_MENU_CHEATS, "Force face up", FACEUP_HINTS[0],
         ONOFF_LABELS, 2, "force_face_up", 0, force_faceup_changed);
     psx_video_menu_set_row_hints(h, FACEUP_HINTS);
 
     /* The remaining three are live save writes: NULL settings key, so they are
      * never written to the file and never re-applied at startup. */
     s_starchips_row = psx_video_menu_add_number(
-        PSX_VM_MENU_CHEATS, "STARCHIPS", "ENTER TO TYPE A VALUE",
+        PSX_VM_MENU_CHEATS, "Starchips", "Enter to type a value",
         0, 99999, /*slider*/0, NULL, 0, starchips_changed);
 
     h = psx_video_menu_add_option(
-        PSX_VM_MENU_CHEATS, "FREE SPENDING", ONOFF_HINTS[0],
+        PSX_VM_MENU_CHEATS, "Free spending", ONOFF_HINTS[0],
         ONOFF_LABELS, 2, NULL, 0, free_spending_changed);
     psx_video_menu_set_row_hints(h, ONOFF_HINTS);
 
     s_all_cards_row = psx_video_menu_add_option(
-        PSX_VM_MENU_CHEATS, "ALL CARDS", ALLCARDS_HINTS[0],
+        PSX_VM_MENU_CHEATS, "All cards", ALLCARDS_HINTS[0],
         ALLCARDS_LABELS, 4, NULL, 0, all_cards_changed);
     psx_video_menu_set_row_hints(s_all_cards_row, ALLCARDS_HINTS);
 
@@ -521,7 +521,7 @@ void psx_ygo_cheats_register_menu(void) {
     /* Maintainer-only (see the reveal block above): player builds ship the
      * CHEATS menu without this row. */
     s_reveal_row = psx_video_menu_add_option(
-        PSX_VM_MENU_CHEATS, "REVEAL ALL PORTRAITS", REVEAL_HINTS[0],
+        PSX_VM_MENU_CHEATS, "Reveal all portraits", REVEAL_HINTS[0],
         REVEAL_LABELS, 2, NULL, 0, reveal_changed);
     psx_video_menu_set_row_hints(s_reveal_row, REVEAL_HINTS);
 #endif

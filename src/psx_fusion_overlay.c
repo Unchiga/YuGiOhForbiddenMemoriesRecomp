@@ -501,17 +501,17 @@ int psx_fusion_overlay_badges(uint8_t *out, int cap)
  * the row above -- on its own "SUGGEST BY" gives no clue which feature it
  * belongs to. */
 static const char *const FUSION_HINT_LABELS[] = {
-    "OFF", "NUMBERS", "NUMBERS + INFO"
+    "Off", "Numbers", "Numbers + info"
 };
 static const char *const FUSION_HINT_HINTS[] = {
-    "SHOW WHAT YOUR HAND CAN FUSE INTO",
-    "PICK ORDER ON THE CARDS ONLY",
-    "PICK ORDER PLUS THE CARD IT MAKES"
+    "Show what your hand can fuse into",
+    "Pick order on the cards only",
+    "Pick order plus the card it makes"
 };
-static const char *const FUSION_BY_LABELS[] = { "ATTACK", "DEFENSE" };
+static const char *const FUSION_BY_LABELS[] = { "Attack", "Defense" };
 static const char *const FUSION_BY_HINTS[]  = {
-    "SUGGEST THE BEST ATTACK",
-    "SUGGEST THE BEST DEFENSE"
+    "Suggest the best attack",
+    "Suggest the best defense"
 };
 
 static void fusion_hint_changed(int value) {
@@ -529,13 +529,13 @@ PSX_MOD_CONSTRUCTOR(psx_fusion_overlay_install) {
 
 void psx_fusion_overlay_register_menu(void) {
     int h = psx_video_menu_add_option(
-        PSX_VM_MENU_VIEW, "FUSION HINT", FUSION_HINT_HINTS[0],
+        PSX_VM_MENU_VIEW, "Fusion hint", FUSION_HINT_HINTS[0],
         FUSION_HINT_LABELS, 3, "fusion_hint",
         PSX_VM_FUSION_HINT_OFF, fusion_hint_changed);
     psx_video_menu_set_row_hints(h, FUSION_HINT_HINTS);
 
     h = psx_video_menu_add_option(
-        PSX_VM_MENU_VIEW, "SUGGEST FUSION BY", FUSION_BY_HINTS[0],
+        PSX_VM_MENU_VIEW, "Suggest fusion by", FUSION_BY_HINTS[0],
         FUSION_BY_LABELS, 2, "fusion_by_def", 0, fusion_by_changed);
     psx_video_menu_set_row_hints(h, FUSION_BY_HINTS);
 }

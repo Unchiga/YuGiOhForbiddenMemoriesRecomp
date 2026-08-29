@@ -34,6 +34,14 @@ Third-party components
   `psxrecomp/THIRD_PARTY_ATTRIBUTION.md`.
 * **OpenBIOS** (PCSX-Redux) — MIT, `psxrecomp/bios/OpenBIOS.LICENSE`.
 * **SDL3** — Zlib, fetched at configure time.
+* **Inter** (Rasmus Andersson / the Inter Project Authors) — SIL Open Font
+  License 1.1, `psxrecomp/runtime/third_party/fonts/Inter-OFL.txt`. Subset and
+  embedded by the framework for the in-game menu's text.
+* **Material Symbols Outlined** (Google Inc) — Apache License 2.0,
+  `psxrecomp/runtime/third_party/fonts/MaterialSymbols-LICENSE.txt`. Subset and
+  embedded by the framework for the in-game menu's icons.
+* **stb_truetype** (Sean Barrett) — public domain, vendored by the framework at
+  `psxrecomp/runtime/third_party/stb_truetype.h`.
 
 
 Licence, in practice

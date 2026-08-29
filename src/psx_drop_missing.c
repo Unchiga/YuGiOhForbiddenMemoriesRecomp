@@ -420,11 +420,11 @@ int psx_drop_missing_state_json(char *out, unsigned cap)
 
 /* --- the row -------------------------------------------------------------- */
 
-static const char *const ONOFF[] = { "OFF", "ON" };
+static const char *const ONOFF[] = { "Off", "On" };
 
 /* One hint, not one per value: what the row does is the same sentence either
  * way, and the value already reads OFF/ON beside it. */
-static const char *const HINT = "ADDS UNOBTAINABLE CARDS TO DROP TABLES";
+static const char *const HINT = "Adds unobtainable cards to drop tables";
 
 static void enabled_changed(int value)
 {
@@ -437,7 +437,7 @@ static void enabled_changed(int value)
 void psx_drop_missing_register_menu(void)
 {
     (void)psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "DROP MISSING CARDS", HINT,
+        PSX_VM_MENU_MODS, "Drop missing cards", HINT,
         ONOFF, 2, "drop_missing_cards", 0, enabled_changed);
 }
 

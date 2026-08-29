@@ -1037,8 +1037,8 @@ PSX_MOD_CONSTRUCTOR(psx_card_drops_install) {
 
 void psx_card_drops_register_menu(void) {
     (void)psx_video_menu_add_number(
-        PSX_VM_MENU_MODS, "CARD DROPS",
-        "1 IS STOCK. CARDS PER DUEL WON",
+        PSX_VM_MENU_MODS, "Card drops",
+        "1 is stock. Cards per duel won",
         1, PSX_VM_CARD_DROPS_MAX, /*slider*/1,
         "card_drops", PSX_VM_CARD_DROPS_DEFAULT, cd_row_changed);
 }
