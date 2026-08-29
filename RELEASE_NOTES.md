@@ -1,6 +1,9 @@
 # Release notes
 
-## Unreleased
+## 0.4.1
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
 
 ### Fixed: the mid-duel freeze
 
@@ -8,21 +11,62 @@ The duel could stop dead while the music kept playing and the frame rate stayed
 pinned at full speed, usually just after the cards in your hand were processed.
 It was intermittent: some players hit it readily, others never saw it once.
 
-What happened is that the game asks the CD-ROM for data and then, as a separate
-step, marks "a read is in progress". On a real PlayStation the drive is far too
-slow for a read to finish in the gap between those two steps. Here it sometimes
-did — so the game marked a read that had *already* finished, and then waited
-forever for something that had come and gone. Everything else about the duel was
-healthy, which is why it looked frozen rather than crashed.
+The game asks the CD-ROM for data and then, as a separate step, marks "a read is
+in progress". On a real PlayStation the drive is far too slow for a read to
+finish in the gap between those two steps. Here it sometimes did — so the game
+marked a read that had *already* finished, and then waited forever for something
+that had come and gone. Everything else about the duel stayed healthy, which is
+why it looked frozen rather than crashed.
 
 The build now recognises that exact state — the game waiting on a read the drive
-has demonstrably completed — and releases it, within about half a second. The
-duel then carries on by itself, with nothing abandoned or lost. If this was
-happening to you, it should stop.
+has demonstrably completed — and releases it within about half a second. The
+duel carries on by itself, with nothing abandoned. If this was happening to you,
+it should stop.
 
-Freeze reports are still written for anything this does not cover, and now also
+Freeze reports are still written for anything this does not cover, and now
 record how many of these were repaired, so a report that still arrives is a
-genuinely different problem.
+genuinely different problem. Thank you to everyone who sent one: the save states
+attached to those reports are the only reason this was findable.
+
+### The menu, toasts and save-state screen have real text now
+
+They were drawn with an 8x8 uppercase bitmap font blown up by a whole number, so
+the bigger your display, the bigger the blocks. They now use proportional
+antialiased type with lowercase, rendered at your window's real resolution,
+along with rounded panels, a filled highlight on the selected row, and icons on
+the menu bar.
+
+Nothing about how the menus work has changed.
+
+### macOS
+
+macOS builds and completes a first run. It is **experimental** — the build is
+developed and tested on Windows — but the documentation for it is in the README.
+Thanks to @paulobiduss for the pull request.
+
+### Optional: the Vulkan renderer
+
+OpenGL remains the default and is the backend this build is tested on. Vulkan is
+**experimental** and off unless you ask for it. It now composites the menu and
+the game's other overlays, so it is worth a try if OpenGL misbehaves on your
+hardware.
+
+Two ways to enable it:
+
+- Edit `menu_settings.ini` in your player-data folder
+  (`Documents\My Games\Yu-Gi-Oh Forbidden Memories Recompiled`), uncomment the
+  `renderer` line and set it to `2`:
+
+      renderer=2      # 0 software, 1 opengl, 2 vulkan
+
+  It takes effect the next time you launch.
+
+- Or launch with `--renderer vulkan`, which overrides the file.
+
+Set it back to `1`, or comment the line out, to return to OpenGL. One known
+difference: with Vulkan, `GAME > SPEED` above 1x does not keep audio clean the
+way OpenGL does.
+
 
 ## 0.4.0
 
