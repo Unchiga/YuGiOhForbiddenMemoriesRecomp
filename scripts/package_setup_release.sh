@@ -74,6 +74,7 @@ exec bash "${PACKAGER}" \
   --recompiler-build "${RECOMPILER_BUILD}" \
   --version-env RELEASE_VERSION \
   --disc-hint "your legally owned Yu-Gi-Oh Forbidden Memories disc" \
+  --openbios-only \
   --project-file CMakeLists.txt \
   --project-file game.toml \
   --project-file VERSION \
