@@ -29,8 +29,10 @@ If that happened to you, this update moves you back to the bundled BIOS.
   in-game saves — memory cards, the ones the game itself writes — are *not*
   affected and carry over fine. If you have a save state you care about, finish
   from it and save in-game **before** updating.
-- Picking a retail BIOS from the menu no longer sticks across a restart.
-- `--bios <path>` on the command line still works if you genuinely want one.
+- There is no longer any way to point this build at a retail BIOS. It is not
+  merely discouraged: the BIOS is compiled into the build, and only the bundled
+  one is. Handing it a dump gets you a message saying it is not an image this
+  build was made from.
 
 Everyone who never supplied a dump is already on the bundled BIOS and nothing
 changes.
