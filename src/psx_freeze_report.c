@@ -36,6 +36,7 @@
 #include "psx_game_hooks.h"
 #include "psx_guest_overlay.h"
 #include "savestate.h"
+#include "cdrom.h"
 #include "debug_server.h"
 
 #include "psx_ui_font8.inc"    /* FONT8[95][8], ASCII 32..126 */
@@ -65,6 +66,11 @@
  * not wall time: the hook runs on the guest's cadence, so at game speed 3 the
  * wall-clock wait is a third of the nominal figure. 60 vblanks ~ 1 second. */
 #define FR_HOLD_IN_DUEL  900   /* ~15 s guest, ~5 s wall at speed 3 */
+
+/* The repair below needs nothing like that long, because its predicate is a
+ * proven-impossible state rather than a slow-thing heuristic. 30 vblanks is
+ * ~0.5 s guest, ~0.17 s wall at speed 3: a hitch, not a freeze. */
+#define FR_HOLD_REPAIR   30
 
 /* IN A DUEL ONLY, and that is not conservatism -- it is the only safe scope.
  *
@@ -189,7 +195,11 @@ static int banner_image(const uint32_t **px, int *w, int *h)
     return 1;
 }
 
-static void banner_origin(int *x, int *y) { *x = 4; *y = 4; }
+/* GUEST pixels, so the banner keeps its place relative to the picture at any
+ * window size or internal scale. y clears the top of the field: at y=4 the
+ * banner sat across the LP/COM/YOU boxes the game draws along the top edge,
+ * hiding the very state a freeze report is about. */
+static void banner_origin(int *x, int *y) { *x = 4; *y = 36; }
 
 static int banner_needs_present(void)
 {
@@ -210,6 +220,8 @@ static void banner_set(const char *l0, const char *l1, const char *l2)
 /* ---- the report file --------------------------------------------------- */
 
 static unsigned s_fire_count;
+static int      s_gate_hold; /* consecutive vblanks the stale gate has held */
+static unsigned s_repairs;   /* stale gates cleared this session            */
 
 static void write_report(int slot, const char *slot_path, const FrSample *now)
 {
@@ -247,6 +259,8 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
                "thing that has been missing.\n\n");
 
     fprintf(f, "freeze #        : %u this session\n", s_fire_count);
+    fprintf(f, "gates repaired  : %u this session (stale CD gate, bit 10)\n",
+            s_repairs);
     fprintf(f, "guest frame     : %llu\n", (unsigned long long)now->frame);
     fprintf(f, "held for        : %d guest vblanks, in a duel\n\n",
             FR_HOLD_IN_DUEL);
@@ -366,6 +380,78 @@ static void fire(const FrSample *now)
     s_dirty   = 1;
 }
 
+/* ---- the repair -------------------------------------------------------- *
+ *
+ * Bit 10 of 0x8009B0F4 means "a CD command script is in flight". The game
+ * sets it AFTER submitting the script:
+ *
+ *     0x80014A1C  jal  0x8007b468      submit
+ *     0x80014A24  beqz $v0, done       submit refused -> set nothing
+ *     0x80014A38  sw   ...             <-- set bit 10
+ *
+ * and the completion callback func_800140A0 clears it at 0x80014120 on
+ * CdlComplete. But the submit DISPATCHES the script synchronously once it is
+ * at the head of the queue (0x8007B7FC), so the completion can run all the
+ * way through inside that jal -- clearing a bit that has not been set yet.
+ * 0x80014A38 then sets it with nothing left alive to clear it.
+ *
+ * That one bit is the whole deadlock. While it is set, func_8001455C returns
+ * at 0x800145C8 every frame, so the release chain never runs, bit 4 is never
+ * released, and the duel spins in func_800137E4 forever drawing a frame per
+ * iteration -- which is why the freeze looks like a healthy game that has
+ * simply stopped moving, music and frame rate intact.
+ *
+ * Measured on a live duel (write-trace on 0x8009B0F4, five clean cycles): the
+ * set at 0x80014A38 and the clear at 0x80014120 land in the SAME guest frame,
+ * adjacent, with no other write between them. The legitimate lifetime of the
+ * bit is a handful of instructions, and the bug is a coin flip on which side
+ * of that one store the CD interrupt arrives -- which is why it is
+ * intermittent, and why some machines hit it often and others never do.
+ *
+ * So: hold the gate bit set, with the duel blocked on the wait, while the
+ * emulated drive has nothing left that could EVER deliver the completion, and
+ * the bit is provably stale. cdrom_completion_possible() is the host answering
+ * "is anything still coming"; the guest cannot answer it, because its own
+ * command-queue depth is reset in bulk rather than decremented per completion.
+ *
+ * Clearing bit 10 is the principled repair, not a poke: the engine then runs
+ * its own release chain and tears the mask down through 0x800144C4. Verified
+ * against all three reporter savestates -- the mask reaches 0x00000000 on its
+ * own and the duel plays on, phase advancing and the turn passing. Poking
+ * bit 4 instead also frees the waiter, but abandons the effect it was waiting
+ * for; this clears the gate and lets the engine finish properly.
+ *
+ * Scoped to a duel for the same reason the report is: the mask is engine-wide
+ * and a false positive costs far more than a missed freeze.
+ */
+static int repair_stale_gate(const FrSample *now)
+{
+    uint32_t before, after;
+
+    if (!(now->busy & FR_BUSY_BIT_GATE)) { s_gate_hold = 0; return 0; }
+    if (cdrom_completion_possible())     { s_gate_hold = 0; return 0; }
+    if (++s_gate_hold < FR_HOLD_REPAIR) return 0;
+    s_gate_hold = 0;
+
+    /* Re-read rather than reuse the sample: clear ONLY the gate, and never
+     * write back bits that may have moved since the sample was taken. */
+    before = psx_mod_read_word(FR_BUSY);
+    if (!(before & FR_BUSY_BIT_GATE)) return 0;
+    after = before & ~FR_BUSY_BIT_GATE;
+    psx_mod_write_word(FR_BUSY, after);
+
+    s_repairs++;
+    fprintf(stderr,
+            "freeze-repair: stale CD gate cleared, %08X -> %08X "
+            "(frame %llu, repair #%u)\n",
+            before, after, (unsigned long long)now->frame, s_repairs);
+
+    /* This episode is over. Re-arm the report so a DIFFERENT blocker later in
+     * the same duel is still caught and still writes a file. */
+    s_hold = 0;
+    return 1;
+}
+
 static void freeze_tick(void)
 {
     FrSample now;
@@ -402,6 +488,11 @@ static void freeze_tick(void)
                        "SAVED: freeze_report.txt (FAILED)",
                        "PRESS F10 > SAVE STATE, THEN SEND");
     }
+
+    /* Repair first: when the blocker is the known stale CD gate, clearing it
+     * costs a fraction of a second and the player never sees a freeze at all.
+     * Only what this cannot fix goes on to become a report. */
+    if (!s_fired && repair_stale_gate(&now)) return;
 
     if (s_fired) return;
 

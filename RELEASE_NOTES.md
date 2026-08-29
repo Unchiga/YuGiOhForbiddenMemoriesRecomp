@@ -1,5 +1,29 @@
 # Release notes
 
+## Unreleased
+
+### Fixed: the mid-duel freeze
+
+The duel could stop dead while the music kept playing and the frame rate stayed
+pinned at full speed, usually just after the cards in your hand were processed.
+It was intermittent: some players hit it readily, others never saw it once.
+
+What happened is that the game asks the CD-ROM for data and then, as a separate
+step, marks "a read is in progress". On a real PlayStation the drive is far too
+slow for a read to finish in the gap between those two steps. Here it sometimes
+did — so the game marked a read that had *already* finished, and then waited
+forever for something that had come and gone. Everything else about the duel was
+healthy, which is why it looked frozen rather than crashed.
+
+The build now recognises that exact state — the game waiting on a read the drive
+has demonstrably completed — and releases it, within about half a second. The
+duel then carries on by itself, with nothing abandoned or lost. If this was
+happening to you, it should stop.
+
+Freeze reports are still written for anything this does not cover, and now also
+record how many of these were repaired, so a report that still arrives is a
+genuinely different problem.
+
 ## 0.4.0
 
 Extract this over your existing install as usual. Your saves and settings are
