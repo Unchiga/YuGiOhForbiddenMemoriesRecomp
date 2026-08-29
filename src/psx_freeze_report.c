@@ -229,16 +229,22 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
 
     fprintf(f, "Yu-Gi-Oh Forbidden Memories Recompiled - freeze report\n");
     fprintf(f, "======================================================\n\n");
-    /* The destination belongs in the FILE, not only in the release notes.
-     * This gets attached to a message, forwarded, and read months later by
-     * someone who never saw the notes -- it has to say what it is and where it
-     * goes on its own. */
+    /* The destination belongs in the FILE, not only in the release notes: this
+     * gets attached to a message, forwarded, and read months later by someone
+     * who never saw them.
+     *
+     * It names the GitHub page rather than the Discord invite on purpose. An
+     * invite link can expire or be rotated, and this string is compiled into
+     * every copy players are running -- a dead link baked into shipped builds
+     * cannot be fixed for the people already holding them. The repo URL is
+     * stable and the invite is published there, so there is one place to
+     * update if it ever changes. */
     fprintf(f, "Written automatically because the game stopped advancing while\n"
                "still running. Please send this file, and the save state named\n"
-               "at the bottom if there is one, to the Discord:\n\n"
-               "    https://discord.gg/SR8qWG9Ve\n\n"
-               "(also linked from the GitHub page). Together they reproduce the\n"
-               "freeze exactly, which is what has been missing.\n\n");
+               "at the bottom if there is one, to the Discord linked from:\n\n"
+               "    https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp\n\n"
+               "Together they reproduce the lockup exactly, which is the one\n"
+               "thing that has been missing.\n\n");
 
     fprintf(f, "freeze #        : %u this session\n", s_fire_count);
     fprintf(f, "guest frame     : %llu\n", (unsigned long long)now->frame);
@@ -350,7 +356,7 @@ static void fire(const FrSample *now)
         snprintf(l1, sizeof l1, "SAVED: freeze_report.txt + STATE %d",
                  s_save_slot);
         banner_set("GAME FROZEN - THIS IS A KNOWN BUG", l1,
-                   "SEND BOTH TO discord.gg/SR8qWG9Ve");
+                   "SEND BOTH TO THE DISCORD ON GITHUB");
     } else {
         banner_set("GAME FROZEN - THIS IS A KNOWN BUG",
                    "SAVED: freeze_report.txt (NO SLOT)",

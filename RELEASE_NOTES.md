@@ -3,60 +3,41 @@
 ## 0.4.0
 
 Extract this over your existing install as usual. Your saves and settings are
-unaffected — but **read the BIOS note below if you ever supplied a retail BIOS
-dump**, because your save states are affected in that one case.
+unaffected — but **if you ever supplied a retail BIOS dump, read the first note
+below**, because your save states are affected in that one case.
 
-### Changed: the game always uses the BIOS it ships with
+### Changed: everyone runs the same BIOS
 
-This build ships OpenBIOS and now always uses it. There is no longer any way to
-run it on anything else.
+This build ships OpenBIOS and now always uses it. A retail BIOS dump is no
+longer accepted, and no longer needed.
 
-It used to go looking. If a file called `SCPH1001.BIN` existed anywhere in any
-folder above the install — a folder you might never have thought of as being
-connected to this game — setup quietly adopted it. You chose nothing and were
-told nothing, and from then on you were running a **different** BIOS from
-everyone else playing the same release.
+The point is simplicity. The BIOS is compiled into the build, so a player on a
+retail dump was running genuinely different code from everyone else on the same
+version — and setup used to adopt one silently if a `SCPH1001.BIN` happened to
+sit in any folder above the install. Keeping everyone on one image means a bug
+one player hits is a bug another can reproduce.
 
-That matters more than it sounds. The BIOS is compiled into the build, so two
-players on the "same version" were running genuinely different code. It also
-made bug reports impossible to act on: a freeze report that nobody else could
-reproduce, because the reporter was on a BIOS nobody else had.
+- **Save states made under a retail BIOS will not load any more.** States are
+  tied to the BIOS that made them. Your in-game saves — memory cards, the ones
+  the game itself writes — are not affected and carry over fine. If a save
+  state matters to you, load it and save in-game **before** updating.
 
-If that happened to you, this update moves you back to the bundled BIOS.
+Everyone who never supplied a dump is already on OpenBIOS and nothing changes.
 
-- **Your save states from the retail BIOS will not load any more.** Save states
-  are tied to the BIOS that made them and are refused across the two. Your
-  in-game saves — memory cards, the ones the game itself writes — are *not*
-  affected and carry over fine. If you have a save state you care about, finish
-  from it and save in-game **before** updating.
-- There is no longer any way to point this build at a retail BIOS. It is not
-  merely discouraged: the BIOS is compiled into the build, and only the bundled
-  one is. Handing it a dump gets you a message saying it is not an image this
-  build was made from.
+### New: a report when a duel locks up
 
-Everyone who never supplied a dump is already on the bundled BIOS and nothing
-changes.
+In order to further diagnose an unreproducible lockup during duels that some
+players are experiencing, the game now spots it and leaves evidence behind.
 
-### New: the game tells you when it has frozen, and leaves a report
+If a duel stops advancing, a box says so on screen and the game writes
+`freeze_report.txt` next to your saves, along with an automatic save state.
+**Please send both to the Discord linked on the**
+[**GitHub page**](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp).
+Together they reproduce the lockup exactly, which is the one thing that has
+been missing.
 
-There is a bug — not yet fixed — where a duel stops advancing while the music
-keeps playing and everything still looks alive. It has been hard to chase
-because it does not happen on the developer's machine.
-
-When it happens now, a box appears on screen saying so, and the game writes
-`freeze_report.txt` next to your saves along with an automatic save state.
-**Please send both to the Discord** —
-[discord.gg/SR8qWG9Ve](https://discord.gg/SR8qWG9Ve), also linked from the
-GitHub page. Together they are enough to reproduce the freeze exactly, which is
-the one thing that has been missing.
-
-The box only appears when the game really is stuck. Nothing you can do in
-normal play triggers it.
-
-Your saves are safe: the automatic state goes to the highest **free** slot and
-never overwrites one of yours. If all twelve are full it says so and asks you
-to press `F10` and save one by hand — the menu still works while the game is
-stuck.
+The automatic save state goes to the highest **free** slot and never overwrites
+one of yours.
 
 ### Fixed: the fusion hint no longer draws over the card you are inspecting
 
