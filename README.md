@@ -350,6 +350,17 @@ first is enough. Failing that it tries `-DYGOFM_DISC=<path>`, the disc this
 build directory already verified, then the one recorded beside the executable,
 and stops with a message rather than shipping a runtime with no art.
 
+### macOS
+
+Builds and runs natively on Apple Silicon with the commands above — no flags of
+its own. Prerequisites are the Xcode Command Line Tools plus
+`brew install cmake ninja pkg-config sdl3`.
+
+Build with `-j4` rather than the default on an 8 GB machine: the generated C
+includes shards of 400k+ lines, and four concurrent clang instances is where
+this stops being memory-bound. Vulkan compiles as a software stub unless the
+SDK is installed; the OpenGL renderer runs over Metal at full speed regardless.
+
 Add `-DPSX_DEBUG_TOOLS=ON` for a debug build with the TCP inspection server on
 `127.0.0.1:4370`.
 
