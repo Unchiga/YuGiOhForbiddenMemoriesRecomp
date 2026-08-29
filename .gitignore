@@ -101,6 +101,12 @@ starvation_dump.jsonl
 /HANDOFF.md
 /ISSUES.md
 /NEXT_SESSION_PROMPT.md
+/DUEL_AI.md
+/FREEZE_INVESTIGATION.md
+/ENVIRONMENT.md
+/MOD_LOADER_FINDINGS.md
+/MOD_LOADER_PROMPT.md
+/game_modtest.toml
 
 # Debug spill from runtime launches.
 psx_freeze_dump_*.json

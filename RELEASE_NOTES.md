@@ -1,5 +1,75 @@
 # Release notes
 
+## 0.4.0
+
+Extract this over your existing install as usual. Your saves and settings are
+unaffected — but **read the BIOS note below if you ever supplied a retail BIOS
+dump**, because your save states are affected in that one case.
+
+### Changed: the game always uses the BIOS it ships with
+
+This build ships OpenBIOS and now always uses it, unless you deliberately ask
+for something else on the command line.
+
+It used to go looking. If a file called `SCPH1001.BIN` existed anywhere in any
+folder above the install — a folder you might never have thought of as being
+connected to this game — setup quietly adopted it. You chose nothing and were
+told nothing, and from then on you were running a **different** BIOS from
+everyone else playing the same release.
+
+That matters more than it sounds. The BIOS is compiled into the build, so two
+players on the "same version" were running genuinely different code. It also
+made bug reports impossible to act on: a freeze report that nobody else could
+reproduce, because the reporter was on a BIOS nobody else had.
+
+If that happened to you, this update moves you back to the bundled BIOS.
+
+- **Your save states from the retail BIOS will not load any more.** Save states
+  are tied to the BIOS that made them and are refused across the two. Your
+  in-game saves — memory cards, the ones the game itself writes — are *not*
+  affected and carry over fine. If you have a save state you care about, finish
+  from it and save in-game **before** updating.
+- Picking a retail BIOS from the menu no longer sticks across a restart.
+- `--bios <path>` on the command line still works if you genuinely want one.
+
+Everyone who never supplied a dump is already on the bundled BIOS and nothing
+changes.
+
+### New: the game tells you when it has frozen, and leaves a report
+
+There is a bug — not yet fixed — where a duel stops advancing while the music
+keeps playing and everything still looks alive. It has been hard to chase
+because it does not happen on the developer's machine.
+
+When it happens now, a box appears on screen saying so, and the game writes
+`freeze_report.txt` next to your saves along with an automatic save state.
+**Please send both.** Together they are enough to reproduce the freeze exactly,
+which is the one thing that has been missing.
+
+The box only appears when the game really is stuck. Nothing you can do in
+normal play triggers it.
+
+Your saves are safe: the automatic state goes to the highest **free** slot and
+never overwrites one of yours. If all twelve are full it says so and asks you
+to press `F10` and save one by hand — the menu still works while the game is
+stuck.
+
+### Fixed: the fusion hint no longer draws over the card you are inspecting
+
+Holding Triangle opens the full-screen card view. The hint kept drawing its
+pick-order badges and result name straight through it, because the hand still
+counts as pickable underneath. It now gets out of the way and comes back when
+you let go.
+
+### Fixed: no leave animation when `CONFIRM MENU CIRCLE EXIT` asks you first
+
+Contributed by **yamyi**.
+
+With that option on, pressing Circle started the screen's leave animation
+before the confirmation box could stop it — so you saw the game begin to exit,
+then get asked whether you wanted to. The opening Circle is now taken before
+the screen sees it, so nothing moves until you answer.
+
 ## 0.3.9
 
 Extract this over your existing install as usual. Saves, savestates and your
