@@ -27,7 +27,7 @@ Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 | Serial | SLUS-01411 (USA / NTSC-U) |
 | Players | 2 |
 | Publisher | Konami, 1999 |
-| BIOS | OpenBIOS, bundled — a retail dump is optional |
+| BIOS | OpenBIOS, bundled — nothing to supply |
 
 ---
 
@@ -317,7 +317,7 @@ Scripted and headless runs have no picker and must be told:
 Yu_Gi_Oh_Forbidden_Memories_Recompiled.exe --disc "/path/to/game.cue"
 ```
 
-Also available: `--bios <path>`, `--memcard-dir <path>`, `--no-launcher`.
+Also available: `--memcard-dir <path>`, `--no-launcher`.
 
 ---
 
@@ -393,7 +393,7 @@ because the framework it builds on is offered on the same terms
 (Copyright © 2026 Matthew Stan).
 
 That covers this project and the framework. It grants nothing in respect of the
-game, which is Konami's — use only a disc image and BIOS you obtained legally.
+game, which is Konami's — use only a disc image you obtained legally.
 
 Read [NOTICE](NOTICE) before redistributing anything — particularly before
 sharing a *compiled build*, which is not the same as sharing this repository.
