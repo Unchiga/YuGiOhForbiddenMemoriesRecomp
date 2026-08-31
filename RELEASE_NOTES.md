@@ -9,13 +9,11 @@ settings all carry over.
 
 The Card drops row (MODS > Card drops) is not new -- but how it deals cards
 is. We reverse engineered the community 15-card / 5-card drop mod from the
-modded discs and copied its behaviour: the stock roll runs but its card is
-never awarded, then each card burns six rand() calls and rolls on the
-seventh -- 1 + 7N calls for N cards, from the same opponent-and-rank pool as
-stock. The RNG stream now matches the modded ISO bit for bit, so a duel
-played here consumes the random sequence exactly like the mod does: same
-seed, same actions, same cards, interoperable with the community's seed
-tooling. Set to 1 it remains stock.
+modded discs and copied its behaviour, drawing from the same
+opponent-and-rank pool as stock. The RNG stream now matches the modded ISO
+bit for bit, so a duel played here consumes the random sequence exactly like
+the mod does: same seed, same actions, same cards, interoperable with the
+community's seed tooling. Set to 1 it remains stock.
 
 ### New: RNG viewer (VIEW > RNG viewer)
 
