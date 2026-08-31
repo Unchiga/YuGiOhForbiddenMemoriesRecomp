@@ -353,6 +353,15 @@ static void compose(char *out, int cap, uint8_t *badges)
     out[0] = 0;
     memset(badges, 0, PSX_FUSION_HAND_MAX);
     if (s_mode == PSX_FUSION_HINT_OFF || !psx_fusion_db_ready()) return;
+    /* Only inside an actual duel (mode 0xC3 -- psx_freeze_report.c's map).
+     * The hand-select cells at 0x800EA030 and the records this reads are
+     * duel state; on other screens the same memory is general scratch, and
+     * the overlay happily "solved" chest data into a phantom hint (seen
+     * live 2026-08-30: "Tri-horned Dragon" over the deck builder while the
+     * turn byte happened to read 0). Composing nothing here is what clears
+     * a stale hint on leaving the duel, so this must not early-return
+     * above the diff. */
+    if (psx_mod_read_byte(0x8009B26Cu) != 0xC3u) return;
     /* Empty content, not an early return from the tick: the tick diffs against
      * what it last drew, so composing nothing is what makes it redraw and
      * clear the canvas. Returning from the tick instead would leave the badges
