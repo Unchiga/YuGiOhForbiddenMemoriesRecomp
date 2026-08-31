@@ -19,6 +19,7 @@
 #include "psx_fusion_overlay.h"
 #include "psx_mode_select_confirm.h"
 #include "psx_rank_meter.h"
+#include "psx_rng_view.h"
 #include "psx_ygo_overlays.h"
 
 /* Sprite-watch group the card-view plates are tracked in. The meter sits beside
@@ -85,6 +86,19 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
         (void)psx_guest_overlay_register(&shop);
         psx_card_shop_register_menu();
         (void)psx_game_add_frame_hook(psx_card_shop_tick);
+    }
+    /* RNG VIEWER. A corner debug panel; nothing the game draws needs to sit
+     * above it, and it stays below the confirm prompt registered after it. */
+    {
+        PsxGuestOverlay rng = {
+            psx_rng_view_image,
+            psx_rng_view_origin,
+            NULL,
+            psx_rng_view_needs_present,
+            -1,
+            NULL,
+        };
+        (void)psx_guest_overlay_register(&rng);
     }
     /* MODE SELECT CIRCLE CONFIRM. Last, so its prompt draws over everything
      * else a title/mode-select screen could have on it. Registers its own
