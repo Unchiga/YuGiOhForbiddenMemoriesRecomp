@@ -1,5 +1,49 @@
 # Release notes
 
+## 0.5.0
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
+
+### New: Card drops (MODS > Card drops)
+
+Win a duel, get up to 99 cards instead of 1 -- and at 2 or more, the cards are
+dealt with the community 15-card / 5-card drop mod's exact behaviour, not an
+imitation of it.
+
+We reverse engineered how that mod works, straight from the modded discs the
+community actually plays (the 15- and 5-card versions), and copied it: the
+game's own drop roll runs once but its card is never awarded, then each of the
+N cards burns six rand() calls and rolls on the seventh -- N cards from
+exactly 1 + 7N calls, drawn from the same opponent-and-rank pool the stock
+game would have used. Matching that RNG stream bit for bit means a duel played
+here consumes the random sequence exactly like the modded ISO does: same seed,
+same actions, same cards, so runs interoperate with the community's seed
+tooling in both directions.
+
+Set to 1 it is stock behaviour, untouched.
+
+### New: RNG viewer (VIEW > RNG viewer)
+
+A one-line overlay in the top corner with the live random seed:
+
+    S 03171C9C  N 31791 +1  D 1469C51C
+
+S is the seed word itself. N is the absolute call count since boot -- the
+"seed number" the community's predictors talk about -- solved mathematically
+from the seed, so it is exact from the moment you switch the viewer on and
+cannot drift. +n is how many calls the last frame consumed, and D latches the
+seed as it stood just before the last duel started, which is the number the
+deck predictors search for. Read-only; built for RNG manipulation and for
+verifying runs.
+
+### Fixed: phantom fusion hint outside duels
+
+The fusion hint could appear on screens where it has no business -- reading
+memory that only means "your hand" during a duel, it occasionally dressed
+leftover data up as a fusion suggestion. It now draws only inside an actual
+duel.
+
 ## 0.4.1
 
 Extract this over your existing install as usual. Your saves, save states and
