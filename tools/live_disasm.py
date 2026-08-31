@@ -1,5 +1,5 @@
 import sys, os, struct
-sys.path.insert(0, r'C:\Users\Unchiga\AppData\Local\Temp\claude\C--dev-memories\1a4b12e0-208c-49a5-9e2d-3aa079362284\scratchpad')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from live_ram import snap, BASE
 from capstone import Cs, CS_ARCH_MIPS, CS_MODE_MIPS32, CS_MODE_LITTLE_ENDIAN
 md = Cs(CS_ARCH_MIPS, CS_MODE_MIPS32 | CS_MODE_LITTLE_ENDIAN)

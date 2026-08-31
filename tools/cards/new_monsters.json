@@ -1,0 +1,554 @@
+{
+ "Baron of the Fiend Sword": {
+  "page": "Baron of the Fiend Sword",
+  "type": "Fiend",
+  "atk": 1550,
+  "def": 800,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Lord of D.": {
+  "page": "Lord of D.",
+  "type": "Spellcaster",
+  "atk": 1200,
+  "def": 1100,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Man-Eating Treasure Chest": {
+  "page": "Man-Eating Treasure Chest",
+  "type": "Fiend",
+  "atk": 1600,
+  "def": 1000,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Neo the Magic Swordsman": {
+  "page": "Neo the Magic Swordsman",
+  "type": "Spellcaster",
+  "atk": 1700,
+  "def": 1000,
+  "lvl": 4,
+  "attr": "LIGHT"
+ },
+ "Sorcerer of the Doomed": {
+  "page": "Sorcerer of the Doomed",
+  "type": "Spellcaster",
+  "atk": 1450,
+  "def": 1200,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "The Stern Mystic": {
+  "page": "The Stern Mystic",
+  "type": "Spellcaster",
+  "atk": 1500,
+  "def": 1200,
+  "lvl": 4,
+  "attr": "LIGHT"
+ },
+ "Wall of Illusion": {
+  "page": "Wall of Illusion",
+  "type": "Fiend",
+  "atk": 1000,
+  "def": 1850,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Barrel Dragon": {
+  "page": "Barrel Dragon",
+  "type": "Machine",
+  "atk": 2600,
+  "def": 2200,
+  "lvl": 7,
+  "attr": "DARK"
+ },
+ "Garnecia Elefantis": {
+  "page": "Garnecia Elefantis",
+  "type": "Beast-Warrior",
+  "atk": 2400,
+  "def": 2000,
+  "lvl": 7,
+  "attr": "EARTH"
+ },
+ "Gazelle the King of Mythical Beasts": {
+  "page": "Gazelle the King of Mythical Beasts",
+  "type": "Beast",
+  "atk": 1500,
+  "def": 1200,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "The Unhappy Maiden": {
+  "page": "The Unhappy Maiden",
+  "type": "Spellcaster",
+  "atk": 0,
+  "def": 100,
+  "lvl": 1,
+  "attr": "LIGHT"
+ },
+ "Banisher of the Light": {
+  "page": "Banisher of the Light",
+  "type": "Fairy",
+  "atk": 100,
+  "def": 2000,
+  "lvl": 3,
+  "attr": "LIGHT"
+ },
+ "Blue-Eyes Toon Dragon": {
+  "page": "Blue-Eyes Toon Dragon",
+  "type": "Dragon",
+  "atk": 3000,
+  "def": 2500,
+  "lvl": 8,
+  "attr": "LIGHT"
+ },
+ "Boar Soldier": {
+  "page": "Boar Soldier",
+  "type": "Beast-Warrior",
+  "atk": 2000,
+  "def": 500,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "Ceremonial Bell": {
+  "page": "Ceremonial Bell",
+  "type": "Spellcaster",
+  "atk": 0,
+  "def": 1850,
+  "lvl": 3,
+  "attr": "LIGHT"
+ },
+ "Cyber Jar": {
+  "page": "Cyber Jar",
+  "type": "Rock",
+  "atk": 900,
+  "def": 900,
+  "lvl": 3,
+  "attr": "DARK"
+ },
+ "Dark Zebra": {
+  "page": "Dark Zebra",
+  "type": "Beast",
+  "atk": 1800,
+  "def": 400,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "Flash Assailant": {
+  "page": "Flash Assailant",
+  "type": "Fiend",
+  "atk": 2000,
+  "def": 2000,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Flying Kamakiri #1": {
+  "page": "Flying Kamakiri 1",
+  "type": "Insect",
+  "atk": 1400,
+  "def": 900,
+  "lvl": 4,
+  "attr": "WIND"
+ },
+ "Giant Germ": {
+  "page": "Giant Germ",
+  "type": "Fiend",
+  "atk": 1000,
+  "def": 100,
+  "lvl": 2,
+  "attr": "DARK"
+ },
+ "Giant Rat": {
+  "page": "Giant Rat",
+  "type": "Beast",
+  "atk": 1400,
+  "def": 1450,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "Hyozanryu": {
+  "page": "Hyozanryu",
+  "type": "Dragon",
+  "atk": 2100,
+  "def": 2800,
+  "lvl": 7,
+  "attr": "LIGHT"
+ },
+ "Jigen Bakudan": {
+  "page": "Jigen Bakudan",
+  "type": "Pyro",
+  "atk": 200,
+  "def": 1000,
+  "lvl": 2,
+  "attr": "FIRE"
+ },
+ "Karate Man": {
+  "page": "Karate Man",
+  "type": "Warrior",
+  "atk": 1000,
+  "def": 1000,
+  "lvl": 3,
+  "attr": "EARTH"
+ },
+ "Kotodama": {
+  "page": "Kotodama",
+  "type": "Fairy",
+  "atk": 0,
+  "def": 1600,
+  "lvl": 3,
+  "attr": "EARTH"
+ },
+ "Manga Ryu-Ran": {
+  "page": "Manga Ryu-Ran",
+  "type": "Dragon",
+  "atk": 2200,
+  "def": 2600,
+  "lvl": 7,
+  "attr": "FIRE"
+ },
+ "Mother Grizzly": {
+  "page": "Mother Grizzly",
+  "type": "Beast-Warrior",
+  "atk": 1400,
+  "def": 1000,
+  "lvl": 4,
+  "attr": "WATER"
+ },
+ "Mystic Tomato": {
+  "page": "Mystic Tomato",
+  "type": "Plant",
+  "atk": 1400,
+  "def": 1100,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Nimble Momonga": {
+  "page": "Nimble Momonga",
+  "type": "Beast",
+  "atk": 1000,
+  "def": 100,
+  "lvl": 2,
+  "attr": "EARTH"
+ },
+ "Red Archery Girl": {
+  "page": "Red Archery Girl",
+  "type": "Aqua",
+  "atk": 1400,
+  "def": 1500,
+  "lvl": 4,
+  "attr": "WATER"
+ },
+ "Relinquished": {
+  "page": "Relinquished",
+  "type": "Spellcaster",
+  "atk": 0,
+  "def": 0,
+  "lvl": 1,
+  "attr": "DARK"
+ },
+ "Ryu-Ran": {
+  "page": "Ryu-Ran",
+  "type": "Dragon",
+  "atk": 2200,
+  "def": 2600,
+  "lvl": 7,
+  "attr": "FIRE"
+ },
+ "Senju of the Thousand Hands": {
+  "page": "Senju of the Thousand Hands",
+  "type": "Fairy",
+  "atk": 1400,
+  "def": 1000,
+  "lvl": 4,
+  "attr": "LIGHT"
+ },
+ "Shining Angel": {
+  "page": "Shining Angel",
+  "type": "Fairy",
+  "atk": 1400,
+  "def": 800,
+  "lvl": 4,
+  "attr": "LIGHT"
+ },
+ "Slot Machine": {
+  "page": "Slot Machine",
+  "type": "Machine",
+  "atk": 2000,
+  "def": 2300,
+  "lvl": 7,
+  "attr": "DARK"
+ },
+ "Sonic Bird": {
+  "page": "Sonic Bird",
+  "type": "Winged Beast",
+  "atk": 1400,
+  "def": 1000,
+  "lvl": 4,
+  "attr": "WIND"
+ },
+ "Spear Cretin": {
+  "page": "Spear Cretin",
+  "type": "Fiend",
+  "atk": 500,
+  "def": 500,
+  "lvl": 2,
+  "attr": "DARK"
+ },
+ "Toon Mermaid": {
+  "page": "Toon Mermaid",
+  "type": "Aqua",
+  "atk": 1400,
+  "def": 1500,
+  "lvl": 4,
+  "attr": "WATER"
+ },
+ "Toon Summoned Skull": {
+  "page": "Toon Summoned Skull",
+  "type": "Fiend",
+  "atk": 2500,
+  "def": 1200,
+  "lvl": 6,
+  "attr": "DARK"
+ },
+ "UFO Turtle": {
+  "page": "UFO Turtle",
+  "type": "Machine",
+  "atk": 1400,
+  "def": 1200,
+  "lvl": 4,
+  "attr": "FIRE"
+ },
+ "Buster Blader": {
+  "page": "Buster Blader",
+  "type": "Warrior",
+  "atk": 2600,
+  "def": 2300,
+  "lvl": 7,
+  "attr": "EARTH"
+ },
+ "Thousand-Eyes Restrict": {
+  "page": "Thousand-Eyes Restrict",
+  "type": "Spellcaster",
+  "atk": 0,
+  "def": 0,
+  "lvl": 1,
+  "attr": "DARK"
+ },
+ "Beast of Talwar": {
+  "page": "Beast of Talwar",
+  "type": "Fiend",
+  "atk": 2400,
+  "def": 2150,
+  "lvl": 6,
+  "attr": "DARK"
+ },
+ "Bite Shoes": {
+  "page": "Bite Shoes",
+  "type": "Fiend",
+  "atk": 500,
+  "def": 300,
+  "lvl": 2,
+  "attr": "DARK"
+ },
+ "Bubonic Vermin": {
+  "page": "Bubonic Vermin",
+  "type": "Beast",
+  "atk": 900,
+  "def": 600,
+  "lvl": 3,
+  "attr": "EARTH"
+ },
+ "Cyber Falcon": {
+  "page": "Cyber Falcon",
+  "type": "Machine",
+  "atk": 1400,
+  "def": 1200,
+  "lvl": 4,
+  "attr": "WIND"
+ },
+ "Dark Bat": {
+  "page": "Dark Bat",
+  "type": "Winged Beast",
+  "atk": 1000,
+  "def": 1000,
+  "lvl": 3,
+  "attr": "WIND"
+ },
+ "Darkfire Soldier #1": {
+  "page": "Darkfire Soldier 1",
+  "type": "Pyro",
+  "atk": 1700,
+  "def": 1150,
+  "lvl": 4,
+  "attr": "FIRE"
+ },
+ "Darkfire Soldier #2": {
+  "page": "Darkfire Soldier 2",
+  "type": "Pyro",
+  "atk": 1700,
+  "def": 1100,
+  "lvl": 4,
+  "attr": "FIRE"
+ },
+ "Deepsea Warrior": {
+  "page": "Deepsea Warrior",
+  "type": "Warrior",
+  "atk": 1600,
+  "def": 1800,
+  "lvl": 5,
+  "attr": "WATER"
+ },
+ "Drill Bug": {
+  "page": "Drill Bug",
+  "type": "Insect",
+  "atk": 1100,
+  "def": 200,
+  "lvl": 2,
+  "attr": "EARTH"
+ },
+ "Flame Champion": {
+  "page": "Flame Champion",
+  "type": "Pyro",
+  "atk": 1900,
+  "def": 1300,
+  "lvl": 5,
+  "attr": "FIRE"
+ },
+ "Flying Kamakiri #2": {
+  "page": "Flying Kamakiri 2",
+  "type": "Insect",
+  "atk": 1500,
+  "def": 800,
+  "lvl": 4,
+  "attr": "WIND"
+ },
+ "Invitation to a Dark Sleep": {
+  "page": "Invitation to a Dark Sleep",
+  "type": "Spellcaster",
+  "atk": 1500,
+  "def": 1800,
+  "lvl": 5,
+  "attr": "DARK"
+ },
+ "Jinzo": {
+  "page": "Jinzo",
+  "type": "Machine",
+  "atk": 2400,
+  "def": 1500,
+  "lvl": 6,
+  "attr": "DARK"
+ },
+ "Kiseitai": {
+  "page": "Kiseitai",
+  "type": "Fiend",
+  "atk": 300,
+  "def": 800,
+  "lvl": 2,
+  "attr": "DARK"
+ },
+ "Morphing Jar #2": {
+  "page": "Morphing Jar 2",
+  "type": "Rock",
+  "atk": 800,
+  "def": 700,
+  "lvl": 3,
+  "attr": "EARTH"
+ },
+ "Mr. Volcano": {
+  "page": "Mr. Volcano",
+  "type": "Pyro",
+  "atk": 2100,
+  "def": 1300,
+  "lvl": 5,
+  "attr": "FIRE"
+ },
+ "Oni Tank T-34": {
+  "page": "Oni Tank T-34",
+  "type": "Machine",
+  "atk": 1400,
+  "def": 1700,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "Overdrive": {
+  "page": "Overdrive",
+  "type": "Machine",
+  "atk": 1600,
+  "def": 1500,
+  "lvl": 4,
+  "attr": "EARTH"
+ },
+ "Parasite Paracide": {
+  "page": "Parasite Paracide",
+  "type": "Insect",
+  "atk": 500,
+  "def": 300,
+  "lvl": 2,
+  "attr": "EARTH"
+ },
+ "Sky Scout": {
+  "page": "Sky Scout",
+  "type": "Winged Beast",
+  "atk": 1800,
+  "def": 600,
+  "lvl": 4,
+  "attr": "WIND"
+ },
+ "Spikebot": {
+  "page": "Spikebot",
+  "type": "Machine",
+  "atk": 1800,
+  "def": 1700,
+  "lvl": 5,
+  "attr": "DARK"
+ },
+ "Steel Ogre Grotto #2": {
+  "page": "Steel Ogre Grotto 2",
+  "type": "Machine",
+  "atk": 1900,
+  "def": 2200,
+  "lvl": 6,
+  "attr": "EARTH"
+ },
+ "Sword Hunter": {
+  "page": "Sword Hunter",
+  "type": "Warrior",
+  "atk": 2450,
+  "def": 1700,
+  "lvl": 7,
+  "attr": "EARTH"
+ },
+ "The Fiend Megacyber": {
+  "page": "The Fiend Megacyber",
+  "type": "Warrior",
+  "atk": 2200,
+  "def": 1200,
+  "lvl": 6,
+  "attr": "DARK"
+ },
+ "Thousand-Eyes Idol": {
+  "page": "Thousand-Eyes Idol",
+  "type": "Spellcaster",
+  "atk": 0,
+  "def": 0,
+  "lvl": 1,
+  "attr": "DARK"
+ },
+ "Three-Headed Geedo": {
+  "page": "Three-Headed Geedo",
+  "type": "Fiend",
+  "atk": 1200,
+  "def": 1400,
+  "lvl": 4,
+  "attr": "DARK"
+ },
+ "Twin-Headed Fire Dragon": {
+  "page": "Twin-Headed Fire Dragon",
+  "type": "Pyro",
+  "atk": 2200,
+  "def": 1700,
+  "lvl": 6,
+  "attr": "FIRE"
+ }
+}

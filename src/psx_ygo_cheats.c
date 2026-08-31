@@ -10,6 +10,9 @@
 
 #include "psx_ygo_cheats.h"
 #include "psx_duelist_icon_cache.h"
+#include "psx_card_extend.h"
+#include "psx_card_chest.h"
+#include "psx_card_save.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -324,9 +327,17 @@ static void force_faceup_changed(int value) {
  * overwritten, or it answers about our own write. */
 #define PSX_UI_TRUNK  0x80105D98u
 
+/* Where the chest's working copy of card id 1 lives right now: the stock
+ * arena slot, or the chest stretch's relocated one when that is active. */
+static uint32_t ui_trunk_base(void) {
+    const uint32_t cell1 = psx_card_chest_ui_trunk_cell(1u);
+    return cell1 ? cell1 : PSX_UI_TRUNK;
+}
+
 static int ui_copy_is_trunk(void) {
+    const uint32_t base = ui_trunk_base();
     for (uint32_t i = 0; i < PSX_TRUNK_LEN; i++)
-        if (psx_mod_read_byte(PSX_UI_TRUNK + i) !=
+        if (psx_mod_read_byte(base + i) !=
             psx_mod_read_byte(PSX_SAVE_LIVE + PSX_TRUNK_OFF + i))
             return 0;
     return 1;
@@ -337,12 +348,40 @@ static void all_cards_changed(int value) {
     if (!psx_ygo_save_is_live()) { refuse(s_all_cards_row, "All cards"); return; }
     const int ui_is_trunk = ui_copy_is_trunk();
     const uint8_t n = (uint8_t)(value > 3 ? 3 : value);
+    /* The stock range and the extended range are granted by two loops that
+     * share nothing but n. The stock loop is bounded by PSX_TRUNK_LEN
+     * unconditionally, so an id above 722 cannot reach the save, its mirror
+     * or the UI copy under any extension state -- the stock save block has
+     * exactly 722 trunk bytes with live fields directly after them, and a
+     * count for id 723+ written there is save corruption (an earlier
+     * revision did exactly that). */
+    const uint32_t ui_base = ui_trunk_base();
     for (uint32_t i = 0; i < PSX_TRUNK_LEN; i++) {
         psx_mod_write_byte(PSX_SAVE_LIVE   + PSX_TRUNK_OFF + i, n);
         psx_mod_write_byte(PSX_SAVE_MIRROR + PSX_TRUNK_OFF + i, n);
-        if (ui_is_trunk) psx_mod_write_byte(PSX_UI_TRUNK + i, n);
+        if (ui_is_trunk)
+            psx_mod_write_byte(ui_base + i, n);
     }
-    host_osd_push("All cards granted", 1500);
+    /* Extended ids go ONLY to the mod-side store; psx_card_chest.c's
+     * sync_ext_trunk sees the store change and pushes counts, record
+     * owned-flags and the owned-total into the relocated working buffer on
+     * its next tick, so the grant lands whether the chest is open or not.
+     *
+     * Gate on the BOOT-LATCHED preference, not on psx_card_extend_count():
+     * the count collapses to 722 whenever the card DB is not resident --
+     * which includes exactly the chest-closed state this row's hint asks
+     * for -- so gating on it silently skipped the extra cards (measured
+     * 2026-08-30). The latch cannot change mid-run (flipping the MODS row
+     * only asks for a restart), so there is no state where extras leak into
+     * a stock session: with the row Off the store is never written, and the
+     * store is never shown or saved through stock paths anyway. */
+    if (psx_card_save_ext_enabled()) {
+        for (uint32_t id = PSX_CARD_EXT_FIRST; id <= PSX_CARD_EXT_LAST; id++)
+            psx_card_ext_trunk_set(id, n);
+        host_osd_push("All cards granted (extra cards too)", 1500);
+    } else {
+        host_osd_push("All cards granted", 1500);
+    }
 }
 
 /* --- REVEAL ALL PORTRAITS ------------------------------------------------

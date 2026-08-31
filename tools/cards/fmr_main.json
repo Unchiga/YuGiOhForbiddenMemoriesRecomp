@@ -1,0 +1,2890 @@
+{
+"Baby Dragon": {
+"canonical": "Baby Dragon",
+"number": 4
+},
+"Battle Ox": {
+"canonical": "Battle Ox",
+"number": 26
+},
+"Battle Steer": {
+"canonical": "Battle Steer",
+"number": 14
+},
+"Beaver Warrior": {
+"canonical": "Beaver Warrior",
+"number": 27
+},
+"Blackland Fire Dragon": {
+"canonical": "Blackland Fire Dragon",
+"number": 10
+},
+"Blue-eyes White Dragon": {
+"canonical": "Blue-Eyes White Dragon",
+"number": 1
+},
+"Curse of Dragon": {
+"canonical": "Curse of Dragon",
+"number": 39
+},
+"Dark Magician": {
+"canonical": "Dark Magician",
+"number": 35
+},
+"Dragon Piper": {
+"canonical": "Dragon Piper",
+"number": 40
+},
+"Exodia the Forbidden": {
+"canonical": "Exodia the Forbidden One",
+"number": 21
+},
+"Feral Imp": {
+"canonical": "Feral Imp",
+"number": 6
+},
+"Flame Swordsman": {
+"canonical": "Flame Swordsman",
+"number": 15
+},
+"Gaia the Dragon Champion": {
+"canonical": "Gaia the Dragon Champion",
+"number": 37
+},
+"Gaia the Fierce Knight": {
+"canonical": "Gaia The Fierce Knight",
+"number": 38
+},
+"Hitotsu-me Giant": {
+"canonical": "Hitotsu-Me Giant",
+"number": 3
+},
+"Horn Imp": {
+"canonical": "Horn Imp",
+"number": 25
+},
+"Judge Man": {
+"canonical": "Judge Man",
+"number": 33
+},
+"Koumori Dragon": {
+"canonical": "Koumori Dragon",
+"number": 31
+},
+"Left Arm of the Forbidden One": {
+"canonical": "Left Arm of the Forbidden One",
+"number": 20
+},
+"Left Leg of the Forbidden One": {
+"canonical": "Left Leg of the Forbidden One",
+"number": 18
+},
+"Mountain Warrior": {
+"canonical": "Mountain Warrior",
+"number": 29
+},
+"Mushroom Man": {
+"canonical": "Mushroom Man",
+"number": 8
+},
+"Mystical Elf": {
+"canonical": "Mystical Elf",
+"number": 2
+},
+"Right Arm of the Forbidden One": {
+"canonical": "Right Arm of the Forbidden One",
+"number": 19
+},
+"Right Leg of the Forbidden One": {
+"canonical": "Right Leg of the Forbidden One",
+"number": 17
+},
+"Rock Ogre Grotto 1": {
+"canonical": "Rock Ogre Grotto 1",
+"number": 28
+},
+"Ryu-kishin": {
+"canonical": "Ryu-Kishin",
+"number": 5
+},
+"Saggi the Dark Clown": {
+"canonical": "Saggi the Dark Clown",
+"number": 34
+},
+"Shadow Specter": {
+"canonical": "Shadow Specter",
+"number": 9
+},
+"Skull Servant": {
+"canonical": "Skull Servant",
+"number": 24
+},
+"Summoned Skull": {
+"canonical": "Summoned Skull",
+"number": 22
+},
+"Swamp Battleguard": {
+"canonical": "Swamp Battleguard",
+"number": 12
+},
+"Sword Arm of Dragon": {
+"canonical": "Sword Arm of Dragon",
+"number": 11
+},
+"The Snake Hair": {
+"canonical": "The Snake Hair",
+"number": 36
+},
+"The Wicked Worm Beast": {
+"canonical": "The Wicked Worm Beast",
+"number": 23
+},
+"Time Wizard": {
+"canonical": "Time Wizard",
+"number": 16
+},
+"Two-headed King Rex": {
+"canonical": "Two-Headed King Rex",
+"number": 32
+},
+"Tyhone": {
+"canonical": "Tyhone",
+"number": 13
+},
+"Winged Dragon 1": {
+"canonical": "Winged Dragon, Guardian of the Fortress #1",
+"number": 7
+},
+"Zombie Warrior": {
+"canonical": "Zombie Warrior",
+"number": 30
+},
+"Armored Lizard": {
+"canonical": "Armored Lizard",
+"number": 51
+},
+"Axe Raider": {
+"canonical": "Axe Raider",
+"number": 78
+},
+"Basic Insect": {
+"canonical": "Basic Insect",
+"number": 50
+},
+"Big Insect": {
+"canonical": "Big Insect",
+"number": 49
+},
+"Celtic Guardian": {
+"canonical": "Celtic Guardian",
+"number": 41
+},
+"Cocoon of Evolution": {
+"canonical": "Cocoon of Evolution",
+"number": 72
+},
+"Fiend Kraken": {
+"canonical": "Fiend Kraken",
+"number": 70
+},
+"Garoozis": {
+"canonical": "Garoozis",
+"number": 68
+},
+"Giant Flea": {
+"canonical": "Giant Flea",
+"number": 55
+},
+"Giant Soldier of Stone": {
+"canonical": "Giant Soldier of Stone",
+"number": 74
+},
+"Gokibore": {
+"canonical": "Gokibore",
+"number": 54
+},
+"Grappler": {
+"canonical": "Grappler",
+"number": 77
+},
+"Great Moth": {
+"canonical": "Great Moth",
+"number": 57
+},
+"Great White": {
+"canonical": "Great White",
+"number": 60
+},
+"Griffore": {
+"canonical": "Griffore",
+"number": 46
+},
+"Harpie Lady": {
+"canonical": "Harpie Lady",
+"number": 62
+},
+"Harpie Lady Sisters": {
+"canonical": "Harpie Lady Sisters",
+"number": 63
+},
+"Hercules Beetle": {
+"canonical": "Hercules Beetle",
+"number": 52
+},
+"Illusionist Faceless Mage": {
+"canonical": "Illusionist Faceless Mage",
+"number": 42
+},
+"Jellyfish": {
+"canonical": "Jellyfish",
+"number": 71
+},
+"Kairyu-Shin": {
+"canonical": "Kairyu-Shin",
+"number": 73
+},
+"Karbonala Warrior": {
+"canonical": "Karbonala Warrior",
+"number": 43
+},
+"Killer Needle": {
+"canonical": "Killer Needle",
+"number": 53
+},
+"Kojikocy": {
+"canonical": "Kojikocy",
+"number": 66
+},
+"Krokodilus": {
+"canonical": "Krokodilus",
+"number": 76
+},
+"Kuriboh": {
+"canonical": "Kuriboh",
+"number": 58
+},
+"Larvae Moth": {
+"canonical": "Larvae Moth",
+"number": 56
+},
+"Mammoth Graveyard": {
+"canonical": "Mammoth Graveyard",
+"number": 59
+},
+"Man-eating Plant": {
+"canonical": "Man-Eating Plant",
+"number": 75
+},
+"Megazowler": {
+"canonical": "Megazowler",
+"number": 79
+},
+"Oscillo Hero 2": {
+"canonical": "Wattkid",
+"number": 45
+},
+"Perfectly Ultimate Great Moth": {
+"canonical": "Perfectly Ultimate Great Moth",
+"number": 67
+},
+"Rogue Doll": {
+"canonical": "Rogue Doll",
+"number": 44
+},
+"Sangan": {
+"canonical": "Sangan",
+"number": 48
+},
+"Silver Fang": {
+"canonical": "Silver Fang",
+"number": 65
+},
+"Thousand Dragon": {
+"canonical": "Thousand Dragon",
+"number": 69
+},
+"Tiger Axe": {
+"canonical": "Tiger Axe",
+"number": 64
+},
+"Torike": {
+"canonical": "Torike",
+"number": 47
+},
+"Uraby": {
+"canonical": "Uraby",
+"number": 80
+},
+"Wolf": {
+"canonical": "Wolf",
+"number": 61
+},
+"Armored Zombie": {
+"canonical": "Armored Zombie",
+"number": 96
+},
+"Barox": {
+"canonical": "Barox",
+"number": 86
+},
+"Battle Warrior": {
+"canonical": "Battle Warrior",
+"number": 100
+},
+"Castle of Dark Illusions": {
+"canonical": "Castle of Dark Illusions",
+"number": 83
+},
+"Catapult Turtle": {
+"canonical": "Catapult Turtle",
+"number": 89
+},
+"Clown Zombie": {
+"canonical": "Clown Zombie",
+"number": 98
+},
+"Crass Clown": {
+"canonical": "Crass Clown",
+"number": 95
+},
+"Crawling Dragon": {
+"canonical": "Crawling Dragon",
+"number": 94
+},
+"Crawling Dragon 2": {
+"canonical": "Crawling Dragon 2",
+"number": 81
+},
+"Curtain of the Dark Ones": {
+"canonical": "Curtain of the Dark Ones",
+"number": 104
+},
+"Dark Chimera": {
+"canonical": "Dark Chimera",
+"number": 87
+},
+"Dark Gray": {
+"canonical": "Dark Gray",
+"number": 113
+},
+"Doma The Angel of Silence": {
+"canonical": "Doma The Angel of Silence",
+"number": 111
+},
+"Dragon Zombie": {
+"canonical": "Dragon Zombie",
+"number": 97
+},
+"Dream Clown": {
+"canonical": "Dream Clown",
+"number": 120
+},
+"Goddess with the Third Eye": {
+"canonical": "Goddess with the Third Eye",
+"number": 109
+},
+"Graveyard and the Hand of Invitation": {
+"canonical": "Graveyard and the Hand of Invitation",
+"number": 108
+},
+"Gyakutenno Megami": {
+"canonical": "Gyakutenno Megami",
+"number": 90
+},
+"Hero of the East": {
+"canonical": "Hero of the East",
+"number": 110
+},
+"Job-Change Mirror": {
+"canonical": "Job-Change Mirror",
+"number": 103
+},
+"Kageningen": {
+"canonical": "Kageningen",
+"number": 107
+},
+"Kamion Wizard": {
+"canonical": "Kamionwizard",
+"number": 115
+},
+"King of Yamimakai": {
+"canonical": "King of Yamimakai",
+"number": 85
+},
+"Mask of Darkness": {
+"canonical": "Mask of Darkness",
+"number": 102
+},
+"Metal Guardian": {
+"canonical": "Metal Guardian",
+"number": 88
+},
+"Mystic Horseman": {
+"canonical": "Mystic Horseman",
+"number": 91
+},
+"Nightmare Scorpion": {
+"canonical": "Nightmare Scorpion",
+"number": 116
+},
+"Pumpking the King of Ghosts": {
+"canonical": "Pumpking the King of Ghosts",
+"number": 99
+},
+"Rabid Horseman": {
+"canonical": "Rabid Horseman",
+"number": 92
+},
+"Reaper of the Cards": {
+"canonical": "Reaper of the Cards",
+"number": 84
+},
+"Red-eyes B. Dragon": {
+"canonical": "Red-Eyes Black Dragon",
+"number": 82
+},
+"Spirit of the Books": {
+"canonical": "Spirit of the Books",
+"number": 117
+},
+"Spirit of the Winds": {
+"canonical": "Spirit of the Winds",
+"number": 106
+},
+"Supporter in the Shadows": {
+"canonical": "Supporter in the Shadows",
+"number": 118
+},
+"That Which Feeds on Life": {
+"canonical": "That Which Feeds on Life",
+"number": 112
+},
+"Tomozaurus": {
+"canonical": "Tomozaurus",
+"number": 105
+},
+"Trial of Nightmares": {
+"canonical": "Trial of Nightmare",
+"number": 119
+},
+"White Magical Hat": {
+"canonical": "White Magical Hat",
+"number": 114
+},
+"Wings of Wicked Flame": {
+"canonical": "Wings of Wicked Flame",
+"number": 101
+},
+"Zanki": {
+"canonical": "Zanki",
+"number": 93
+},
+"Akihiron": {
+"canonical": "Akihiron",
+"number": 150
+},
+"Ancient Tool": {
+"canonical": "Ancient Tool",
+"number": 124
+},
+"Ansatsu": {
+"canonical": "Ansatsu",
+"number": 127
+},
+"Blue-eyed Silver Zombie": {
+"canonical": "Blue-Eyed Silver Zombie",
+"number": 139
+},
+"Charubin the Fire Knight": {
+"canonical": "Charubin the Fire Knight",
+"number": 133
+},
+"Dark Plant": {
+"canonical": "Dark Plant",
+"number": 123
+},
+"Dig Beak": {
+"canonical": "Dig Beak",
+"number": 159
+},
+"Djinn the Watcher of the Wind": {
+"canonical": "Djinn the Watcher of the Wind",
+"number": 144
+},
+"Dokuroizo the Grim Reaper": {
+"canonical": "Dokuroizo the Grim Reaper",
+"number": 153
+},
+"Dragon Statue": {
+"canonical": "Dragon Statue",
+"number": 138
+},
+"Faith Bird": {
+"canonical": "Faith Bird",
+"number": 125
+},
+"Fiend's Hand": {
+"canonical": "Fiend's Hand",
+"number": 135
+},
+"Fire Reaper": {
+"canonical": "Fire Reaper",
+"number": 154
+},
+"Firegrass": {
+"canonical": "Firegrass",
+"number": 157
+},
+"Flame Manipulator": {
+"canonical": "Flame Manipulator",
+"number": 142
+},
+"Hard Armor": {
+"canonical": "Hard Armor",
+"number": 156
+},
+"LaMoon": {
+"canonical": "LaMoon",
+"number": 128
+},
+"Larvas": {
+"canonical": "Larvas",
+"number": 155
+},
+"Lord of the Lamp": {
+"canonical": "Lord of the Lamp",
+"number": 149
+},
+"M-warrior 1": {
+"canonical": "M-Warrior 1",
+"number": 160
+},
+"Man Eater": {
+"canonical": "Man Eater",
+"number": 158
+},
+"Monster Egg": {
+"canonical": "Monster Egg",
+"number": 147
+},
+"Mystery Hand": {
+"canonical": "Mystery Hand",
+"number": 137
+},
+"Mystical Capture Chain": {
+"canonical": "Mystical Capture Chain",
+"number": 134
+},
+"Necrolancer the Timelord": {
+"canonical": "Necrolancer the Time-lord",
+"number": 143
+},
+"Nemuriko": {
+"canonical": "Nemuriko",
+"number": 129
+},
+"Octoberser": {
+"canonical": "Octoberser",
+"number": 131
+},
+"Orion the Battle King": {
+"canonical": "Orion the Battle King",
+"number": 126
+},
+"Rhaimundos of the Red Sword": {
+"canonical": "Rhaimundos of the Red Sword",
+"number": 151
+},
+"Sleeping Lion": {
+"canonical": "Sleeping Lion",
+"number": 121
+},
+"Spiked Snail": {
+"canonical": "Spiked Snail",
+"number": 141
+},
+"Temple of Skulls": {
+"canonical": "Temple of Skulls",
+"number": 146
+},
+"The 13th Grave": {
+"canonical": "The 13th Grave",
+"number": 132
+},
+"The Bewitching Phantom Thief": {
+"canonical": "The Bewitching Phantom Thief",
+"number": 145
+},
+"The Melting Red Shadow": {
+"canonical": "The Melting Red Shadow",
+"number": 152
+},
+"The Shadow Who Controls the Dark": {
+"canonical": "The Shadow Who Controls the Dark",
+"number": 148
+},
+"Toad Master": {
+"canonical": "Toad Master",
+"number": 140
+},
+"Weather Control": {
+"canonical": "Weather Control",
+"number": 130
+},
+"Witty Phantom": {
+"canonical": "Witty Phantom",
+"number": 136
+},
+"Yamatano Dragon Scroll": {
+"canonical": "Yamatano Dragon Scroll",
+"number": 122
+},
+"Akakieisu": {
+"canonical": "Akakieisu",
+"number": 190
+},
+"Ancient Brain": {
+"canonical": "Ancient Brain",
+"number": 175
+},
+"Ancient Jar": {
+"canonical": "Ancient Jar",
+"number": 167
+},
+"Arlownay": {
+"canonical": "Arlownay",
+"number": 180
+},
+"Arma Knight": {
+"canonical": "Arma Knight",
+"number": 196
+},
+"Armaill": {
+"canonical": "Armaill",
+"number": 172
+},
+"Big Eye": {
+"canonical": "Big Eye",
+"number": 171
+},
+"Claw Reacher": {
+"canonical": "Claw Reacher",
+"number": 178
+},
+"Dark King of the Abyss": {
+"canonical": "Dark King of the Abyss",
+"number": 169
+},
+"Dark Prisoner": {
+"canonical": "Dark Prisoner",
+"number": 173
+},
+"Dark Shade": {
+"canonical": "Dark Shade",
+"number": 181
+},
+"Darkfire Dragon": {
+"canonical": "Darkfire Dragon",
+"number": 168
+},
+"Doron": {
+"canonical": "Doron",
+"number": 195
+},
+"Eyearmor": {
+"canonical": "Eyearmor",
+"number": 185
+},
+"Fiend Refrection 2": {
+"canonical": "Fiend Reflection 2",
+"number": 186
+},
+"Fire Eye": {
+"canonical": "Fire Eye",
+"number": 176
+},
+"Fusionist": {
+"canonical": "Fusionist",
+"number": 189
+},
+"Gate Deeg": {
+"canonical": "Gate Deeg",
+"number": 187
+},
+"Genin": {
+"canonical": "Genin",
+"number": 184
+},
+"Happy Lover": {
+"canonical": "Happy Lover",
+"number": 198
+},
+"Hurricail": {
+"canonical": "Hurricail",
+"number": 174
+},
+"Key Mace": {
+"canonical": "Key Mace",
+"number": 192
+},
+"LALA Li-oon": {
+"canonical": "LaLa Li-oon",
+"number": 191
+},
+"Lisark": {
+"canonical": "Lisark",
+"number": 163
+},
+"Lord of Zemia": {
+"canonical": "Lord of Zemia",
+"number": 164
+},
+"Lucky Trinket": {
+"canonical": "Lucky Trinket",
+"number": 183
+},
+"M-warrior 2": {
+"canonical": "M-Warrior 2",
+"number": 161
+},
+"Masked Clown": {
+"canonical": "Masked Clown",
+"number": 182
+},
+"Mech Mole Zombie": {
+"canonical": "Mech Mole Zombie",
+"number": 197
+},
+"Monsturtle": {
+"canonical": "Monsturtle",
+"number": 177
+},
+"Mysterious Puppeteer": {
+"canonical": "Mysterious Puppeteer",
+"number": 166
+},
+"Penguin Knight": {
+"canonical": "Penguin Knight",
+"number": 199
+},
+"Petit Dragon": {
+"canonical": "Petit Dragon",
+"number": 200
+},
+"Phantom Dewan": {
+"canonical": "Phantom Dewan",
+"number": 179
+},
+"Spirit of the Harp": {
+"canonical": "Spirit of the Harp",
+"number": 170
+},
+"Synchar": {
+"canonical": "Synchar",
+"number": 188
+},
+"Tainted Wisdom": {
+"canonical": "Tainted Wisdom",
+"number": 162
+},
+"Terra the Terrible": {
+"canonical": "Terra the Terrible",
+"number": 194
+},
+"The Judgement Hand": {
+"canonical": "The Judgement Hand",
+"number": 165
+},
+"Turtle Tiger": {
+"canonical": "Turtle Tiger",
+"number": 193
+},
+"Air Marmot of Nefariousness": {
+"canonical": "Archfiend Marmot of Nefariousness",
+"number": 202
+},
+"Aqua Madoor": {
+"canonical": "Aqua Madoor",
+"number": 213
+},
+"B. Skull Dragon": {
+"canonical": "Black Skull Dragon",
+"number": 217
+},
+"Beautiful Headhuntress": {
+"canonical": "Beautiful Headhuntress",
+"number": 234
+},
+"Dark Titan of Terror": {
+"canonical": "Dark Titan of Terror",
+"number": 233
+},
+"Dorover": {
+"canonical": "Dorover",
+"number": 205
+},
+"Droll Bird": {
+"canonical": "Droll Bird",
+"number": 207
+},
+"Dryad": {
+"canonical": "Doriado",
+"number": 216
+},
+"Fiend Sword": {
+"canonical": "Fiend Sword",
+"number": 225
+},
+"Flame Ghost": {
+"canonical": "Flame Ghost",
+"number": 215
+},
+"Frenzied Panda": {
+"canonical": "Frenzied Panda",
+"number": 201
+},
+"Guardian of the Labyrinth": {
+"canonical": "Guardian of the Labyrinth",
+"number": 236
+},
+"Haniwa": {
+"canonical": "Haniwa",
+"number": 237
+},
+"Hinotama Soul": {
+"canonical": "Hinotama Soul",
+"number": 210
+},
+"Hitodenchak": {
+"canonical": "Hitodenchak",
+"number": 227
+},
+"Hourglass of Life": {
+"canonical": "Hourglass of Life",
+"number": 229
+},
+"Kagemusha of the Blue Flame": {
+"canonical": "Kagemusha of the Blue Flame",
+"number": 214
+},
+"Kaminarikozou": {
+"canonical": "Thunder Kid",
+"number": 211
+},
+"Kumootoko": {
+"canonical": "Kumootoko",
+"number": 221
+},
+"Mabarrel": {
+"canonical": "Mabarrel",
+"number": 204
+},
+"Madjinn Gunn": {
+"canonical": "Madjinn Gunn",
+"number": 232
+},
+"Masked Sorcerer": {
+"canonical": "Masked Sorcerer",
+"number": 220
+},
+"Meotoko": {
+"canonical": "Meotoko",
+"number": 212
+},
+"Midnight Fiend": {
+"canonical": "Midnight Fiend",
+"number": 222
+},
+"Petit Angel": {
+"canonical": "Petit Angel",
+"number": 208
+},
+"Phantom Ghost": {
+"canonical": "Phantom Ghost",
+"number": 203
+},
+"Rare Fish": {
+"canonical": "Rare Fish",
+"number": 230
+},
+"Roaring Ocean Snake": {
+"canonical": "Roaring Ocean Snake",
+"number": 223
+},
+"Skull Stalker": {
+"canonical": "Skull Stalker",
+"number": 226
+},
+"Solitude": {
+"canonical": "Solitude",
+"number": 219
+},
+"The Drdek": {
+"canonical": "The Drdek",
+"number": 240
+},
+"Trap Master": {
+"canonical": "Trap Master",
+"number": 224
+},
+"Twin Long Rods 1": {
+"canonical": "Twin Long Rods 1",
+"number": 206
+},
+"Two-mouth Darkruler": {
+"canonical": "Two-Mouth Darkruler",
+"number": 218
+},
+"Vishwar Randi": {
+"canonical": "Vishwar Randi",
+"number": 239
+},
+"Winged Cleaver": {
+"canonical": "Winged Cleaver",
+"number": 209
+},
+"Wodan the Resident of the Forest": {
+"canonical": "Wodan the Resident of the Forest",
+"number": 235
+},
+"Wood Clown": {
+"canonical": "Wood Clown",
+"number": 231
+},
+"Wood Remains": {
+"canonical": "Wood Remains",
+"number": 228
+},
+"Yashinoki": {
+"canonical": "Yashinoki",
+"number": 238
+},
+"Ancient Sorcerer": {
+"canonical": "Ancient Sorcerer",
+"number": 259
+},
+"Ancient Tree of Enlightenment": {
+"canonical": "Ancient Tree of Enlightenment",
+"number": 273
+},
+"Angelwitch": {
+"canonical": "Fairywitch",
+"number": 253
+},
+"Beastking of the Swamps": {
+"canonical": "Beastking of the Swamps",
+"number": 258
+},
+"Candle of Fate": {
+"canonical": "Candle of Fate",
+"number": 242
+},
+"Dark Assailant": {
+"canonical": "Dark Assailant",
+"number": 241
+},
+"Dimensional Warrior": {
+"canonical": "D.D. Warrior",
+"number": 256
+},
+"Dissolverock": {
+"canonical": "Dissolverock",
+"number": 244
+},
+"Embryonic Beast": {
+"canonical": "Embryonic Beast",
+"number": 254
+},
+"Enchanting Mermaid": {
+"canonical": "Enchanting Mermaid",
+"number": 251
+},
+"Gorgon Egg": {
+"canonical": "Gorgon Egg",
+"number": 277
+},
+"Green Phantom King": {
+"canonical": "Green Phantom King",
+"number": 274
+},
+"Ground Attacker Bugroth": {
+"canonical": "Ground Attacker Bugroth",
+"number": 275
+},
+"Hyo": {
+"canonical": "Hyo",
+"number": 250
+},
+"King Fog": {
+"canonical": "King Fog",
+"number": 279
+},
+"Lunar Queen Elzaim": {
+"canonical": "Lunar Queen Elzaim",
+"number": 260
+},
+"Master & Expert": {
+"canonical": "Master & Expert",
+"number": 248
+},
+"Mavelus": {
+"canonical": "Mavelus",
+"number": 272
+},
+"Meda Bat": {
+"canonical": "Meda Bat",
+"number": 245
+},
+"Megirus Light": {
+"canonical": "Megirus Light",
+"number": 271
+},
+"Nekogal 1": {
+"canonical": "Nekogal 1",
+"number": 252
+},
+"One Who Hunts Souls": {
+"canonical": "One Who Hunts Souls",
+"number": 246
+},
+"Petit Moth": {
+"canonical": "Petit Moth",
+"number": 278
+},
+"Prevent Rat": {
+"canonical": "Prevent Rat",
+"number": 255
+},
+"Princess of Tsurugi": {
+"canonical": "Princess of Tsurugi",
+"number": 266
+},
+"Protector of the Throne": {
+"canonical": "Protector of the Throne",
+"number": 280
+},
+"Ray & Temperature": {
+"canonical": "Ray & Temperature",
+"number": 276
+},
+"Rock Ogre Grotto 2": {
+"canonical": "Rock Ogre Grotto 2",
+"number": 263
+},
+"Root Water": {
+"canonical": "Root Water",
+"number": 247
+},
+"Sectarian of Secrets": {
+"canonical": "Sectarian of Secrets",
+"number": 268
+},
+"Stone Armadiller": {
+"canonical": "Stone Armadiller",
+"number": 257
+},
+"The Furious Sea King": {
+"canonical": "The Furious Sea King",
+"number": 265
+},
+"The Little Swordsman of Aile": {
+"canonical": "The Little Swordsman of Aile",
+"number": 262
+},
+"Unknown Warrior of Fiend": {
+"canonical": "Unknown Warrior of Fiend",
+"number": 267
+},
+"Versago the Destroyer": {
+"canonical": "Versago the Destroyer",
+"number": 269
+},
+"Water Element": {
+"canonical": "Water Element",
+"number": 243
+},
+"Water Omotics": {
+"canonical": "Water Omotics",
+"number": 249
+},
+"Wetha": {
+"canonical": "Wetha",
+"number": 270
+},
+"Wicked Mirror": {
+"canonical": "Archfiend Mirror",
+"number": 261
+},
+"Wing Egg Elf": {
+"canonical": "Wing Egg Elf",
+"number": 264
+},
+"Axe of Despair": {
+"canonical": "Axe of Despair",
+"number": 304
+},
+"Beast Fangs": {
+"canonical": "Beast Fangs",
+"number": 308
+},
+"Bio Plant": {
+"canonical": "Bio Plant",
+"number": 295
+},
+"Black Pendant": {
+"canonical": "Black Pendant",
+"number": 311
+},
+"Change Slime": {
+"canonical": "Change Slime",
+"number": 289
+},
+"Cyber Shield": {
+"canonical": "Cyber Shield",
+"number": 317
+},
+"Cyber Soldier of Darkworld": {
+"canonical": "Cyber Soldier of Darkworld",
+"number": 297
+},
+"Dark Artist": {
+"canonical": "Dark Artist",
+"number": 288
+},
+"Dark Energy": {
+"canonical": "Dark Energy",
+"number": 303
+},
+"Dragon Treasure": {
+"canonical": "Dragon Treasure",
+"number": 315
+},
+"Dragoness the Wicked Knight": {
+"canonical": "Dragoness the Wicked Knight",
+"number": 294
+},
+"Electro-whip": {
+"canonical": "Electro-Whip",
+"number": 316
+},
+"Elegant Egotist": {
+"canonical": "Elegant Egotist",
+"number": 318
+},
+"Elf's Light": {
+"canonical": "Elf's Light",
+"number": 307
+},
+"Fireyarou": {
+"canonical": "Fireyarou",
+"number": 291
+},
+"Gatekeeper": {
+"canonical": "Gatekeeper",
+"number": 286
+},
+"Holograh": {
+"canonical": "Holograh",
+"number": 283
+},
+"Horn of Light": {
+"canonical": "Horn of Light",
+"number": 313
+},
+"Horn of the Unicorn": {
+"canonical": "Horn of the Unicorn",
+"number": 314
+},
+"Insect Armor with Laser Cannon": {
+"canonical": "Insect Armor with Laser Cannon",
+"number": 306
+},
+"Kurama": {
+"canonical": "Kurama",
+"number": 300
+},
+"Laser Cannon Armor": {
+"canonical": "Laser Cannon Armor",
+"number": 305
+},
+"Legendary Sword": {
+"canonical": "Legendary Sword",
+"number": 301
+},
+"Masaki the Legendary Swordsman": {
+"canonical": "Masaki the Legendary Swordsman",
+"number": 293
+},
+"Moon Envoy": {
+"canonical": "Moon Envoy",
+"number": 290
+},
+"Mystic Clown": {
+"canonical": "Mystic Clown",
+"number": 281
+},
+"Mystical Moon": {
+"canonical": "Mystical Moon",
+"number": 319
+},
+"Mystical Sheep 2": {
+"canonical": "Mystical Sheep 2",
+"number": 282
+},
+"Ogre of the Black Shadow": {
+"canonical": "Ogre of the Black Shadow",
+"number": 287
+},
+"One-eyed Shield Dragon": {
+"canonical": "One-Eyed Shield Dragon",
+"number": 296
+},
+"Psychic Kappa": {
+"canonical": "Psychic Kappa",
+"number": 292
+},
+"Serpent Marauder": {
+"canonical": "Serpent Marauder",
+"number": 285
+},
+"Silver Bow and Arrow": {
+"canonical": "Silver Bow and Arrow",
+"number": 312
+},
+"Sonic Maid": {
+"canonical": "Sonic Maid",
+"number": 299
+},
+"Steel Shell": {
+"canonical": "Steel Shell",
+"number": 309
+},
+"Stop Defense": {
+"canonical": "Stop Defense",
+"number": 320
+},
+"Sword of Dark Destruction": {
+"canonical": "Sword of Dark Destruction",
+"number": 302
+},
+"Tao the Chanter": {
+"canonical": "Tao the Chanter",
+"number": 284
+},
+"Vile Germs": {
+"canonical": "Vile Germs",
+"number": 310
+},
+"Wicked Dragon with the Ersatz Head": {
+"canonical": "Wicked Dragon with the Ersatz Head",
+"number": 298
+},
+"Book of Secret Arts": {
+"canonical": "Book of Secret Arts",
+"number": 323
+},
+"Dark-piercing Light": {
+"canonical": "Dark-Piercing Light",
+"number": 350
+},
+"Dark Hole": {
+"canonical": "Dark Hole",
+"number": 336
+},
+"Dian Keto the Cure Master": {
+"canonical": "Dian Keto the Cure Master",
+"number": 342
+},
+"Dragon Capture Jar": {
+"canonical": "Dragon Capture Jar",
+"number": 329
+},
+"Final Flame": {
+"canonical": "Final Flame",
+"number": 345
+},
+"Follow Wind": {
+"canonical": "Follow Wind",
+"number": 327
+},
+"Forest": {
+"canonical": "Forest",
+"number": 330
+},
+"Goblin's Secret Remedy": {
+"canonical": "Goblin's Secret Remedy",
+"number": 340
+},
+"Hinotama": {
+"canonical": "Hinotama",
+"number": 344
+},
+"Invigoration": {
+"canonical": "Invigoration",
+"number": 324
+},
+"Kanan the Swordmistress": {
+"canonical": "Kanan the Swordmistress",
+"number": 352
+},
+"Machine Conversion Factory": {
+"canonical": "Machine Conversion Factory",
+"number": 325
+},
+"Malevolent Nuzzler": {
+"canonical": "Malevolent Nuzzler",
+"number": 321
+},
+"Megasonic Eye": {
+"canonical": "Megasonic Eye",
+"number": 355
+},
+"Mooyan Curry": {
+"canonical": "Mooyan Curry",
+"number": 338
+},
+"Mountain": {
+"canonical": "Mountain",
+"number": 332
+},
+"Ookazi": {
+"canonical": "Ookazi",
+"number": 346
+},
+"Power of Kaishin": {
+"canonical": "Power of Kaishin",
+"number": 328
+},
+"Raigeki": {
+"canonical": "Raigeki",
+"number": 337
+},
+"Raise Body Heat": {
+"canonical": "Raise Body Heat",
+"number": 326
+},
+"Red Medicine": {
+"canonical": "Red Medicine",
+"number": 339
+},
+"Seiyaryu": {
+"canonical": "Seiyaryu",
+"number": 358
+},
+"Sogen": {
+"canonical": "Sogen",
+"number": 333
+},
+"Soul of the Pure": {
+"canonical": "Soul of the Pure",
+"number": 341
+},
+"Sparks": {
+"canonical": "Sparks",
+"number": 343
+},
+"Spellbinding Circle": {
+"canonical": "Spellbinding Circle",
+"number": 349
+},
+"Stuffed Animal": {
+"canonical": "Stuffed Animal",
+"number": 354
+},
+"Super War-lion": {
+"canonical": "Super War-Lion",
+"number": 356
+},
+"Swords of Revealing Light": {
+"canonical": "Swords of Revealing Light",
+"number": 348
+},
+"Takriminos": {
+"canonical": "Takriminos",
+"number": 353
+},
+"Three-legged Zombies": {
+"canonical": "Three-Legged Zombies",
+"number": 359
+},
+"Tremendous Fire": {
+"canonical": "Tremendous Fire",
+"number": 347
+},
+"Umi": {
+"canonical": "Umi",
+"number": 334
+},
+"Violet Crystal": {
+"canonical": "Violet Crystal",
+"number": 322
+},
+"Wasteland": {
+"canonical": "Wasteland",
+"number": 331
+},
+"Yamadron": {
+"canonical": "Yamadron",
+"number": 357
+},
+"Yami": {
+"canonical": "Yami",
+"number": 335
+},
+"Yaranzo": {
+"canonical": "Yaranzo",
+"number": 351
+},
+"Zera The Mant": {
+"canonical": "Zera the Mant",
+"number": 360
+},
+"Bickuribox": {
+"canonical": "Bickuribox",
+"number": 385
+},
+"Black Luster Soldier": {
+"canonical": "Black Luster Soldier",
+"number": 364
+},
+"Blue-eyes Ultimate Dragon": {
+"canonical": "Blue-Eyes Ultimate Dragon",
+"number": 380
+},
+"Dancing Elf": {
+"canonical": "Dancing Elf",
+"number": 395
+},
+"Dark Rabbit": {
+"canonical": "Dark Rabbit",
+"number": 384
+},
+"Dungeon Worm": {
+"canonical": "Dungeon Worm",
+"number": 375
+},
+"Emperor of the Land and Sea": {
+"canonical": "Emperor of the Land and Sea",
+"number": 400
+},
+"Fairy's Gift": {
+"canonical": "Fairy's Gift",
+"number": 363
+},
+"Fiend's Mirror": {
+"canonical": "Fiend's Mirror",
+"number": 365
+},
+"Flying Penguin": {
+"canonical": "Flying Penguin",
+"number": 361
+},
+"Gate Guardian": {
+"canonical": "Gate Guardian",
+"number": 374
+},
+"Giltia the D. Knight": {
+"canonical": "Giltia the D. Knight",
+"number": 389
+},
+"Harpie's Pet Dragon": {
+"canonical": "Harpie's Pet Dragon",
+"number": 386
+},
+"Jirai Gumo": {
+"canonical": "Jirai Gumo",
+"number": 367
+},
+"Kazejin": {
+"canonical": "Kazejin",
+"number": 372
+},
+"La Jinn the Mystical Genie": {
+"canonical": "La Jinn the Mystical Genie of the Lamp",
+"number": 379
+},
+"Labyrinth Tank": {
+"canonical": "Labyrinth Tank",
+"number": 370
+},
+"Labyrinth Wall": {
+"canonical": "Labyrinth Wall",
+"number": 366
+},
+"Launcher Spider": {
+"canonical": "Launcher Spider",
+"number": 390
+},
+"Leghul": {
+"canonical": "Leghul",
+"number": 397
+},
+"Metalzoa": {
+"canonical": "Metalzoa",
+"number": 392
+},
+"Millennium Shield": {
+"canonical": "Millennium Shield",
+"number": 362
+},
+"Monster Tamer": {
+"canonical": "Monster Tamer",
+"number": 376
+},
+"Mystic Lamp": {
+"canonical": "Mystic Lamp",
+"number": 387
+},
+"Ocubeam": {
+"canonical": "Ocubeam",
+"number": 396
+},
+"Ooguchi": {
+"canonical": "Ooguchi",
+"number": 398
+},
+"Parrot Dragon": {
+"canonical": "Parrot Dragon",
+"number": 383
+},
+"Pendulum Machine": {
+"canonical": "Pendulum Machine",
+"number": 388
+},
+"Rude Kaiser": {
+"canonical": "Rude Kaiser",
+"number": 382
+},
+"Ryu-kishin Powered": {
+"canonical": "Ryu-Kishin Powered",
+"number": 377
+},
+"Sanga of the Thunder": {
+"canonical": "Sanga of the Thunder",
+"number": 371
+},
+"Shadow Ghoul": {
+"canonical": "Shadow Ghoul",
+"number": 368
+},
+"Steel Scorpion": {
+"canonical": "Steel Scorpion",
+"number": 394
+},
+"Suijin": {
+"canonical": "Suijin",
+"number": 373
+},
+"Swordsman from a Foreign Land": {
+"canonical": "Swordsman from a Distant Land",
+"number": 399
+},
+"Swordstalker": {
+"canonical": "Swordstalker",
+"number": 378
+},
+"Toon Alligator": {
+"canonical": "Toon Alligator",
+"number": 381
+},
+"Wall Shadow": {
+"canonical": "Wall Shadow",
+"number": 369
+},
+"Zoa": {
+"canonical": "Zoa",
+"number": 391
+},
+"Zone Eater": {
+"canonical": "Zone Eater",
+"number": 393
+},
+"7 Colored Fish": {
+"canonical": "7 Colored Fish",
+"number": 440
+},
+"Ancient Elf": {
+"canonical": "Ancient Elf",
+"number": 433
+},
+"Bat": {
+"canonical": "Bat",
+"number": 411
+},
+"Beautiful Beast Trainer": {
+"canonical": "Beautiful Beast Trainer",
+"number": 434
+},
+"Blast Juggler": {
+"canonical": "Blast Juggler",
+"number": 417
+},
+"Blocker": {
+"canonical": "Blocker",
+"number": 416
+},
+"Bottom Dweller": {
+"canonical": "Bottom Dweller",
+"number": 439
+},
+"Cyber-Stein": {
+"canonical": "Cyber-Stein",
+"number": 420
+},
+"Cyber Commander": {
+"canonical": "Cyber Commander",
+"number": 421
+},
+"Cyber Soldier": {
+"canonical": "Cyber Soldier",
+"number": 413
+},
+"Deepsea Shark": {
+"canonical": "Deepsea Shark",
+"number": 437
+},
+"Dice Armadillo": {
+"canonical": "Dice Armadillo",
+"number": 423
+},
+"Giant Mech-soldier": {
+"canonical": "Giant Mech-Soldier",
+"number": 408
+},
+"Giga-tech Wolf": {
+"canonical": "Giga-Tech Wolf",
+"number": 412
+},
+"Giganto": {
+"canonical": "Giganto",
+"number": 419
+},
+"Goddess of Whim": {
+"canonical": "Goddess of Whim",
+"number": 429
+},
+"Golgoil": {
+"canonical": "Golgoil",
+"number": 418
+},
+"Ice Water": {
+"canonical": "Ice Water",
+"number": 431
+},
+"Jinzo 7": {
+"canonical": "Jinzo 7",
+"number": 422
+},
+"Kaiser Dragon": {
+"canonical": "Kaiser Dragon",
+"number": 427
+},
+"Leogun": {
+"canonical": "Leogun",
+"number": 403
+},
+"Machine King": {
+"canonical": "Machine King",
+"number": 407
+},
+"Magician of Faith": {
+"canonical": "Magician of Faith",
+"number": 428
+},
+"Mechanical Spider": {
+"canonical": "Karakuri Spider",
+"number": 410
+},
+"Mechanicalchacer": {
+"canonical": "Mechanicalchaser",
+"number": 415
+},
+"Metal Dragon": {
+"canonical": "Metal Dragon",
+"number": 409
+},
+"Metal Fish": {
+"canonical": "Metal Fish",
+"number": 438
+},
+"Monster Eye": {
+"canonical": "Monster Eye",
+"number": 402
+},
+"Saber Slasher": {
+"canonical": "Sword Slasher",
+"number": 405
+},
+"Shovel Crusher": {
+"canonical": "Shovel Crusher",
+"number": 414
+},
+"Sky Dragon": {
+"canonical": "Sky Dragon",
+"number": 424
+},
+"Stone D.": {
+"canonical": "Stone Dragon",
+"number": 426
+},
+"Tatsunootoshigo": {
+"canonical": "Tatsunootoshigo",
+"number": 404
+},
+"Thunder Dragon": {
+"canonical": "Thunder Dragon",
+"number": 425
+},
+"Ushi Oni": {
+"canonical": "Ushi Oni",
+"number": 401
+},
+"Water Girl": {
+"canonical": "Water Girl",
+"number": 435
+},
+"Water Magician": {
+"canonical": "Water Magician",
+"number": 430
+},
+"Waterdragon Fairy": {
+"canonical": "Waterdragon Fairy",
+"number": 432
+},
+"White Dolphin": {
+"canonical": "White Dolphin",
+"number": 436
+},
+"Yaiba Robo": {
+"canonical": "Yaiba Robo",
+"number": 406
+},
+"30,000-Year White Turtle": {
+"canonical": "30,000-Year White Turtle",
+"number": 449
+},
+"Air Eater": {
+"canonical": "Air Eater",
+"number": 472
+},
+"Alinsection": {
+"canonical": "Alinsection",
+"number": 477
+},
+"Aqua Dragon": {
+"canonical": "Aqua Dragon",
+"number": 442
+},
+"Aqua Snake": {
+"canonical": "Aqua Snake",
+"number": 446
+},
+"Armed Ninja": {
+"canonical": "Armed Ninja",
+"number": 469
+},
+"Barrel Rock": {
+"canonical": "Barrel Rock",
+"number": 455
+},
+"Bolt Escargot": {
+"canonical": "Bolt Escargot",
+"number": 460
+},
+"Bolt Penguin": {
+"canonical": "Bolt Penguin",
+"number": 461
+},
+"Cockroach Knight": {
+"canonical": "Cockroach Knight",
+"number": 479
+},
+"Crimson Sunbird": {
+"canonical": "Crimson Sunbird",
+"number": 467
+},
+"Destroyer Golem": {
+"canonical": "Destroyer Golem",
+"number": 454
+},
+"Electric Snake": {
+"canonical": "Electric Snake",
+"number": 463
+},
+"Ganigumo": {
+"canonical": "Ganigumo",
+"number": 476
+},
+"Giant Red Seasnake": {
+"canonical": "Giant Red Seasnake",
+"number": 447
+},
+"Guardian of the Sea": {
+"canonical": "Sentinel of the Seas",
+"number": 445
+},
+"Insect Soldiers of the Sky": {
+"canonical": "Insect Soldiers of the Sky",
+"number": 478
+},
+"Kaminari Attack": {
+"canonical": "Kaminari Attack",
+"number": 458
+},
+"Kanikabuto": {
+"canonical": "Kanikabuto",
+"number": 451
+},
+"Kappa Avenger": {
+"canonical": "Kappa Avenger",
+"number": 450
+},
+"Kuwagata α": {
+"canonical": "Kuwagata α",
+"number": 480
+},
+"Magical Ghost": {
+"canonical": "Magical Ghost",
+"number": 470
+},
+"Mech Bass": {
+"canonical": "Mech Bass",
+"number": 441
+},
+"Millennium Golem": {
+"canonical": "Millennium Golem",
+"number": 453
+},
+"Minomushi Warrior": {
+"canonical": "Minomushi Warrior",
+"number": 456
+},
+"Punished Eagle": {
+"canonical": "Punished Eagle",
+"number": 465
+},
+"Queen Bird": {
+"canonical": "Queen Bird",
+"number": 468
+},
+"Sea Kamen": {
+"canonical": "Sea Kamen",
+"number": 474
+},
+"Sea King Dragon": {
+"canonical": "Sea King Dragon",
+"number": 443
+},
+"Sinister Serpent": {
+"canonical": "Sinister Serpent",
+"number": 475
+},
+"Skull Red Bird": {
+"canonical": "Skull Red Bird",
+"number": 466
+},
+"Soul Hunter": {
+"canonical": "Soul Hunter",
+"number": 471
+},
+"Spike Seadra": {
+"canonical": "Spike Seadra",
+"number": 448
+},
+"Stone Ghost": {
+"canonical": "Stone Ghost",
+"number": 457
+},
+"The Immortal of Thunder": {
+"canonical": "The Immortal of Thunder",
+"number": 462
+},
+"Tripwire Beast": {
+"canonical": "Tripwire Beast",
+"number": 459
+},
+"Turu-Purun": {
+"canonical": "Turu-Purun",
+"number": 444
+},
+"Vermillion Sparrow": {
+"canonical": "Vermillion Sparrow",
+"number": 473
+},
+"Wing Eagle": {
+"canonical": "Wing Eagle",
+"number": 464
+},
+"Zarigun": {
+"canonical": "Zarigun",
+"number": 452
+},
+"Ameba": {
+"canonical": "Ameba",
+"number": 484
+},
+"Barrel Lily": {
+"canonical": "Barrel Lily",
+"number": 489
+},
+"Bean Soldier": {
+"canonical": "Bean Soldier",
+"number": 511
+},
+"Boo Koo": {
+"canonical": "Boo Koo",
+"number": 486
+},
+"Boulder Tortoise": {
+"canonical": "Boulder Tortoise",
+"number": 518
+},
+"Bracchio-raidus": {
+"canonical": "Bracchio-raidus",
+"number": 509
+},
+"Brave Scizzar": {
+"canonical": "Brave Scizzar",
+"number": 514
+},
+"Burglar": {
+"canonical": "Burglar",
+"number": 481
+},
+"Cannon Soldier": {
+"canonical": "Cannon Soldier",
+"number": 512
+},
+"Crazy Fish": {
+"canonical": "Crazy Fish",
+"number": 507
+},
+"Cyber Saurus": {
+"canonical": "Cyber Saurus",
+"number": 508
+},
+"D. Human": {
+"canonical": "D. Human",
+"number": 502
+},
+"Dragon Seeker": {
+"canonical": "Dragon Seeker",
+"number": 500
+},
+"Fire Kraken": {
+"canonical": "Fire Kraken",
+"number": 519
+},
+"Flower Wolf": {
+"canonical": "Flower Wolf",
+"number": 487
+},
+"Fungi of the Musk": {
+"canonical": "Fungi of the Musk",
+"number": 504
+},
+"Gale Dogra": {
+"canonical": "Gale Dogra",
+"number": 506
+},
+"Garvas": {
+"canonical": "Garvas",
+"number": 483
+},
+"Guardian of the Throne Room": {
+"canonical": "Guardian of the Throne Room",
+"number": 513
+},
+"Hoshiningen": {
+"canonical": "Hoshiningen",
+"number": 492
+},
+"Kattapillar": {
+"canonical": "Kattapillar",
+"number": 499
+},
+"Korogashi": {
+"canonical": "Korogashi",
+"number": 485
+},
+"Laughing Flower": {
+"canonical": "Laughing Flower",
+"number": 510
+},
+"Maha Vailo": {
+"canonical": "Maha Vailo",
+"number": 493
+},
+"Man-eater Bug": {
+"canonical": "Man-Eater Bug",
+"number": 501
+},
+"Morinphen": {
+"canonical": "Morinphen",
+"number": 498
+},
+"Muka Muka": {
+"canonical": "Muka Muka",
+"number": 516
+},
+"Musician King": {
+"canonical": "Musician King",
+"number": 495
+},
+"Needle Ball": {
+"canonical": "Needle Ball",
+"number": 490
+},
+"Peacock": {
+"canonical": "Peacock",
+"number": 491
+},
+"Pragtical": {
+"canonical": "Pragtical",
+"number": 482
+},
+"Prisman": {
+"canonical": "Prisman",
+"number": 505
+},
+"Rainbow Flower": {
+"canonical": "Rainbow Flower",
+"number": 488
+},
+"Rainbow Marine Mermaid": {
+"canonical": "Rainbow Marine Mermaid",
+"number": 494
+},
+"Sand Stone": {
+"canonical": "Sand Stone",
+"number": 517
+},
+"The Statue of Easter Island": {
+"canonical": "The Statue of Easter Island",
+"number": 515
+},
+"Turtle Bird": {
+"canonical": "Turtle Bird",
+"number": 520
+},
+"Turtle Raccoon": {
+"canonical": "Turtle Raccoon",
+"number": 503
+},
+"Wilmee": {
+"canonical": "Wilmee",
+"number": 496
+},
+"Yado Karu": {
+"canonical": "Yado Karu",
+"number": 497
+},
+"Behegon": {
+"canonical": "Behegon",
+"number": 550
+},
+"Bone Mouse": {
+"canonical": "Bone Mouse",
+"number": 548
+},
+"Corroding Shark": {
+"canonical": "Corroding Shark",
+"number": 539
+},
+"Dark Elf": {
+"canonical": "Dark Elf",
+"number": 551
+},
+"Dharma Cannon": {
+"canonical": "Dharma Cannon",
+"number": 544
+},
+"Eldeen": {
+"canonical": "Eldeen",
+"number": 530
+},
+"Flame Cerebrus": {
+"canonical": "Flame Cerebrus",
+"number": 529
+},
+"Frog The Jam": {
+"canonical": "Slime Toad",
+"number": 549
+},
+"Gemini Elf": {
+"canonical": "Gemini Elf",
+"number": 532
+},
+"Griggle": {
+"canonical": "Griggle",
+"number": 547
+},
+"Hane-Hane": {
+"canonical": "Hane-Hane",
+"number": 541
+},
+"Invader from Another Dimension": {
+"canonical": "Invader from Another Dimension",
+"number": 560
+},
+"Kamakiriman": {
+"canonical": "Kamakiriman",
+"number": 535
+},
+"Kwagar Hercules": {
+"canonical": "Kwagar Hercules",
+"number": 533
+},
+"Lava Battleguard": {
+"canonical": "Lava Battleguard",
+"number": 554
+},
+"Mechaleon": {
+"canonical": "Mechaleon",
+"number": 536
+},
+"Mega Thunderball": {
+"canonical": "Mega Thunderball",
+"number": 537
+},
+"Milus Radiant": {
+"canonical": "Milus Radiant",
+"number": 527
+},
+"Minar": {
+"canonical": "Minar",
+"number": 534
+},
+"Misairuzame": {
+"canonical": "Misairuzame",
+"number": 542
+},
+"Monstrous Bird": {
+"canonical": "Monstrous Bird",
+"number": 522
+},
+"Mushroom Man 2": {
+"canonical": "Mushroom Man 2",
+"number": 553
+},
+"Mystical Sand": {
+"canonical": "Mystical Sand",
+"number": 531
+},
+"Neck Hunter": {
+"canonical": "Neck Hunter",
+"number": 526
+},
+"Niwatori": {
+"canonical": "Niwatori",
+"number": 538
+},
+"Oscillo Hero": {
+"canonical": "Oscillo Hero",
+"number": 559
+},
+"Pot the Trick": {
+"canonical": "Pot the Trick",
+"number": 558
+},
+"Skelengel": {
+"canonical": "Skelengel",
+"number": 540
+},
+"Skelgon": {
+"canonical": "Skelgon",
+"number": 545
+},
+"Skullbird": {
+"canonical": "Skullbird",
+"number": 521
+},
+"Spirit of the Mountain": {
+"canonical": "Spirit of the Mountain",
+"number": 525
+},
+"Star Boy": {
+"canonical": "Star Boy",
+"number": 524
+},
+"Steel Ogre Grotto 1": {
+"canonical": "Steel Ogre Grotto 1",
+"number": 557
+},
+"The Bistro Butcher": {
+"canonical": "The Bistro Butcher",
+"number": 523
+},
+"The Wandering Doomed": {
+"canonical": "The Wandering Doomed",
+"number": 556
+},
+"Togex": {
+"canonical": "Togex",
+"number": 528
+},
+"Tongyo": {
+"canonical": "Tongyo",
+"number": 543
+},
+"Tyhone 2": {
+"canonical": "Tyhone 2",
+"number": 555
+},
+"Winged Dragon 2": {
+"canonical": "Winged Dragon, Guardian of the Fortress 2",
+"number": 552
+},
+"Wow Warrior": {
+"canonical": "Wow Warrior",
+"number": 546
+},
+"Abyss Flower": {
+"canonical": "Abyss Flower",
+"number": 579
+},
+"Ancient One of the Deep Forest": {
+"canonical": "Ancient One of the Deep Forest",
+"number": 575
+},
+"Anthrosaurus": {
+"canonical": "Anthrosaurus",
+"number": 568
+},
+"B. Dragon Jungle King": {
+"canonical": "B. Dragon Jungle King",
+"number": 571
+},
+"Beaked Snake": {
+"canonical": "Beaked Snake",
+"number": 590
+},
+"Binding Chain": {
+"canonical": "Binding Chain",
+"number": 584
+},
+"Crow Goblin": {
+"canonical": "Crow Goblin",
+"number": 577
+},
+"Dark Witch": {
+"canonical": "Dark Witch",
+"number": 582
+},
+"Darkworld Thorns": {
+"canonical": "Darkworld Thorns",
+"number": 567
+},
+"Drooling Lizard": {
+"canonical": "Drooling Lizard",
+"number": 569
+},
+"Empress Judge": {
+"canonical": "Empress Judge",
+"number": 572
+},
+"Fiend Refrection 1": {
+"canonical": "Fiend Reflection 1",
+"number": 595
+},
+"Ghoul with an Appetite": {
+"canonical": "Ghoul with an Appetite",
+"number": 596
+},
+"Giant Scorpion of the Tundra": {
+"canonical": "Giant Scorpion of the Tundra",
+"number": 576
+},
+"Giant Turtle Who Feeds on Flames": {
+"canonical": "Giant Turtle Who Feeds on Flames",
+"number": 593
+},
+"Great Mammoth of Goldfine": {
+"canonical": "Great Mammoth of Goldfine",
+"number": 564
+},
+"Greenkappa": {
+"canonical": "Greenkappa",
+"number": 586
+},
+"Key Mace 2": {
+"canonical": "Key Mace 2",
+"number": 600
+},
+"Leo Wizard": {
+"canonical": "Leo Wizard",
+"number": 578
+},
+"Lesser Dragon": {
+"canonical": "Lesser Dragon",
+"number": 561
+},
+"Little Chimera": {
+"canonical": "Little Chimera",
+"number": 598
+},
+"Little D": {
+"canonical": "Little D",
+"number": 573
+},
+"Living Vase": {
+"canonical": "Living Vase",
+"number": 588
+},
+"Man-eating Black Shark": {
+"canonical": "Man-eating Black Shark",
+"number": 565
+},
+"Mechanical Snail": {
+"canonical": "Mechanical Snail",
+"number": 585
+},
+"Mon Larvas": {
+"canonical": "Mon Larvas",
+"number": 587
+},
+"Morphing Jar": {
+"canonical": "Morphing Jar",
+"number": 591
+},
+"Muse-A": {
+"canonical": "Muse-A",
+"number": 592
+},
+"Needle Worm": {
+"canonical": "Needle Worm",
+"number": 562
+},
+"Pale Beast": {
+"canonical": "Pale Beast",
+"number": 597
+},
+"Patrol Robo": {
+"canonical": "Patrol Robo",
+"number": 580
+},
+"Rose Spectre of Dunn": {
+"canonical": "Rose Spectre of Dunn",
+"number": 594
+},
+"Takuhee": {
+"canonical": "Takuhee",
+"number": 581
+},
+"Tentacle Plant": {
+"canonical": "Tentacle Plant",
+"number": 589
+},
+"Trakadon": {
+"canonical": "Trakodon",
+"number": 570
+},
+"Violent Rain": {
+"canonical": "Violent Rain",
+"number": 599
+},
+"Weather Report": {
+"canonical": "Weather Report",
+"number": 583
+},
+"Witch of the Black Forest": {
+"canonical": "Witch of the Black Forest",
+"number": 574
+},
+"Wretched Ghost of the Attic": {
+"canonical": "Wretched Ghost of the Attic",
+"number": 563
+},
+"Yormungarde": {
+"canonical": "Yormungarde",
+"number": 566
+},
+"Acid Crawler": {
+"canonical": "Acid Crawler",
+"number": 640
+},
+"Amazon of the Seas": {
+"canonical": "Amazon of the Seas",
+"number": 626
+},
+"Amphibious Bugroth": {
+"canonical": "Amphibious Bugroth",
+"number": 639
+},
+"Ancient Lizard Warrior": {
+"canonical": "Ancient Lizard Warrior",
+"number": 630
+},
+"Armored Rat": {
+"canonical": "Armored Rat",
+"number": 629
+},
+"Armored Starfish": {
+"canonical": "Armored Starfish",
+"number": 615
+},
+"Bladefly": {
+"canonical": "Bladefly",
+"number": 609
+},
+"Blue-winged Crown": {
+"canonical": "Blue-Winged Crown",
+"number": 636
+},
+"Electric Lizard": {
+"canonical": "Electric Lizard",
+"number": 610
+},
+"Fairy Dragon": {
+"canonical": "Fairy Dragon",
+"number": 603
+},
+"Fairy of the Fountain": {
+"canonical": "Fairy of the Fountain",
+"number": 625
+},
+"Great Bill": {
+"canonical": "Great Bill",
+"number": 607
+},
+"High Tide Gyojin": {
+"canonical": "High Tide Gyojin",
+"number": 624
+},
+"Hiro's Shadow Scout": {
+"canonical": "Hiro's Shadow Scout",
+"number": 611
+},
+"Hourglass of Courage": {
+"canonical": "Hourglass of Courage",
+"number": 616
+},
+"Hunter Spider": {
+"canonical": "Hunter Spider",
+"number": 614
+},
+"Ill Witch": {
+"canonical": "Ill Witch",
+"number": 622
+},
+"Lady of Faith": {
+"canonical": "Lady of Faith",
+"number": 612
+},
+"Liquid Beast": {
+"canonical": "Liquid Beast",
+"number": 605
+},
+"Maiden of the Moonlight": {
+"canonical": "Maiden of the Moonlight",
+"number": 631
+},
+"Marine Beast": {
+"canonical": "Marine Beast",
+"number": 617
+},
+"Nekogal 2": {
+"canonical": "Nekogal 2",
+"number": 627
+},
+"Night Lizard": {
+"canonical": "Night Lizard",
+"number": 634
+},
+"Obese Marmot of Nefariousness": {
+"canonical": "Obese Marmot of Nefariousness",
+"number": 604
+},
+"Penguin Soldier": {
+"canonical": "Penguin Soldier",
+"number": 602
+},
+"Queen's Double": {
+"canonical": "Queen's Double",
+"number": 635
+},
+"Queen of Autumn Leaves": {
+"canonical": "Queen of Autumn Leaves",
+"number": 638
+},
+"Rock Spirit": {
+"canonical": "Rock Spirit",
+"number": 619
+},
+"Shining Friendship": {
+"canonical": "Shining Friendship",
+"number": 608
+},
+"Snakeyashi": {
+"canonical": "Snakeyashi",
+"number": 620
+},
+"Stone Ogre Grotto": {
+"canonical": "Stone Ogre Grotto",
+"number": 632
+},
+"Succubus Knight": {
+"canonical": "Succubus Knight",
+"number": 621
+},
+"Tenderness": {
+"canonical": "Tenderness",
+"number": 601
+},
+"The Thing That Hides In the Mud": {
+"canonical": "The Thing That Hides in the Mud",
+"number": 623
+},
+"Trent": {
+"canonical": "Trent",
+"number": 637
+},
+"Twin-headed Thunder Dragon": {
+"canonical": "Twin-Headed Thunder Dragon",
+"number": 613
+},
+"Twin Long Rods 2": {
+"canonical": "Twin Long Rods 2",
+"number": 606
+},
+"Warrior of Tradition": {
+"canonical": "Warrior of Tradition",
+"number": 618
+},
+"Winged Egg of New Life": {
+"canonical": "Winged Egg of New Life",
+"number": 633
+},
+"Witch's Apprentice": {
+"canonical": "Witch's Apprentice",
+"number": 628
+},
+"Beastry Mirror Ritual": {
+"canonical": "Beastly Mirror Ritual",
+"number": 674
+},
+"Black Luster Ritual": {
+"canonical": "Black Luster Ritual",
+"number": 670
+},
+"Breath of Light": {
+"canonical": "Breath of Light",
+"number": 663
+},
+"Bright Castle": {
+"canonical": "Shine Palace",
+"number": 668
+},
+"Commencement Dance": {
+"canonical": "Commencement Dance",
+"number": 676
+},
+"Crush Card": {
+"canonical": "Crush Card Virus",
+"number": 661
+},
+"Curse of Millennium Shield": {
+"canonical": "Curse of Millennium Shield",
+"number": 665
+},
+"Curse of Tri-Horned Dragon": {
+"canonical": "Curse of Tri-Horned Dragon",
+"number": 680
+},
+"Cursebreaker": {
+"canonical": "Cursebreaker",
+"number": 655
+},
+"Disk Magician": {
+"canonical": "Disk Magician",
+"number": 643
+},
+"Eradicating Aerosol": {
+"canonical": "Eradicating Aerosol",
+"number": 662
+},
+"Eternal Draught": {
+"canonical": "Eternal Drought",
+"number": 664
+},
+"Eternal Rest": {
+"canonical": "Eternal Rest",
+"number": 656
+},
+"Flame Viper": {
+"canonical": "Flame Viper",
+"number": 644
+},
+"Gate Guardian Ritual": {
+"canonical": "Gate Guardian Ritual",
+"number": 667
+},
+"Gruesome Goo": {
+"canonical": "Gruesome Goo",
+"number": 646
+},
+"Hamburger Recipe": {
+"canonical": "Hamburger Recipe",
+"number": 677
+},
+"Harpie's Feather Duster": {
+"canonical": "Harpie's Feather Duster",
+"number": 672
+},
+"Hibikime": {
+"canonical": "Hibikime",
+"number": 649
+},
+"Hyosube": {
+"canonical": "Hyosube",
+"number": 647
+},
+"Invader of the Throne": {
+"canonical": "Invader of the Throne",
+"number": 641
+},
+"Kunai with Chain": {
+"canonical": "Kunai with Chain",
+"number": 651
+},
+"Machine Attacker": {
+"canonical": "Machine Attacker",
+"number": 648
+},
+"Magical Labyrinth": {
+"canonical": "Magical Labyrinth",
+"number": 652
+},
+"Megamorph": {
+"canonical": "Megamorph",
+"number": 657
+},
+"Metalmorph": {
+"canonical": "Metalmorph",
+"number": 658
+},
+"Mystical Sheep 1": {
+"canonical": "Mystical Sheep 1",
+"number": 642
+},
+"Novox's Prayer": {
+"canonical": "Novox's Prayer",
+"number": 679
+},
+"Revival of Sennen Genjin": {
+"canonical": "Revival of Sennen Genjin",
+"number": 678
+},
+"Royal Guard": {
+"canonical": "Royal Guard",
+"number": 645
+},
+"Salamandra": {
+"canonical": "Salamandra",
+"number": 654
+},
+"Shadow Spell": {
+"canonical": "Shadow Spell",
+"number": 669
+},
+"Stain Storm": {
+"canonical": "Acid Rain",
+"number": 660
+},
+"Ultimate Dragon": {
+"canonical": "Ultimate Dragon",
+"number": 675
+},
+"War-lion Ritual": {
+"canonical": "War-Lion Ritual",
+"number": 673
+},
+"Warrior Elimination": {
+"canonical": "Warrior Elimination",
+"number": 653
+},
+"Whiptail Crow": {
+"canonical": "Whiptail Crow",
+"number": 650
+},
+"Winged Trumpeter": {
+"canonical": "Winged Trumpeter",
+"number": 659
+},
+"Yamadron Ritual": {
+"canonical": "Yamadron Ritual",
+"number": 666
+},
+"Zera Ritual": {
+"canonical": "Zera Ritual",
+"number": 671
+},
+"Acid Trap Hole": {
+"canonical": "Acid Trap Hole",
+"number": 685
+},
+"Bad Reaction to Simochi": {
+"canonical": "Bad Reaction to Simochi",
+"number": 688
+},
+"Bear Trap": {
+"canonical": "Bear Trap",
+"number": 683
+},
+"Chakra": {
+"canonical": "Chakra",
+"number": 709
+},
+"Contruct of Mask": {
+"canonical": "Contract of Mask",
+"number": 693
+},
+"Cosmo Queen's Prayer": {
+"canonical": "Cosmo Queen's Prayer",
+"number": 698
+},
+"Cosmo Queen": {
+"canonical": "Cosmo Queen",
+"number": 708
+},
+"Crab Turtle": {
+"canonical": "Crab Turtle",
+"number": 710
+},
+"Dokurorider": {
+"canonical": "Dokurorider",
+"number": 719
+},
+"Eatgaboon": {
+"canonical": "Eatgaboon",
+"number": 682
+},
+"Fake Trap": {
+"canonical": "Fake Trap",
+"number": 690
+},
+"Firewing Pegasus": {
+"canonical": "Firewing Pegasus",
+"number": 714
+},
+"Fortress Whale's Oath": {
+"canonical": "Fortress Whale's Oath",
+"number": 700
+},
+"Fortress Whale": {
+"canonical": "Fortress Whale",
+"number": 718
+},
+"Garma Sword": {
+"canonical": "Garma Sword",
+"number": 716
+},
+"Garma Sword Oath": {
+"canonical": "Garma Sword Oath",
+"number": 697
+},
+"Goblin Fan": {
+"canonical": "Goblin Fan",
+"number": 687
+},
+"House of Adhesive Tape": {
+"canonical": "House of Adhesive Tape",
+"number": 681
+},
+"Hungry Burger": {
+"canonical": "Hungry Burger",
+"number": 702
+},
+"Invisible Wire": {
+"canonical": "Invisible Wire",
+"number": 684
+},
+"Javelin Beetle": {
+"canonical": "Javelin Beetle",
+"number": 717
+},
+"Javelin Beetle Pact": {
+"canonical": "Javelin Beetle Pact",
+"number": 696
+},
+"Mask of Shine & Dark": {
+"canonical": "Mask of Shine & Dark",
+"number": 720
+},
+"Meteor B. Dragon": {
+"canonical": "Meteor Black Dragon",
+"number": 713
+},
+"Meteor Dragon": {
+"canonical": "Meteor Dragon",
+"number": 712
+},
+"Mikazukinoyaiba": {
+"canonical": "Mikazukinoyaiba",
+"number": 711
+},
+"Performance of Sword": {
+"canonical": "Performance of Sword",
+"number": 701
+},
+"Psycho-Puppet": {
+"canonical": "Psycho-Puppet",
+"number": 715
+},
+"Puppet Ritual": {
+"canonical": "Puppet Ritual (video games)",
+"number": 695
+},
+"Resurrection of Chakra": {
+"canonical": "Resurrection of Chakra",
+"number": 694
+},
+"Reverse Trap": {
+"canonical": "Reverse Trap",
+"number": 689
+},
+"Revival of Skeleton Rider": {
+"canonical": "Revival of Dokurorider",
+"number": 699
+},
+"Revived of Serpent Night Dragon": {
+"canonical": "Revived Serpent Night Dragon",
+"number": 691
+},
+"Sengenjin": {
+"canonical": "Sengenjin",
+"number": 703
+},
+"Serpent Night Dragon": {
+"canonical": "Serpent Night Dragon",
+"number": 706
+},
+"Skull Guardian": {
+"canonical": "Skull Guardian",
+"number": 704
+},
+"Skull Knight": {
+"canonical": "Skull Knight",
+"number": 707
+},
+"Tri-horned Dragon": {
+"canonical": "Tri-Horned Dragon",
+"number": 705
+},
+"Turtle Oath": {
+"canonical": "Turtle Oath",
+"number": 692
+},
+"Widespread Ruin": {
+"canonical": "Widespread Ruin",
+"number": 686
+},
+"Dark Magic Ritual": {
+"canonical": "Black Magic Ritual",
+"number": 721
+},
+"Magician of Black Chaos": {
+"canonical": "Magician of Black Chaos",
+"number": 722
+}
+}

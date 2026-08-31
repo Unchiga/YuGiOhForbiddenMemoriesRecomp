@@ -108,6 +108,7 @@ starvation_dump.jsonl
 /MOD_LOADER_PROMPT.md
 /MENU_REDESIGN_PROMPT.md
 /CARD_LIBRARY_PROMPT.md
+/CARD_COUNT_800_PROMPT.md
 /game_modtest.toml
 
 # Debug spill from runtime launches.

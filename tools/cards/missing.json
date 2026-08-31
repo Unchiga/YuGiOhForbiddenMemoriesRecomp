@@ -1,0 +1,1076 @@
+[
+ {
+  "key": "Fissure",
+  "name": "Fissure",
+  "type": "Spell Card",
+  "date": "1/1999/2/4"
+ },
+ {
+  "key": "Trap Hole",
+  "name": "Trap Hole",
+  "type": "Trap Card",
+  "date": "1/1999/2/4"
+ },
+ {
+  "key": "Blue Medicine",
+  "name": "Blue Medicine",
+  "type": "Spell Card",
+  "date": "1/1999/3/1"
+ },
+ {
+  "key": "Raimei",
+  "name": "Raimei",
+  "type": "Spell Card",
+  "date": "1/1999/3/1"
+ },
+ {
+  "key": "Gravedigger Ghoul",
+  "name": "Gravedigger Ghoul",
+  "type": "Spell Card",
+  "date": "1/2002/3/8"
+ },
+ {
+  "key": "Monster Reborn",
+  "name": "Monster Reborn",
+  "type": "Spell Card",
+  "date": "1/2002/3/8"
+ },
+ {
+  "key": "Pot of Greed",
+  "name": "Pot of Greed",
+  "type": "Spell Card",
+  "date": "1/2002/3/8"
+ },
+ {
+  "key": "Remove Trap",
+  "name": "Remove Trap",
+  "type": "Spell Card",
+  "date": "1/2002/3/8"
+ },
+ {
+  "key": "Two-Pronged Attack",
+  "name": "Two-Pronged Attack",
+  "type": "Trap Card",
+  "date": "1/2002/3/8"
+ },
+ {
+  "key": "Ancient Telescope",
+  "name": "Ancient Telescope",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Baron of the Fiend Sword",
+  "name": "Baron of the Fiend Sword",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Card Destruction",
+  "name": "Card Destruction",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Castle Walls",
+  "name": "Castle Walls",
+  "type": "Trap Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Change of Heart",
+  "name": "Change of Heart",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "De-Spell",
+  "name": "De-Spell",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Just Desserts",
+  "name": "Just Desserts",
+  "type": "Trap Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Last Will",
+  "name": "Last Will",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Lord of D.",
+  "name": "Lord of D.",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Man-Eating Treasure Chest",
+  "name": "Man-Eating Treasure Chest",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Neo the Magic Swordsman",
+  "name": "Neo the Magic Swordsman",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Reinforcements",
+  "name": "Reinforcements",
+  "type": "Trap Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Sorcerer of the Doomed",
+  "name": "Sorcerer of the Doomed",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Soul Exchange",
+  "name": "Soul Exchange",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "The Flute of Summoning Dragon",
+  "name": "The Flute of Summoning Dragon",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "The Inexperienced Spy",
+  "name": "The Inexperienced Spy",
+  "type": "Spell Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "The Stern Mystic",
+  "name": "The Stern Mystic",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Ultimate Offering",
+  "name": "Ultimate Offering",
+  "type": "Trap Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Waboku",
+  "name": "Waboku",
+  "type": "Trap Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Wall of Illusion",
+  "name": "Wall of Illusion",
+  "type": "Monster Card",
+  "date": "1/2002/3/29"
+ },
+ {
+  "key": "Barrel Dragon",
+  "name": "Barrel Dragon",
+  "type": "Monster Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Block Attack",
+  "name": "Block Attack",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Garnecia Elefantis",
+  "name": "Garnecia Elefantis",
+  "type": "Monster Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Gazelle the King of Mythical Beasts",
+  "name": "Gazelle the King of Mythical Beasts",
+  "type": "Monster Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Germ Infection",
+  "name": "Germ Infection",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Heavy Storm",
+  "name": "Heavy Storm",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Horn of Heaven",
+  "name": "Horn of Heaven",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Magic Jammer",
+  "name": "Magic Jammer",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Mirror Force",
+  "name": "Mirror Force",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Paralyzing Potion",
+  "name": "Paralyzing Potion",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Ring of Magnetism",
+  "name": "Ring of Magnetism",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Robbin' Goblin",
+  "name": "Robbin' Goblin",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Seven Tools of the Bandit",
+  "name": "Seven Tools of the Bandit",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Share the Pain",
+  "name": "Share the Pain",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Shield & Sword",
+  "name": "Shield & Sword",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Solemn Judgment",
+  "name": "Solemn Judgment",
+  "type": "Trap Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Soul Release",
+  "name": "Soul Release",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Stim-Pack",
+  "name": "Stim-Pack",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Sword of Deep-Seated",
+  "name": "Sword of Deep-Seated",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "The Cheerful Coffin",
+  "name": "The Cheerful Coffin",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "The Unhappy Maiden",
+  "name": "The Unhappy Maiden",
+  "type": "Monster Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Tribute to The Doomed",
+  "name": "Tribute to The Doomed",
+  "type": "Spell Card",
+  "date": "1/2002/6/26"
+ },
+ {
+  "key": "Burning Spear",
+  "name": "Burning Spear",
+  "type": "Spell Card",
+  "date": "1/2002/9/1"
+ },
+ {
+  "key": "Gust Fan",
+  "name": "Gust Fan",
+  "type": "Spell Card",
+  "date": "1/2002/9/1"
+ },
+ {
+  "key": "White Hole",
+  "name": "White Hole",
+  "type": "Trap Card",
+  "date": "1/2002/9/1"
+ },
+ {
+  "key": "Banisher of the Light",
+  "name": "Banisher of the Light",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Black Illusion Ritual",
+  "name": "Black Illusion Ritual",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Blue-Eyes Toon Dragon",
+  "name": "Blue-Eyes Toon Dragon",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Boar Soldier",
+  "name": "Boar Soldier",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Ceremonial Bell",
+  "name": "Ceremonial Bell",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Chain Energy",
+  "name": "Chain Energy",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Chorus of Sanctuary",
+  "name": "Chorus of Sanctuary",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Confiscation",
+  "name": "Confiscation",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Curse of Fiend",
+  "name": "Curse of Fiend",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Cyber Jar",
+  "name": "Cyber Jar",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Dark Zebra",
+  "name": "Dark Zebra",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Darkness Approaches",
+  "name": "Darkness Approaches",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Delinquent Duo",
+  "name": "Delinquent Duo",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Fairy's Hand Mirror",
+  "name": "Fairy's Hand Mirror",
+  "type": "Trap Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Final Destiny",
+  "name": "Final Destiny",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Flash Assailant",
+  "name": "Flash Assailant",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Flying Kamakiri 1",
+  "name": "Flying Kamakiri #1",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Gaia Power",
+  "name": "Gaia Power",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Giant Germ",
+  "name": "Giant Germ",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Giant Rat",
+  "name": "Giant Rat",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Giant Trunade",
+  "name": "Giant Trunade",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Gravekeeper's Servant",
+  "name": "Gravekeeper's Servant",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Hyozanryu",
+  "name": "Hyozanryu",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Jigen Bakudan",
+  "name": "Jigen Bakudan",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Karate Man",
+  "name": "Karate Man",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Kotodama",
+  "name": "Kotodama",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Luminous Spark",
+  "name": "Luminous Spark",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Manga Ryu-Ran",
+  "name": "Manga Ryu-Ran",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Messenger of Peace",
+  "name": "Messenger of Peace",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Molten Destruction",
+  "name": "Molten Destruction",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Mother Grizzly",
+  "name": "Mother Grizzly",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Mystic Plasma Zone",
+  "name": "Mystic Plasma Zone",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Mystic Tomato",
+  "name": "Mystic Tomato",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Mystical Space Typhoon",
+  "name": "Mystical Space Typhoon",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Nimble Momonga",
+  "name": "Nimble Momonga",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Painful Choice",
+  "name": "Painful Choice",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Red Archery Girl",
+  "name": "Red Archery Girl",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Relinquished",
+  "name": "Relinquished",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Rising Air Current",
+  "name": "Rising Air Current",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Rush Recklessly",
+  "name": "Rush Recklessly",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Ryu-Ran",
+  "name": "Ryu-Ran",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Senju of the Thousand Hands",
+  "name": "Senju of the Thousand Hands",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Shining Angel",
+  "name": "Shining Angel",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Slot Machine",
+  "name": "Slot Machine",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Snake Fang",
+  "name": "Snake Fang",
+  "type": "Trap Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Snatch Steal",
+  "name": "Snatch Steal",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Sonic Bird",
+  "name": "Sonic Bird",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Spear Cretin",
+  "name": "Spear Cretin",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Tailor of the Fickle",
+  "name": "Tailor of the Fickle",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "The Forceful Sentry",
+  "name": "The Forceful Sentry",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "The Reliable Guardian",
+  "name": "The Reliable Guardian",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Toll",
+  "name": "Toll",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Toon Mermaid",
+  "name": "Toon Mermaid",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Toon Summoned Skull",
+  "name": "Toon Summoned Skull",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Toon World",
+  "name": "Toon World",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "UFO Turtle",
+  "name": "UFO Turtle",
+  "type": "Monster Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Umiiruka",
+  "name": "Umiiruka",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Upstart Goblin",
+  "name": "Upstart Goblin",
+  "type": "Spell Card",
+  "date": "1/2002/9/16"
+ },
+ {
+  "key": "Buster Blader",
+  "name": "Buster Blader",
+  "type": "Monster Card",
+  "date": "1/2002/10/1"
+ },
+ {
+  "key": "Call of the Grave",
+  "name": "Call of the Grave",
+  "type": "Trap Card",
+  "date": "1/2002/10/1"
+ },
+ {
+  "key": "Exile of the Wicked",
+  "name": "Exile of the Wicked",
+  "type": "Spell Card",
+  "date": "1/2002/10/1"
+ },
+ {
+  "key": "Thousand-Eyes Restrict",
+  "name": "Thousand-Eyes Restrict",
+  "type": "Monster Card",
+  "date": "1/2002/10/1"
+ },
+ {
+  "key": "Exchange",
+  "name": "Exchange",
+  "type": "Spell Card",
+  "date": "1/2002/10/15"
+ },
+ {
+  "key": "Graceful Dice",
+  "name": "Graceful Dice",
+  "type": "Spell Card",
+  "date": "1/2002/10/15"
+ },
+ {
+  "key": "Skull Dice",
+  "name": "Skull Dice",
+  "type": "Trap Card",
+  "date": "1/2002/10/15"
+ },
+ {
+  "key": "7 Completed",
+  "name": "7 Completed",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Appropriate",
+  "name": "Appropriate",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Armored Glass",
+  "name": "Armored Glass",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Attack and Receive",
+  "name": "Attack and Receive",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Backup Soldier",
+  "name": "Backup Soldier",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Beast of Talwar",
+  "name": "Beast of Talwar",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Bite Shoes",
+  "name": "Bite Shoes",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Bubonic Vermin",
+  "name": "Bubonic Vermin",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Ceasefire",
+  "name": "Ceasefire",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Chain Destruction",
+  "name": "Chain Destruction",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Cyber Falcon",
+  "name": "Cyber Falcon",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "DNA Surgery",
+  "name": "DNA Surgery",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Dark Bat",
+  "name": "Dark Bat",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Darkfire Soldier 1",
+  "name": "Darkfire Soldier #1",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Darkfire Soldier 2",
+  "name": "Darkfire Soldier #2",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Deepsea Warrior",
+  "name": "Deepsea Warrior",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Drill Bug",
+  "name": "Drill Bug",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Driving Snow",
+  "name": "Driving Snow",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Flame Champion",
+  "name": "Flame Champion",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Flying Kamakiri 2",
+  "name": "Flying Kamakiri #2",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Forced Requisition",
+  "name": "Forced Requisition",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Gamble",
+  "name": "Gamble",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Gust",
+  "name": "Gust",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Imperial Order",
+  "name": "Imperial Order",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Insect Barrier",
+  "name": "Insect Barrier",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Inspection",
+  "name": "Inspection",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Invitation to a Dark Sleep",
+  "name": "Invitation to a Dark Sleep",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Jinzo",
+  "name": "Jinzo",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Kiseitai",
+  "name": "Kiseitai",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Light of Intervention",
+  "name": "Light of Intervention",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Lightforce Sword",
+  "name": "Lightforce Sword",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Magical Hats",
+  "name": "Magical Hats",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Major Riot",
+  "name": "Major Riot",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Metal Detector",
+  "name": "Metal Detector",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Michizure",
+  "name": "Michizure",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Minor Goblin Official",
+  "name": "Minor Goblin Official",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Morphing Jar 2",
+  "name": "Morphing Jar #2",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Mr. Volcano",
+  "name": "Mr. Volcano",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Mystic Probe",
+  "name": "Mystic Probe",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Nobleman of Crossout",
+  "name": "Nobleman of Crossout",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Nobleman of Extermination",
+  "name": "Nobleman of Extermination",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Numinous Healer",
+  "name": "Numinous Healer",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Oni Tank T-34",
+  "name": "Oni Tank T-34",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Overdrive",
+  "name": "Overdrive",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Parasite Paracide",
+  "name": "Parasite Paracide",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Premature Burial",
+  "name": "Premature Burial",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Prohibition",
+  "name": "Prohibition",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Respect Play",
+  "name": "Respect Play",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Skull Invitation",
+  "name": "Skull Invitation",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Sky Scout",
+  "name": "Sky Scout",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Spikebot",
+  "name": "Spikebot",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Steel Ogre Grotto 2",
+  "name": "Steel Ogre Grotto #2",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Sword Hunter",
+  "name": "Sword Hunter",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "The Fiend Megacyber",
+  "name": "The Fiend Megacyber",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "The Regulation of Tribe",
+  "name": "The Regulation of Tribe",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "The Shallow Grave",
+  "name": "The Shallow Grave",
+  "type": "Spell Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Thousand-Eyes Idol",
+  "name": "Thousand-Eyes Idol",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Three-Headed Geedo",
+  "name": "Three-Headed Geedo",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "Twin-Headed Fire Dragon",
+  "name": "Twin-Headed Fire Dragon",
+  "type": "Monster Card",
+  "date": "1/2002/10/20"
+ },
+ {
+  "key": "World Suppression",
+  "name": "World Suppression",
+  "type": "Trap Card",
+  "date": "1/2002/10/20"
+ }
+]

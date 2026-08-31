@@ -14,6 +14,10 @@
 #include "psx_game_hooks.h"
 #include "psx_guest_overlay.h"
 
+#include "psx_card_extend.h"
+#include "psx_card_chest.h"
+#include "psx_card_guard.h"
+#include "psx_card_save.h"
 #include "psx_card_shop.h"
 #include "psx_cd_overlay.h"
 #include "psx_fusion_overlay.h"
@@ -87,6 +91,24 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
         psx_card_shop_register_menu();
         (void)psx_game_add_frame_hook(psx_card_shop_tick);
     }
+    /* CARD LIST EXTENSION -- SAVE SIDE FIRST. It owns the row that decides
+     * whether the extension runs at all, and its frame hook has to see a
+     * freshly loaded save block BEFORE the chest pushes counts into the
+     * stretched list, so it registers ahead of both. */
+    psx_card_save_init();
+    /* CARD LIST EXTENSION. No overlay of its own -- it only relocates the
+     * per-card tables and re-asserts its code patches, so a frame hook is
+     * the whole registration. It must run every frame: the library overlay
+     * is reloaded from disc on entry and restores stock code bytes. */
+    psx_card_extend_init();
+    /* CHEST STRETCH. Same per-frame idiom, and it must tick AFTER the card
+     * extension: the stretched list is only asserted once the relocated card
+     * DB is live, so hook order here is load-bearing. */
+    psx_card_chest_init();
+    /* PRIM-SPRAY GUARD. Contains the chest screen's runaway text-draw (see
+     * psx_card_guard.c); order after the chest stretch is only for reading
+     * clarity -- it keys on the mode byte alone. */
+    psx_card_guard_init();
     /* RNG VIEWER. A corner debug panel; nothing the game draws needs to sit
      * above it, and it stays below the confirm prompt registered after it. */
     {
