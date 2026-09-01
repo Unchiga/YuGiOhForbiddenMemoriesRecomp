@@ -40,13 +40,13 @@
  * calls. Matching that stream bit for bit is what lets a duel played here be
  * verified against (or by) the community's modded-ISO tooling: same seed,
  * same actions, same cards. The burned calls are applied by advancing the
- * seed word directly — arithmetically identical to six discarded rand()
- * calls — and each roll goes through func_80021810 itself. The in-flight
- * stock roll is then made free: its internal `jal rand` is NOPed for one
- * frame so it consumes nothing, and its award site is NOPed while the row is
- * 2+ (re-asserted every frame, because the duel overlay reloads this code
- * region from disc — the same reason the community mod patches all seven
- * overlay copies on its disc).
+ * seed word directly — arithmetically identical to discarded rand() calls —
+ * cards 1..N-1 roll through func_80021810 itself, and card N IS the game's
+ * own in-flight roll and award, which the hook steers onto the pattern's
+ * last roll position. No code is patched: the first version NOPed the stock
+ * rand and award instead, and those per-frame writes dirtied the region
+ * holding the results-screen state function, killing its entry hook and the
+ * CARD DROPS page's navigation with it (see the on_roll hook's comment).
  *
  * The two guest routines, established by write-tracing the trunk during a real
  * duel reward and then reading the generated C for the enclosing functions
@@ -84,23 +84,12 @@ static int g_card_drops = PSX_VM_CARD_DROPS_DEFAULT;
 /* $ra at the roll's single call site (0x80021C60 jal, link 0x80021C68). */
 #define PSX_DROP_ROLL_SITE  0x80021C68u
 
-/* The community drop pattern's moving parts. The rand seed word; the
- * `jal rand` INSIDE func_80021810 (NOPed for one frame after the extras run,
- * so the game's own in-flight roll consumes no call); and the stock award's
- * `jal func_80021894` at the duel-reward site (NOPed while the row is 2+,
- * the same suppression the community mod ships). Both words are verified
- * against their stock encodings before every patch — an overlay that has not
- * loaded this region yet simply is not patched that frame. */
+/* The community drop pattern's one moving part: the rand seed word, advanced
+ * arithmetically for the discarded call and the six burns per card. NO code
+ * is patched for the pattern — the stock roll and award ARE the pattern's
+ * final card; see the long comment in the on_roll hook for why (and for the
+ * results-screen paging bug the patched first version caused). */
 #define PSX_RNG_SEED_ADDR        0x800FE6F8u
-#define PSX_DROP_ROLL_RAND      0x80021840u
-#define PSX_DROP_ROLL_RAND_WORD 0x0C023964u   /* jal 0x8008E590 */
-#define PSX_DROP_AWARD_JAL      0x80021F14u
-#define PSX_DROP_AWARD_JAL_WORD 0x0C008625u   /* jal 0x80021894 */
-#define PSX_MIPS_NOP            0u
-
-static int s_cd_unpatch_roll;    /* restore the roll's rand jal next tick */
-static int s_cd_award_patched;   /* our award NOP is (or was) asserted */
-static uint32_t s_cd_patch_refused;
 
 static uint32_t cd_lcg_advance(uint32_t s, int n) {
     while (n--) s = s * 0x41C64E6Du + 0x3039u;
@@ -417,11 +406,9 @@ int psx_card_drops_simulate(CPUState *cpu, int tier, int drops,
     psx_dispatch_call(cpu, PSX_DROP_ROLL_FN, PSX_DROP_ROLL_RET);
     bail = (g_psx_call_bail || cpu->pc != 0);
     const uint32_t card = cpu->gpr[2] & 0xFFFFu;
-    /* At 2+ the community pattern is in effect: the hook granted everything
-     * and left this in-flight roll rand-free, so its card is display junk —
-     * awarding it here would overcount, exactly as the game's own (NOPed)
-     * award would. */
-    if (!bail && g_card_drops < 2 && card >= 1 && card <= 722)
+    /* The in-flight stock roll is a REAL award at every setting now: at 2+
+     * it is the pattern's card N (the hook granted only N-1). */
+    if (!bail && card >= 1 && card <= 722)
         cd_award_one(cpu, card, &bail);
     *cpu = saved;
 
@@ -481,13 +468,28 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
      * MEMORY effects (trunk counts, RNG advance) are the point and stay. */
     CPUState saved = *cpu;
     int granted = 0;
-    /* Call #1 of the community stream: the pattern's stock roll, consumed
-     * and discarded. */
+    /* Call #1 of the community stream: the pattern's discarded stock roll,
+     * applied as a pure seed advance. */
     psx_mod_write_word(PSX_RNG_SEED_ADDR,
                        cd_lcg_advance(psx_mod_read_word(PSX_RNG_SEED_ADDR),
                                       1));
-    for (int i = 0; i < count; i++) {
-        /* Six burned calls, then the roll itself is call seven. */
+    /* Cards 1..N-1 are dispatched here, each at its exact stream position:
+     * six burned calls, then the roll is call seven. Card N is NOT ours: its
+     * six burns are applied below and the game's own in-flight roll -- the
+     * one this hook is running in front of -- then lands on precisely the
+     * pattern's last roll call, computes the same card the community mod
+     * would, and awards it through the stock path (counted by the on_award
+     * hook like every other drop). That is what lets this run with ZERO code
+     * patches. The first version instead NOPed the stock roll's rand and the
+     * stock award site per frame; those writes dirtied the 64K region that
+     * also holds the results-screen state function, whose ENTRY HOOK the
+     * dirty dispatch path skips (the trap documented at the chest builder),
+     * and the CARD DROPS page's Left/Right navigation -- which lives on that
+     * hook's page-byte snapshot -- quietly broke: every Right re-entered
+     * sub-page 0, so the results screen showed one card page no matter how
+     * many cards dropped. Measured live 2026-08-31: RESULT[55] held 3 while
+     * prev_page stayed 0. */
+    for (int i = 0; i < count - 1; i++) {
         psx_mod_write_word(PSX_RNG_SEED_ADDR,
                            cd_lcg_advance(
                                psx_mod_read_word(PSX_RNG_SEED_ADDR), 6));
@@ -499,18 +501,12 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
         if (bail) { s_cd_bails++; break; }
         granted++;
     }
+    /* Card N's six burned calls; the stock roll provides call seven. */
+    psx_mod_write_word(PSX_RNG_SEED_ADDR,
+                       cd_lcg_advance(psx_mod_read_word(PSX_RNG_SEED_ADDR),
+                                      6));
     *cpu = saved;
     s_cd_granted += granted;
-
-    /* The game's own roll now runs with its rand call NOPed, so the stream
-     * ends at exactly 1 + 7N; the card it computes from the stale register
-     * is display-only — its award site is NOPed while the row is 2+. */
-    if (psx_mod_read_word(PSX_DROP_ROLL_RAND) == PSX_DROP_ROLL_RAND_WORD) {
-        psx_mod_write_code_word(PSX_DROP_ROLL_RAND, PSX_MIPS_NOP);
-        s_cd_unpatch_roll = 1;
-    } else {
-        s_cd_patch_refused++;
-    }
 
     if (granted > 0) {
         char msg[48];
@@ -866,27 +862,6 @@ void psx_mod_card_drops_on_results_state(CPUState *cpu,
  * DROPS page is the one on screen AND the results state function is still
  * running (staleness catches the Cross exit, which fires no page apply). */
 void psx_card_drops_tick(void) {
-    /* Community-pattern patch upkeep. The one-frame NOP on the roll's rand
-     * call is lifted first thing after the drop frame; the stock-award NOP
-     * is asserted every frame while the row is 2+ because the duel overlay
-     * reloads this code region from disc and restores the stock bytes. */
-    if (s_cd_unpatch_roll) {
-        if (psx_mod_read_word(PSX_DROP_ROLL_RAND) == PSX_MIPS_NOP)
-            psx_mod_write_code_word(PSX_DROP_ROLL_RAND,
-                                    PSX_DROP_ROLL_RAND_WORD);
-        s_cd_unpatch_roll = 0;
-    }
-    if (g_card_drops >= 2 && psx_mod_game_started()) {
-        if (psx_mod_read_word(PSX_DROP_AWARD_JAL) == PSX_DROP_AWARD_JAL_WORD)
-            psx_mod_write_code_word(PSX_DROP_AWARD_JAL, PSX_MIPS_NOP);
-        s_cd_award_patched = 1;
-    } else if (s_cd_award_patched) {
-        if (psx_mod_read_word(PSX_DROP_AWARD_JAL) == PSX_MIPS_NOP)
-            psx_mod_write_code_word(PSX_DROP_AWARD_JAL,
-                                    PSX_DROP_AWARD_JAL_WORD);
-        s_cd_award_patched = 0;
-    }
-
     static uint32_t last_ticks;
     static int stale;
     if (s_cd_p3_state_ticks != last_ticks) {
