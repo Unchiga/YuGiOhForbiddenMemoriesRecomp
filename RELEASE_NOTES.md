@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.5.1
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
+
+### Fixed: results screen showed only one card page
+
+With Card drops at 2+, the results screen's CARD DROPS page could not be
+paged: every Right press showed the first page of cards again. All cards
+were being awarded correctly -- only the paging was broken. Fixed; the drop
+behaviour still matches the community mod exactly.
+
 ## 0.5.0
 
 Extract this over your existing install as usual. Your saves, save states and
