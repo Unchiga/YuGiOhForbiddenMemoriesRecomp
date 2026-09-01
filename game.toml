@@ -2,27 +2,11 @@
 # Review before shipping. Runtime quirks / overlay seeds still need hand work.
 
 [game]
-name = "Yu-Gi-Oh! Forbidden Memories"
+name = "YuGiOhForbiddenMemoriesRecomp"
 id = "SLUS-01411"
 players = 2
 exe = "disc/SLUS_014.11"
-# No `disc` key on purpose. It used to hold an absolute path to one
-# machine's dump, which is both unshippable and untestable: with it set,
-# this machine never exercised the path every other player takes.
-#
-# The disc now comes from the player. resolve_disc_for_runtime() asks for
-# it on first launch, verifies it against disc_crc below, remembers the
-# answer in disc.cfg / disc_verified.cfg beside the exe, and never asks
-# again. `--disc <path>` still overrides for scripted / headless runs,
-# which have no picker and must be told.
-#
-# disc_crc is the data track's CRC32 (IEEE), the same digest
-# DiscIdentity computes: for .cue/.bin it is the whole .bin, and for a
-# .chd it is the decoded raw sectors, so one value covers every accepted
-# format. This is the gate that refuses a PAL / Japanese / Greatest Hits
-# dump, whose code this build was not recompiled from.
-# Matches [prepare_disc] known_md5 / known_sha1 / known_sizes below.
-disc_crc = "73E4C771"
+disc = "disc/Yu-Gi-Oh! Forbidden Memories (USA).cue"
 load_address = "0x80010000"
 entry_pc = "0x800129D8"
 text_size = "0x001D0000"
@@ -41,133 +25,22 @@ known_md5 = [
 known_sha1 = [
   "d5785a41900a10968d4a28a390666c4b9879b796",
 ]
+known_crc32 = [
+  "73e4c771",
+]
 
 [recompiler]
 seeds = "seeds/ghidra_funcs.txt"
 out_dir = "generated"
 strict = true
 
-# Trusted game-mod entry hooks. Each address here makes the recompiler emit a
-# psx_mod_function_entry() call at that function's entry, which is the only
-# mod hook that survives a RELEASE build (debug_server_log_call_entry is
-# compiled out under PSX_NO_DEBUG_TOOLS).
-#
-# Changing this LIST is the only thing that needs a regenerate; the plugin
-# callbacks themselves live in runtime source and rebuild in ~a minute. So the
-# list is deliberately wider than today's single feature — all three are
-# verified call sites on the duel-reward path, and all three are cold (once per
-# duel end / per card), so hooking them costs nothing at runtime.
-#
-# 0x80021810  drop ROLL. table = 0x8017878C + tier*1460, roll = rng()&0x7FF+1,
-#             walks 722 cumulative n-in-2048 weights, returns card id. Tier
-#             0/1/2 is the rank bracket; the table is per-opponent, so calling
-#             this again re-rolls from the correct pool for free.
-# 0x80021894  AWARD one copy: increments the byte at 0x801D024F + card_id
-#             (cap 251). a0 = card id.
-# 0x800218F0  duel RESULTS routine: computes the tier, calls the roll, stashes
-#             the card at PSX_RANK_RESULT+60 (0x80179A14), then awards it.
-# 0x800323F8  chest DISPLAY-LIST builder: expands the 16-slot New!-ring at
-#             0x801D07BC into the per-card flag byte at 0x8010606A + card_id
-#             (clearing each byte first at 0x800324B4), which drives both the
-#             chest's New! label and its sort-to-top. Hooked so CARD DROPS can
-#             mark every card from the last duel New!, not just the ring's 16.
-# 0x80032C48  the builder's sort/insert body (jal'd at 0x800325DC/0x80032708),
-#             where the flag bytes are consumed. Hooked as the injection point
-#             for the extended New! overlay: at its first call the builder's
-#             clear + ring pass are done and nothing has been read yet. Chosen
-#             over NOPing the clear because patching guest text diverges the
-#             builder to the dirty-RAM interpreter, which skips entry hooks.
-mod_function_entry_funcs = [
-    "0x80021810",
-    "0x80021894",
-    "0x800218F0",
-    "0x800323F8",
-    "0x80032C48",
-    # ---- CARD DROPS results page -------------------------------------------
-    # 0x80021480  page-apply. Called as func_80021480((s8)RESULT[55]) right
-    #             after the stock nav clamps the page, so it is the one place a
-    #             4-page cycle can be reinstated without touching guest code
-    #             (see ISSUES / the dirty-RAM note: patching the two wrap
-    #             immediates inside func_800218F0 either diverges it to the
-    #             interpreter and kills every hook here, or gets blessed and
-    #             leaves the native body running the old constant).
-    "0x80021480",
-    # ---- CARD SHOP ---------------------------------------------------------
-    # 0x8003700C  the campaign menu cursor driver. Its first act is reading
-    #             the new-press mask; the entry hook is the only race-free
-    #             place to take UP/DOWN away while the pack panel is open
-    #             (frame-hook eating runs a frame too late and the leaked
-    #             arrows stepped the menu highlight behind the panel).
-    "0x8003700C",
-    # 0x80037DA4  the text engine. Reads the next byte of a name/label stream
-    #             from a cursor held at obj[obj[88]*4]; hooking its ENTRY is
-    #             what exposes the card-name stream pointer, which is the only
-    #             way to pin the compressed name blob's base address.
-    "0x80037DA4",
-    # 0x80036C14  per-character glyph emitter, func(obj, ch) -> rec[16] = ch.
-    #             Every decoded character of every string passes through here,
-    #             so it reads out a name without decoding the compression.
-    "0x80036C14",
-    # 0x80035AF0  widget text-run setup (glyph cell 8x12, run bounds from the
-    #             table at 0x80090E58) and 0x800393B0 the widget draw/update.
-    #             Listed now because regeneration must be done in ONE pass.
-    "0x80035AF0",
-    "0x800393B0",
-    # ---- MODE SELECT CIRCLE CONFIRM ----------------------------------------
-    # 0x8003CC38  the routine that reads the RAW BIOS pad buffer at 0x800EF668
-    #             (status, id, active-low buttons at +2) and feeds the
-    #             auto-repeat engine func_8003CCD8, which derives every
-    #             downstream word: 0x8009B390/394/398/3A4 and the accumulators
-    #             at 0x8009B3B0/B4. Its ENTRY is the only choke point both of
-    #             mode-select's drivers sit downstream of.
-    #
-    #             Clearing those derived words instead cannot work, and the
-    #             reason is worth recording: the fresh-load scene loop consumes
-    #             them BEFORE func_80012D4C runs, so an entry hook there lands
-    #             on already-consumed values and the frame-end refresh then
-    #             overwrites it. That is why five other addresses were listed
-    #             here at various points -- 0x80012D4C, 0x80012DB8, 0x8002D58C,
-    #             0x80074170, 0x800742E8 -- and why none of them fixed it.
-    #             Neutralising the raw buffer makes the outputs be BORN
-    #             cleared, so there is no ordering left to lose.
-    "0x8003CC38",
-]
-
 [runtime]
-window_title = "Yu-Gi-Oh! Forbidden Memories Recompiled"
+window_title = "YuGiOhForbiddenMemoriesRecomp Recompiled"
 memcard_dir = "saves"
-
-[audio]
-# The output cushion IS the input-to-sound latency: at the 180 ms ecosystem
-# default a menu blip lands about a sixth of a second after the button, which
-# reads as a sluggish UI rather than as an audio setting. That default is sized
-# for streamed-stage production gaps this title does not have.
-#
-# Measured here at 60 ms, in the menus and across a duel's disc load: lowest
-# ring fill 51.8 ms, zero underruns. That held on this machine and did not
-# generalise - players report audio cutting every few seconds at 1x, and 60 ms
-# is a third of the 180 ms ecosystem default, leaving very little reserve on a
-# machine with less emulation headroom than the one it was measured on.
-# A duel's disc load measures 473-759 ms, which no plausible cushion covers,
-# but the per-frame variance on a slower CPU is what a bigger cushion absorbs.
-# 120 ms doubles the reserve and keeps input-to-sound well under the default.
-buffer_ms = 120
 
 [video]
 renderer = "opengl"
 aspect_ratio = "4:3"
-# Internal render resolution. Required for geometry_correction to be observable
-# at all (at 1x a corrected vertex rounds back to the pixel it started on).
-supersampling = 2
-
-[widescreen]
-hud_sprt_squash = true
-auto_ui_squash  = true
-gte_game_mode   = true
-
-[widescreen.cull]
-auto_screen_x = true
-auto_backdrop = true
 
 [controller]
 default_mode = "digital"
