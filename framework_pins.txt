@@ -1,4 +1,4 @@
-psxrecomp=ee72431 (ee72431a3ddf20037ae6ec6140b46cdd7b81294d)
+psxrecomp=fc61b96 (fc61b96fb3ed575282a2786018821b330091aa8c)
 recomp-ui=4eda654 (4eda65430a431e5685ae0c515ebcd912c7843bff)
-recomp-net=<present, not a git checkout>
+recomp-net=77a9e26 (77a9e26fa9197694fb8f3424005b3a0fd0a2a810)
 retcomm-rbengine=<present, not a git checkout>

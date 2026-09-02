@@ -1,15 +1,15 @@
 {
   "format_version": 1,
   "game": {
-    "name": "YuGiOhForbiddenMemoriesRecomp",
+    "name": "Yu-Gi-Oh! Forbidden Memories",
     "id": "SLUS-01411",
     "boot_exe": "SLUS_014.11"
   },
   "marketing": {
     "description": "",
-    "publisher": "",
-    "year": "",
-    "region": "",
+    "publisher": "Konami",
+    "year": "1999",
+    "region": "USA",
     "players": 2
   },
   "rom_identity": {

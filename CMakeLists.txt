@@ -5,15 +5,19 @@ set(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" CACHE PATH
     "Path to psxrecomp")
 
 # --- Opt-in product surfaces (OFF by default in the framework) -------------
-# Scaffold prompts / flags fill these. Without recomp-ui, PSX_RECOMP_UI is OFF.
+# Scaffold prompts / flags fill these.
 # Setup-host CI requires WIZARD_CMAKE_BLOCK / ENABLE_SETUP_WIZARD (FORCE_SETUP_HOST
 # alone does not open first-run / Generate & rebuild).
-set(PSX_RECOMP_UI OFF CACHE BOOL
-    "No recomp-ui submodule in this scaffold" FORCE)
+# recomp-ui is a submodule here now, so the launcher builds. LAUNCHER_BOXART
+# below is read only on this path -- with PSX_RECOMP_UI=OFF the boxart is
+# fetched and committed but never staged beside the exe.
+set(PSX_RECOMP_UI ON CACHE BOOL
+    "recomp-ui submodule present" FORCE)
 # Full netplay UI -- enable after adding recomp-ui + testing:
-# if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
-#     set(PSX_NETPLAY ON CACHE BOOL "..." FORCE)
-# endif()
+if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
+    set(PSX_NETPLAY ON CACHE BOOL
+        "Link recomp-net delay-sync (opt-in; needs recomp-net)" FORCE)
+endif()
 # First-run setup wizard -- recomp-ui's modal. Not used: this project has no
 # recomp-ui, and the wizard is the only thing in the setup host that needed it.
 # set(PSX_SETUP_WIZARD ON CACHE BOOL "..." FORCE)
@@ -183,8 +187,8 @@ string(STRIP "${YGOFM_VERSION}" YGOFM_VERSION)
 message(STATUS "ygofm: version ${YGOFM_VERSION}")
 
 psxrecomp_add_game_runtime(psx-runtime
-    # ENABLE_NETPLAY_IF_PRESENT
-    # NETPLAY_LOBBY_URL ws://netplay.retcomm.net:8765
+    ENABLE_NETPLAY_IF_PRESENT
+    NETPLAY_LOBBY_URL ws://netplay.retcomm.net:8765
     # ENABLE_SETUP_WIZARD
     GAME_VERSION "${YGOFM_VERSION}"
     # Checked on every launch for a newer release; the player is prompted and
