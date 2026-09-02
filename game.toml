@@ -41,6 +41,9 @@ known_md5 = [
 known_sha1 = [
   "d5785a41900a10968d4a28a390666c4b9879b796",
 ]
+known_crc32 = [
+  "73e4c771",
+]
 
 [recompiler]
 seeds = "seeds/ghidra_funcs.txt"
@@ -171,6 +174,7 @@ auto_backdrop = true
 
 [controller]
 default_mode = "digital"
+multitap_analog = true
 
 # Online mount gate: digests + track count + optional TOC fingerprint
 # (see docs/NETPLAY.md).

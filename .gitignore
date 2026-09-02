@@ -128,3 +128,6 @@ starvation_dump.jsonl
 # (%LOCALAPPDATA%/retcomm/toolchains). Not ours and not shippable.
 /toolchain
 assets/duelist_icons/*.png
+
+# --- PSXRecomp setup-host (project studio) ---
+/analysis/

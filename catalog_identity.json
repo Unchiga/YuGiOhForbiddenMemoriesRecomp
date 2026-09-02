@@ -22,7 +22,8 @@
     "data_track": {
       "size": 517872768,
       "md5": "c20bcde742e15c82d09bda1d6c6d62f2",
-      "sha1": "d5785a41900a10968d4a28a390666c4b9879b796"
+      "sha1": "d5785a41900a10968d4a28a390666c4b9879b796",
+      "crc32": "73e4c771"
     },
     "disc_fp": "a828d94c24f6df7e040b1164c8ac59eff83f1107c43dba139e3cd5a0127161c4"
   },
