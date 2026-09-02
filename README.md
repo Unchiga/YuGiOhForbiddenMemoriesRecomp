@@ -364,6 +364,30 @@ SDK is installed; the OpenGL renderer runs over Metal at full speed regardless.
 Add `-DPSX_DEBUG_TOOLS=ON` for a debug build with the TCP inspection server on
 `127.0.0.1:4370`.
 
+### Linux
+
+Builds and runs natively with the commands above. Tested on CachyOS (Arch)
+with GCC 16, SDL3 3.4 and the NVIDIA driver under KDE Wayland. Prerequisites:
+
+```bash
+# Arch / CachyOS
+sudo pacman -S cmake ninja sdl3 vulkan-headers shaderc
+# Debian / Ubuntu (SDL3 is fetched and built if the system one is older than 3.4)
+sudo apt install build-essential cmake ninja-build pkg-config libsdl3-dev glslc
+```
+
+The framework's nested submodules are needed too, so clone with
+`--recurse-submodules` or run `git submodule update --init --recursive`.
+
+Launch with `./Play.sh` (or `./Play.sh -dbg` for the `build-dbg/` build). The
+first run asks for your disc through the desktop's file chooser via SDL3, the
+same as on Windows; on KDE and GNOME that goes through `xdg-desktop-portal`.
+Player data lives in `~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/`.
+
+Not yet done on Linux: the setup-host release package (the download that
+brings its own compiler) is Windows-only, so Linux players build from source
+for now.
+
 ### Packaging a release
 
 ```bash

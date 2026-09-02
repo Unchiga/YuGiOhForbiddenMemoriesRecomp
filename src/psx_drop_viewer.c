@@ -1765,6 +1765,9 @@ static int on_event(const void *evp)
         return 1;
     case SDL_WINDOWEVENT_RESIZED:
     case SDL_WINDOWEVENT_SIZE_CHANGED:
+    case SDL_WINDOWEVENT_EXPOSED:      /* compositor dropped our buffer */
+    case SDL_WINDOWEVENT_SHOWN:
+    case SDL_WINDOWEVENT_RESTORED:
         if (ev->window.windowID != id) return 0;
         s_dirty = 1;
         return 1;
@@ -1798,7 +1801,13 @@ void psx_drop_viewer_open(void)
                              SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                              WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
     if (!s_win) { host_osd_push("Drop viewer: no window", 2000); return; }
-    s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
+    /* The software renderer, on purpose. This window is a CPU canvas blitted
+     * through one texture, so it gains nothing from the GPU -- and SDL's
+     * GL-backed renderer, the default on Linux, makes its own context current
+     * on every call and never gives the game's GL context back. With that the
+     * manager strobed with game frames and the game window froze. Software
+     * has no context to steal. */
+    s_ren = psx_sdl_create_renderer_named(s_win, "software");
     if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
     if (!s_ren) {
         SDL_DestroyWindow(s_win); s_win = NULL;
@@ -1892,14 +1901,19 @@ static void tick(void)
         s_msg[0] = 0;
         s_dirty = 1;
     }
+    /* Present only what changed. Every frame was fine on Windows, where a
+     * present is a cheap flip, but on Wayland a present may wait on the
+     * compositor's frame callback, which an occluded or minimised window does
+     * not get -- and this runs on the game's thread. The canvas is complete
+     * whenever it is drawn, and an expose asks for it again (below). */
     if (s_dirty) {
         draw();
         SDL_UpdateTexture(s_tex, NULL, s_px, s_w * 4);
+        SDL_RenderClear(s_ren);
+        SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
+        SDL_RenderPresent(s_ren);
         s_dirty = 0;
     }
-    SDL_RenderClear(s_ren);
-    SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
-    SDL_RenderPresent(s_ren);
 }
 
 /* --- the row ------------------------------------------------------------- */
