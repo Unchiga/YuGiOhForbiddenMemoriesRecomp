@@ -10,6 +10,11 @@
  * owns, then calls the two entry points here. Wired only when the build opts
  * into -DPSX_SETUP_HOST=ON, and compiled out entirely once generated/ exists —
  * a product build has nothing to set up.
+ *
+ * With recomp-ui linked (PSX_RECOMP_UI=ON) the runtime compiles that
+ * launcher-less first run OUT and the launcher's first-run wizard drives the
+ * same host instead. The wizard reaches this title through one extra entry
+ * point, psx_game_codegen_setup_apply(), which hands it the same config.
  */
 
 #if defined(PSX_HAS_SETUP_HOST) && !defined(PSX_HAS_GAME_DISPATCH)
@@ -81,5 +86,17 @@ void psx_game_codegen_relaunch_or_exit(const char *disc_path) {
 void psx_game_codegen_forward_if_built(int argc, char **argv) {
     psxrecomp_codegen_host_forward_if_built(&kCodegenConfig, argc, argv);
 }
+
+#if defined(PSX_HAS_RECOMP_LAUNCHER)
+/* The recomp-ui wizard path. main.cpp calls this while filling the launcher's
+ * game info (PSX_HAS_SETUP_WIZARD && PSX_HAS_GAME_CODEGEN); the host installs
+ * its generate / rebuild / update callbacks from the config above, and the
+ * wizard's "Generate & rebuild" then runs the same flow the console setup did.
+ * Guarded on the launcher HEADER being reachable, which is what the type in
+ * the signature needs; the runtime only calls it when the launcher is linked. */
+void psx_game_codegen_setup_apply(RecompLauncherCGameInfo *gi) {
+    psxrecomp_codegen_host_apply(gi, &kCodegenConfig);
+}
+#endif /* PSX_HAS_RECOMP_LAUNCHER */
 
 #endif /* PSX_HAS_SETUP_HOST && !PSX_HAS_GAME_DISPATCH */

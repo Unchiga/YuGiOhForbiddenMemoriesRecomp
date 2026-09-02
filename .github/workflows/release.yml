@@ -156,18 +156,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # artifact: platform pack id the shared fetch-toolchain action keys on.
+          # zip_tag: the suffix of the published zip. Windows stays "win-x64":
+          # every install since 0.2.x carries update_asset_format
+          # "ygofm-%s-win-x64.zip" (src/codegen_setup.c) and asks GitHub for
+          # exactly that name, so a "windows-x64" zip would be a release no
+          # existing install can update to.
           - os: ubuntu-24.04
             artifact: linux-x64
+            zip_tag: linux-x64
             shell: bash
           - os: windows-2022
             artifact: windows-x64
+            zip_tag: win-x64
             shell: 'msys2 {0}'
           - os: macos-15
             artifact: macos-arm64
+            zip_tag: macos-arm64
             shell: bash
             deployment_target: '11.0'
           - os: macos-15-intel
             artifact: macos-x64
+            zip_tag: macos-x64
             shell: bash
             deployment_target: '11.0'
     defaults:
@@ -540,15 +550,15 @@ jobs:
           export RELEASE_VERSION
           # Lean zip (no embedded toolchain/). RetComM / wizard download
           # cmake-clang-v1; pass --embed-toolchain only for offline-first packs.
-          scripts/package_setup_release.sh build-ci "${{ matrix.artifact }}" build-recompiler
+          scripts/package_setup_release.sh build-ci "${{ matrix.zip_tag }}" build-recompiler
           ls -la dist/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           # Artifact name uses the title zip prefix (e.g. bpe, motk).
-          name: ygofm-${{ matrix.artifact }}
-          path: dist/ygofm-*-${{ matrix.artifact }}.zip
+          name: ygofm-${{ matrix.zip_tag }}
+          path: dist/ygofm-*-${{ matrix.zip_tag }}.zip
           if-no-files-found: error
           retention-days: 30
 
