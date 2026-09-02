@@ -13,20 +13,46 @@ set(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" CACHE PATH
 # fetched and committed but never staged beside the exe.
 set(PSX_RECOMP_UI ON CACHE BOOL
     "recomp-ui submodule present" FORCE)
-# Full netplay UI -- enable after adding recomp-ui + testing:
+# Full netplay UI: recomp-net delay-sync, exposed through the launcher.
 if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
     set(PSX_NETPLAY ON CACHE BOOL
         "Link recomp-net delay-sync (opt-in; needs recomp-net)" FORCE)
 endif()
-# First-run setup wizard -- recomp-ui's modal. Not used: this project has no
-# recomp-ui, and the wizard is the only thing in the setup host that needed it.
-# set(PSX_SETUP_WIZARD ON CACHE BOOL "..." FORCE)
+# Which of the two products this configure is building. Decided up here, before
+# the include, because the setup wizard below has to be settled by then.
+# Detected the same way the framework detects it, so the two cannot disagree.
+set(YGOFM_GEN_MARKER
+    "${CMAKE_CURRENT_SOURCE_DIR}/generated/SLUS_014.11_dispatch.c")
+set(YGOFM_HAS_GAME_C FALSE)
+if(EXISTS "${YGOFM_GEN_MARKER}" AND NOT PSXRECOMP_FORCE_SETUP_HOST)
+    set(YGOFM_HAS_GAME_C TRUE)
+endif()
+# First-run setup wizard -- recomp-ui's modal. With the launcher linked, the
+# runtime compiles its launcher-less first run OUT (main.cpp guards it on
+# !RECOMP_LAUNCHER), so the wizard is the ONLY way a setup-host build can reach
+# Generate & rebuild. Set before the include so the option() default cannot
+# stick OFF in an existing cache. Release CI passes -DPSX_SETUP_WIZARD=ON as
+# well; this keeps a local -DPSXRECOMP_FORCE_SETUP_HOST=ON build from shipping
+# a host with no first run.
 #
-# The launcher-less first run instead. The setup exe asks for the player's disc
-# with the runtime's own picker, generates the C from it, builds into
-# build-release/ and forwards there on every later run -- so the download can
-# carry the SDK and the framework source and no Konami code or assets at all.
-# See src/codegen_setup.c, which compiles to nothing once generated/ exists.
+# Setup host ONLY. In the game build src/codegen_setup.c compiles to nothing,
+# so the wizard's psx_game_codegen_setup_apply() would have no definition; and
+# the runtime compiles the launcher's relaunch-after-rebuild handling out of a
+# dispatch build, so a wizard advertised there could not finish anyway.
+if(YGOFM_HAS_GAME_C)
+    set(PSX_SETUP_WIZARD OFF CACHE BOOL
+        "Game build: nothing to generate, no wizard" FORCE)
+else()
+    set(PSX_SETUP_WIZARD ON CACHE BOOL
+        "Setup host: first-run wizard + Generate & rebuild in recomp-ui" FORCE)
+endif()
+#
+# The launcher-less first run is kept wired too, for a PSX_RECOMP_UI=OFF build:
+# the setup exe asks for the player's disc with the runtime's own picker,
+# generates the C from it, builds into build-release/ and forwards there on
+# every later run -- so the download can carry the SDK and the framework source
+# and no Konami code or assets at all. Both paths share src/codegen_setup.c,
+# which compiles to nothing once generated/ exists.
 set(PSX_SETUP_HOST ON CACHE BOOL
     "Launcher-less first-run generate + rebuild" FORCE)
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
@@ -41,13 +67,7 @@ include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 #
 #   the GAME -- generated/ present. Everything below.
 #
-# Detected the same way the framework detects it, so the two cannot disagree.
-set(YGOFM_GEN_MARKER
-    "${CMAKE_CURRENT_SOURCE_DIR}/generated/SLUS_014.11_dispatch.c")
-set(YGOFM_HAS_GAME_C FALSE)
-if(EXISTS "${YGOFM_GEN_MARKER}" AND NOT PSXRECOMP_FORCE_SETUP_HOST)
-    set(YGOFM_HAS_GAME_C TRUE)
-endif()
+# YGOFM_HAS_GAME_C was decided above the include (the wizard needed it there).
 
 # Compiled either way. Guarded internally so it is empty in the game build.
 set(YGOFM_GAME_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/codegen_setup.c")
@@ -189,7 +209,8 @@ message(STATUS "ygofm: version ${YGOFM_VERSION}")
 psxrecomp_add_game_runtime(psx-runtime
     ENABLE_NETPLAY_IF_PRESENT
     NETPLAY_LOBBY_URL ws://netplay.retcomm.net:8765
-    # ENABLE_SETUP_WIZARD
+    # ENABLE_SETUP_WIZARD is deliberately absent: it would force the wizard ON
+    # for the game build too. PSX_SETUP_WIZARD is decided per product above.
     GAME_VERSION "${YGOFM_VERSION}"
     # Checked on every launch for a newer release; the player is prompted and
     # sent to the page. Comment out to disable the check for the whole build.

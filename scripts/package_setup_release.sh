@@ -49,8 +49,12 @@ chmod +x "${PACKAGER}" 2>/dev/null || true
 #             menu_settings.ini, it defaults to OFF, and it has nothing to
 #             do with this file.)
 #
-# launcher_assets/ is gone: it is boxart for recomp-ui, and this project has
-# no launcher.
+#   launcher_assets/
+#             the recomp-ui boxart. The packager stages a copy beside the SETUP
+#             exe on its own, but the player's product build is configured from
+#             this tree, and CMakeLists names launcher_assets/img/boxart.tga --
+#             recomp-ui silently skips a missing file, so without this dir the
+#             built game's launcher shows an empty box where the art should be.
 EXTRA_PROJECT=()
 if [[ -f "${ROOT}/catalog_identity.json" ]]; then
   EXTRA_PROJECT+=(--project-file catalog_identity.json)
@@ -85,6 +89,6 @@ exec bash "${PACKAGER}" \
   --project-dir tools \
   --project-dir seeds \
   --project-dir assets \
-  --project-dir mods \
+  --project-dir mods   --project-dir launcher_assets \
   --project-exclude assets/duelist_icons \
   "${EXTRA_PROJECT[@]}"
