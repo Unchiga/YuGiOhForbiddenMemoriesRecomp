@@ -34,6 +34,14 @@ the dialog now says which file the .cue is looking for instead of "exit 1".
 The setup dialog now repeats the reason the generate step gave for any
 failure, not just this one.
 
+### New: Reset-Setup.bat
+
+Double-click it inside the game folder to put an install back to "freshly
+extracted": it removes the generated game code, the built game, the
+remembered disc and BIOS picks, and optionally the downloaded build tools,
+then the first-run setup runs again. Your disc image and your saves are
+never touched. For anyone whose install is stuck no matter what they try.
+
 ### Changed: first-run setup no longer asks for a BIOS
 
 This game ships with OpenBIOS built in and has only ever been tested with

@@ -85,6 +85,7 @@ exec bash "${PACKAGER}" \
   --project-file README.md \
   --project-file LICENSE \
   --project-file NOTICE \
+  --project-file Reset-Setup.bat \
   --project-dir src \
   --project-dir tools \
   --project-dir seeds \
