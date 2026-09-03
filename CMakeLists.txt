@@ -55,6 +55,15 @@ endif()
 # which compiles to nothing once generated/ exists.
 set(PSX_SETUP_HOST ON CACHE BOOL
     "Launcher-less first-run generate + rebuild" FORCE)
+# OpenBIOS only. This title is built and verified against the bundled MIT
+# OpenBIOS and nothing else, so the retail SCPH1001 backend is not linked
+# even when a player's generate produced its C. With a single, bundled backend
+# the runtime runs in its bundled-only mode: no BIOS row in the launcher, and
+# a bios.cfg pointing at a retail dump is ignored. The setup host's
+# openbios_only (src/codegen_setup.c) is the other half: no BIOS step in the
+# first-run wizard, no dump adopted from beside the install.
+set(PSXRECOMP_BIOS_STEMS "OpenBIOS" CACHE STRING
+    "Recompiled BIOS stems to link: this title is OpenBIOS only" FORCE)
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 
 # --- What this title adds, and when ----------------------------------------
@@ -98,6 +107,14 @@ if(YGOFM_HAS_GAME_C)
     # beside the executable. With none of them, configure FAILS -- a build that
     # quietly produced a runtime with no art would look like a broken feature
     # rather than a missing input.
+    #
+    # Whatever is found may be a .cue, not a .bin: the wizard accepts either
+    # and records the pick verbatim, and the runtime prefers the cue. Both
+    # baking tools go through tools/disc_image.py, which resolves a cue to its
+    # data track and probes the sector layout, so nothing here needs to care.
+    # (Handing the cue straight to a raw-sector reader is what produced
+    # "disc ended early at stream offset 32518144" for every player who
+    # picked the .cue in 0.5.x.)
     if(NOT YGOFM_DISC)
         foreach(_ygofm_cfg
                 "${CMAKE_BINARY_DIR}/disc_verified.cfg"
@@ -131,8 +148,8 @@ if(YGOFM_HAS_GAME_C)
             "No disc image. The rank sprites, the New! label and the game font "
             "are baked from your own copy of the disc and are not "
             "distributed.\n"
-            "Pass -DYGOFM_DISC=<path to the .bin>, or run the setup host, "
-            "which asks for it once and remembers it.")
+            "Pass -DYGOFM_DISC=<path to the .cue or .bin>, or run the setup "
+            "host, which asks for it once and remembers it.")
     endif()
     message(STATUS "ygofm: baking sprites/font from ${YGOFM_DISC}")
 
@@ -150,6 +167,7 @@ if(YGOFM_HAS_GAME_C)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/disc_assets.py"
                 "${YGOFM_DISC}" "${YGOFM_ART_DIR}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/disc_assets.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/disc_image.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/sprite_extract.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/font_extract.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/sprite_spec.json"
@@ -169,6 +187,7 @@ if(YGOFM_HAS_GAME_C)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_drop_db.py"
                 "${YGOFM_DISC}" "${YGOFM_ART_DIR}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_drop_db.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/disc_image.py"
         COMMENT "Baking drop tables from the disc"
         VERBATIM)
     list(APPEND YGOFM_GAME_SOURCES ${YGOFM_DROP_DB})

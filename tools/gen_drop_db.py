@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """gen_drop_db.py — bake every duelist's full drop table from the PLAYER'S disc.
 
-    gen_drop_db.py <disc.bin> <out_dir> [--check]
+    gen_drop_db.py <disc.cue|disc.bin|disc.iso> <out_dir> [--check]
+
+The disc argument is whatever the setup wizard recorded — a .cue, a raw .bin
+or a cooked .iso — and disc_image.py turns it into a user-data stream.
 
 MODS > DROP MISSING CARDS only ever needed the CURRENT opponent's table, which
 the game leaves resident at 0x801781D8 while a duel is loaded. The Drop Table
@@ -32,7 +35,7 @@ import os
 import struct
 import sys
 
-SEC, UD_OFF, UD_LEN = 2352, 24, 2048
+from disc_image import open_disc
 
 # WA_MRG.MRG begins here in the reassembled user-data stream, and record 0 sits
 # this far into that file. Split so the second number stays the one
@@ -61,33 +64,16 @@ ROSTER = [
 ]
 
 
-def read_stream(f, off, n):
-    """Read n bytes at an offset into the reassembled user-data stream.
-    The image is raw 2352-byte Mode 2 sectors; only 2048 bytes of each
-    carry data. Same helper as disc_assets.py, same reason."""
-    out = bytearray()
-    sec, pos = divmod(off, UD_LEN)
-    while len(out) < n:
-        f.seek(sec * SEC + UD_OFF + pos)
-        take = min(UD_LEN - pos, n - len(out))
-        chunk = f.read(take)
-        if not chunk:
-            raise SystemExit('disc ended early at stream offset %d' % off)
-        out += chunk
-        sec += 1
-        pos = 0
-    return bytes(out)
-
-
 def load_tables(disc_path):
     """[duelist][tier] -> tuple of 722 weights."""
     tables = []
-    with open(disc_path, 'rb') as f:
+    with open_disc(disc_path) as disc:
+        print('gen_drop_db: reading %s (%s)' % (disc.path, disc.layout))
         for d in range(DUELISTS):
             rec = d + 1
             tiers = []
             for t in range(TIERS):
-                raw = read_stream(f, DROP0 + rec * REC + t * TIER, CARDS * 2)
+                raw = disc.read(DROP0 + rec * REC + t * TIER, CARDS * 2)
                 w = struct.unpack('<%dH' % CARDS, raw)
                 total = sum(w)
                 if total != TIER_TOTAL:
@@ -152,6 +138,8 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit('usage: gen_drop_db.py <disc.bin> <out_dir> [--check]')
     disc, out_dir = sys.argv[1], sys.argv[2]
+    if not os.path.isfile(disc):
+        raise SystemExit('no disc image at %s' % disc)
     tables = load_tables(disc)
     if '--check' in sys.argv:
         print('gen_drop_db: %d duelists, all %d tiers sum to %d'

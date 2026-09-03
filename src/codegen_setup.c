@@ -50,6 +50,12 @@ static const PsxrecompCodegenHostConfig kCodegenConfig = {
     "Uses your own disc with the local psxrecomp SDK to generate BIOS + game "
     "C. No build tools were found, so build into build-release/ yourself and "
     "then reopen this setup exe.",
+    /* .openbios_only         */ 1,
+    /* This title ships and runs the bundled OpenBIOS only. The wizard asks
+     * for the disc and nothing else; a retail dump lying beside the install
+     * is neither adopted nor offered, and CMakeLists links only the OpenBIOS
+     * backend, so the built game cannot switch to one either. Retail BIOS
+     * images were never part of what this build was verified against. */
 };
 
 int psx_game_codegen_setup_init(void) {
