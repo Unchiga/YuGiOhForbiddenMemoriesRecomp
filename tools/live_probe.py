@@ -103,10 +103,13 @@ if __name__ == '__main__':
     elif cmd == 'digits':
         # write the 8 password digits then press X
         digs = [int(c) for c in sys.argv[2]]
-        q({'cmd': 'write_ram', 'addr': '%08X' % 0x8016D410, 'data': bytes(digs).hex()})
+        q({'cmd': 'write_mem', 'addr': '%08X' % 0x8016D410, 'hex': bytes(digs).hex()})
         print(rd(0x8016D410, 8).hex())
     elif cmd == 'rd':
         print(rd(int(sys.argv[2], 16), int(sys.argv[3])).hex())
+    elif cmd == 'wr':
+        # wr <hexaddr> <hexbytes>
+        print(q({'cmd': 'write_mem', 'addr': sys.argv[2], 'hex': sys.argv[3]}))
     elif cmd == 'raw':
         print(json.dumps(q(json.loads(sys.argv[2])))[:4000])
 

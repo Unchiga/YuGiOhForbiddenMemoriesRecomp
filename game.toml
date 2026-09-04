@@ -134,6 +134,20 @@ mod_function_entry_funcs = [
     #             Neutralising the raw buffer makes the outputs be BORN
     #             cleared, so there is no ordering left to lose.
     "0x8003CC38",
+    # ---- CARD EFFECTS (psx_card_effects.c) ---------------------------------
+    # 0x80019A08  equip_table_lookup(equip, card) -> card or 0. The hook reads
+    #             the pair, and when the edited equip's type list allows the
+    #             monster it points the table's scratch group at the pair so
+    #             the stock scan answers yes; it also holds the equip bonus
+    #             immediates for that equip. Cannot skip the function, so the
+    #             answer is made through the table rather than the return.
+    "0x80019A08",
+    # 0x80026BA4  the magic-card effect dispatcher, func(cardId, phase). An
+    #             edited effect is delivered by rewriting a0 to the stock card
+    #             whose class implements it and holding that class's parameter
+    #             byte (heal/burn table, kill table, malus immediate) for the
+    #             duration of the resolution.
+    "0x80026BA4",
 ]
 
 [runtime]

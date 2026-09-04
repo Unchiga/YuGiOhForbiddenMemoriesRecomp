@@ -72,6 +72,7 @@
 #include "psx_game_hooks.h"
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
+#include "psx_card_effects.h"
 #include "psx_fusion_font.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -212,6 +213,20 @@ static const char *const STAR_NAMES[11] = {
     "", "Mars", "Jupiter", "Saturn", "Uranus", "Pluto",
     "Neptune", "Mercury", "Sun", "Moon", "Venus"
 };
+static const char *const FX_NAMES[PSX_CARD_FX_COUNT] = {
+    "none", "heal", "damage", "destroy_type", "destroy_atk", "raigeki", "dark_hole", "dragon_jar",
+    "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual"
+};
+static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
+    "No effect", "Heal LP", "Damage LP", "Destroy a type", "Destroy by ATK", "Destroy all monsters (Raigeki)",
+    "Destroy everything (Dark Hole)", "Destroy Dragons", "Stop Defense", "Flip face-down monsters",
+    "Weaken opponent's monsters", "Swords of Revealing Light", "Cursebreaker", "Destroy magic/trap zone (Harpie)",
+    "Change the field", "Ritual summon"
+};
+static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
+const char *psx_card_packs_effect_name(int fx)  { return (fx >= 0 && fx < PSX_CARD_FX_COUNT) ? FX_NAMES[fx] : "?"; }
+const char *psx_card_packs_effect_label(int fx) { return (fx >= 0 && fx < PSX_CARD_FX_COUNT) ? FX_LABELS[fx] : "?"; }
+const char *psx_card_packs_terrain_name(int t)  { return (t >= 0 && t < 7) ? TERRAIN_NAMES[t] : "?"; }
 const char *psx_card_packs_type_name(int t)      { return (t >= 0 && t < 24) ? TYPE_NAMES[t] : "?"; }
 const char *psx_card_packs_attribute_name(int a) { return (a >= 0 && a < 8) ? ATTR_NAMES[a] : "?"; }
 const char *psx_card_packs_star_name(int s)      { return (s >= 1 && s <= 10) ? STAR_NAMES[s] : "?"; }
@@ -614,6 +629,139 @@ static void cfg_reset(PsxCardPack *c, int id)
     memset(c, 0, sizeof *c);
     c->id = id;
     c->attack = c->defense = c->star1 = c->star2 = c->type = c->level = c->attribute = c->price = -1;
+    psx_card_packs_effects_reset(c);
+}
+
+void psx_card_packs_effects_reset(PsxCardPack *c)
+{
+    c->effect = c->amount = c->target = c->terrain = c->equip_bonus = c->trap_atk_max = -1;
+    c->equips_set = 0; c->equip_types = 0; c->equip_n = 0;
+    c->boost_set = 0;
+    for (int t = 0; t < 20; t++) c->boost[t] = PSX_CARD_PACK_BOOST_UNSET;
+    c->ritual_set = 0;
+    c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
+}
+
+int psx_card_packs_parse_effect(const char *v)
+{
+    for (int i = 0; i < PSX_CARD_FX_COUNT; i++) {
+        const char *a = v, *b = FX_NAMES[i];
+        while (*a && *b && ((*a | 32) == (*b | 32) || ((*a == ' ' || *a == '-') && *b == '_'))) { a++; b++; }
+        if (!*a && !*b) return i;
+    }
+    if (*v >= '0' && *v <= '9') { const int x = atoi(v); return (x >= 0 && x < PSX_CARD_FX_COUNT) ? x : -1; }
+    return -1;
+}
+
+static void trim(char *s);
+static void seterr(char *err, unsigned cap, const char *m) { if (err && cap) snprintf(err, cap, "%s", m); }
+
+/* Split v on commas into trimmed tokens; returns the count (max n). */
+static int split_list(const char *v, char tok[][48], int n)
+{
+    int k = 0;
+    const char *p = v;
+    while (*p && k < n) {
+        while (*p == ' ' || *p == ',' || *p == '\t') p++;
+        if (!*p) break;
+        int m = 0;
+        while (*p && *p != ',' && m < 47) tok[k][m++] = *p++;
+        tok[k][m] = 0;
+        trim(tok[k]);
+        if (tok[k][0]) k++;
+    }
+    return k;
+}
+
+int psx_card_packs_parse_equips(const char *v, PsxCardPack *c, char *err, unsigned errcap)
+{
+    static char tok[300][48];
+    const int n = split_list(v, tok, 300);
+    uint32_t types = 0; int ids = 0; uint16_t list[PSX_CARD_PACK_EQUIP_MAX];
+    for (int i = 0; i < n; i++) {
+        const char *t = tok[i];
+        if (!strcmp(t, "all") || !strcmp(t, "All") || !strcmp(t, "ALL")) { types |= PSX_CARD_PACK_EQUIP_ALL; continue; }
+        if (!strcmp(t, "none") || !strcmp(t, "None") || !strcmp(t, "NONE")) continue;
+        if (*t >= '0' && *t <= '9') {
+            const int x = atoi(t);
+            if (x < 1 || x > CARD_COUNT) { seterr(err, errcap, "card ids are 1 to 722"); return 0; }
+            if (ids < PSX_CARD_PACK_EQUIP_MAX) list[ids++] = (uint16_t)x;
+            continue;
+        }
+        const int ty = match_name(t, TYPE_NAMES, 20, 0);
+        if (ty < 0) { char m[96]; snprintf(m, sizeof m, "'%s' is not a monster type or a card id", t); seterr(err, errcap, m); return 0; }
+        types |= 1u << ty;
+    }
+    c->equips_set = 1;
+    c->equip_types = types;
+    c->equip_n = ids;
+    memcpy(c->equip_ids, list, (size_t)ids * sizeof list[0]);
+    return 1;
+}
+
+int psx_card_packs_parse_boost(const char *v, PsxCardPack *c, char *err, unsigned errcap)
+{
+    static char tok[40][48];
+    const int n = split_list(v, tok, 40);
+    int b[20];
+    for (int t = 0; t < 20; t++) b[t] = PSX_CARD_PACK_BOOST_UNSET;
+    for (int i = 0; i < n; i++) {
+        char *t = tok[i];
+        /* "<type> <+/-N>": the number is the last token */
+        char *num = t + strlen(t);
+        while (num > t && num[-1] != ' ') num--;
+        if (num == t) { seterr(err, errcap, "each entry is a type and a number, like Dragon +500"); return 0; }
+        const int val = atoi(num);
+        if (val < -1280 || val > 1270) { seterr(err, errcap, "a boost is -1280 to 1270"); return 0; }
+        char name[48]; snprintf(name, sizeof name, "%.*s", (int)(num - t), t); trim(name);
+        int ty = -1;
+        if (!strcmp(name, "all") || !strcmp(name, "All")) { for (int k = 0; k < 20; k++) b[k] = val / 10 * 10; continue; }
+        if (*name >= '0' && *name <= '9') ty = atoi(name); else ty = match_name(name, TYPE_NAMES, 20, 0);
+        if (ty < 0 || ty > 19) { char m[96]; snprintf(m, sizeof m, "'%s' is not a monster type", name); seterr(err, errcap, m); return 0; }
+        b[ty] = val / 10 * 10;
+    }
+    c->boost_set = 1;
+    memcpy(c->boost, b, sizeof b);
+    return 1;
+}
+
+int psx_card_packs_parse_ritual(const char *v, PsxCardPack *c, char *err, unsigned errcap)
+{
+    int m[3], r;
+    char buf[128]; snprintf(buf, sizeof buf, "%s", v);
+    for (char *q = buf; *q; q++) if (*q == '-' || *q == '>' || *q == '=' || *q == ',') *q = ' ';
+    if (sscanf(buf, "%d %d %d %d", &m[0], &m[1], &m[2], &r) != 4) { seterr(err, errcap, "a recipe is three material ids and a result, like 1, 1, 1 -> 380"); return 0; }
+    for (int i = 0; i < 3; i++) if (m[i] < 1 || m[i] > CARD_COUNT) { seterr(err, errcap, "card ids are 1 to 722"); return 0; }
+    if (r < 1 || r > CARD_COUNT) { seterr(err, errcap, "card ids are 1 to 722"); return 0; }
+    c->ritual_set = 1;
+    c->ritual_mat[0] = m[0]; c->ritual_mat[1] = m[1]; c->ritual_mat[2] = m[2]; c->ritual_result = r;
+    return 1;
+}
+
+void psx_card_packs_format_equips(const PsxCardPack *c, char *out, unsigned cap)
+{
+    unsigned n = 0; out[0] = 0;
+    if (c->equip_types & PSX_CARD_PACK_EQUIP_ALL) n += (unsigned)snprintf(out + n, cap - n, "all");
+    else for (int t = 0; t < 20; t++) if (c->equip_types & (1u << t)) n += (unsigned)snprintf(out + n, cap - n, "%s%s", n ? ", " : "", TYPE_NAMES[t]);
+    for (int i = 0; i < c->equip_n && n + 8 < cap; i++) n += (unsigned)snprintf(out + n, cap - n, "%s%d", n ? ", " : "", c->equip_ids[i]);
+    if (!n) snprintf(out, cap, "none");
+}
+
+void psx_card_packs_format_boost(const PsxCardPack *c, char *out, unsigned cap)
+{
+    unsigned n = 0; out[0] = 0;
+    for (int t = 0; t < 20; t++) {
+        if (c->boost[t] == PSX_CARD_PACK_BOOST_UNSET || c->boost[t] == 0) continue;
+        n += (unsigned)snprintf(out + n, cap - n, "%s%s %+d", n ? ", " : "", TYPE_NAMES[t], c->boost[t]);
+        if (n >= cap) break;
+    }
+    if (!n) snprintf(out, cap, "none");
+}
+
+void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap)
+{
+    if (!c->ritual_set) { out[0] = 0; return; }
+    snprintf(out, cap, "%d, %d, %d -> %d", c->ritual_mat[0], c->ritual_mat[1], c->ritual_mat[2], c->ritual_result);
 }
 
 static void trim(char *s)
@@ -640,7 +788,7 @@ static int read_ini(int id, PsxCardPack *c)
         trim(key);
         while (*val == ' ' || *val == '\t') val++;
         trim(val);
-        for (char *k = key; *k; k++) *k = (char)(*k | 32);
+        for (char *k = key; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);   /* not |32: that turns '_' into DEL */
         if (!strcmp(key, "name")) {
             snprintf(c->name, sizeof c->name, "%s", val);
         } else if (!strcmp(key, "description") || !strcmp(key, "desc") || !strcmp(key, "text")) {
@@ -665,6 +813,24 @@ static int read_ini(int id, PsxCardPack *c)
             int ok = strlen(val) == 8;
             for (int i = 0; ok && i < 8; i++) if (val[i] < '0' || val[i] > '9') ok = 0;
             if (ok) memcpy(c->password, val, 9);
+        } else if (!strcmp(key, "effect")) {
+            c->effect = psx_card_packs_parse_effect(val);
+        } else if (!strcmp(key, "amount")) {
+            const int v = atoi(val); if (v >= -9999 && v <= 25500) c->amount = v;
+        } else if (!strcmp(key, "target")) {
+            c->target = parse_enum(val, TYPE_NAMES, 20, 0, 0, 19);
+        } else if (!strcmp(key, "terrain") || !strcmp(key, "field")) {
+            c->terrain = parse_enum(val, TERRAIN_NAMES, 7, 0, 1, 6);
+        } else if (!strcmp(key, "equip_bonus") || !strcmp(key, "bonus")) {
+            const int v = atoi(val); if (v >= -9990 && v <= 9990) c->equip_bonus = v / 10 * 10;
+        } else if (!strcmp(key, "equips")) {
+            (void)psx_card_packs_parse_equips(val, c, NULL, 0);
+        } else if (!strcmp(key, "boost") || !strcmp(key, "boosts")) {
+            (void)psx_card_packs_parse_boost(val, c, NULL, 0);
+        } else if (!strcmp(key, "trap_atk_max") || !strcmp(key, "trap_atk")) {
+            const int v = atoi(val); if (v >= 0 && v <= 25500) c->trap_atk_max = v / 100 * 100;
+        } else if (!strcmp(key, "ritual") || !strcmp(key, "recipe")) {
+            (void)psx_card_packs_parse_ritual(val, c, NULL, 0);
         }
     }
     fclose(f);
@@ -999,6 +1165,7 @@ int psx_card_packs_stock(int id, PsxCardStock *out)
             if (pw != 0xFFFFFFFEu && pw != 0xFFFFFFFFu) snprintf(out->password, sizeof out->password, "%08X", pw);
         }
     }
+    psx_card_effects_stock(id, out);
     return 1;
 }
 
@@ -1024,6 +1191,15 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->attribute >= 0) fprintf(f, "attribute = %s\n", psx_card_packs_attribute_name(c->attribute));
     if (c->price >= 0)     fprintf(f, "price = %d\n", c->price);
     if (c->password[0])    fprintf(f, "password = %s\n", c->password);
+    if (c->effect >= 0)    fprintf(f, "effect = %s\n", psx_card_packs_effect_name(c->effect));
+    if (c->amount >= 0 || (c->effect == PSX_CARD_FX_WEAKEN && c->amount != -1)) fprintf(f, "amount = %d\n", c->amount);
+    if (c->target >= 0)    fprintf(f, "target = %s\n", psx_card_packs_type_name(c->target));
+    if (c->terrain >= 1)   fprintf(f, "terrain = %s\n", psx_card_packs_terrain_name(c->terrain));
+    if (c->equip_bonus >= 0) fprintf(f, "equip_bonus = %d\n", c->equip_bonus);
+    if (c->equips_set)     { char b[2048]; psx_card_packs_format_equips(c, b, sizeof b); fprintf(f, "equips = %s\n", b); }
+    if (c->boost_set)      { char b[512];  psx_card_packs_format_boost(c, b, sizeof b);  fprintf(f, "boost = %s\n", b); }
+    if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
+    if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     fclose(f);
     load_pack(c->id);
     return 1;

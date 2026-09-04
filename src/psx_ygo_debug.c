@@ -33,6 +33,8 @@
 #include "psx_drop_viewer.h"
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
+#include "psx_card_effects.h"
+#include "psx_card_share.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -298,6 +300,38 @@ static void handle_card_packs(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
+/* card_effects — the effects layer: overrides, holds, hook events. */
+static void handle_card_effects(int id, const char *json)
+{
+    (void)json;
+    static char buf[8192];
+    if (!psx_card_effects_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* card_share — {"op":"export"|"inspect"|"import","path":...}: the one-file
+ * container, without the dialogs. */
+static void handle_card_share(int id, const char *json)
+{
+    char op[16], path[1024];
+    if (!json_get_str(json, "op", op, sizeof op) || !json_get_str(json, "path", path, sizeof path)) { send_err(id, "need op and path"); return; }
+    char msg[256];
+    if (!strcmp(op, "export")) {
+        const int ok = psx_card_share_export(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+    } else if (!strcmp(op, "import")) {
+        const int ok = psx_card_share_import(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+    } else if (!strcmp(op, "inspect")) {
+        static PsxCardShareInfo info;
+        const int ok = psx_card_share_inspect(path, &info);
+        static char ids[4096]; unsigned n = 0; ids[0] = 0;
+        for (int i = 0; i < info.card_n && n + 8 < sizeof ids; i++) n += (unsigned)snprintf(ids + n, sizeof ids - n, "%s%d", i ? "," : "", info.card_ids[i]);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"error\":\"%s\",\"version\":%d,\"cards\":[%s],\"replace\":%d,\"drops\":%d,\"bytes\":%ld}",
+                 id, ok ? "true" : "false", info.error, info.version, ids, info.replace_n, info.has_drops, info.bytes);
+    } else send_err(id, "op is export, inspect or import");
+}
+
 /* card_packs_reload — re-read one pack (card) or all (no card). */
 static void handle_card_packs_reload(int id, const char *json)
 {
@@ -322,6 +356,8 @@ static void handle_card_manager_set(int id, const char *json)
     if (card > 0) psx_card_manager_select(card);
     char search[32];
     if (json_get_str(json, "search", search, sizeof search)) psx_card_manager_search(search);
+    char ipath[1024];
+    if (json_get_str(json, "import", ipath, sizeof ipath)) psx_card_manager_import_preview(ipath);
     handle_card_manager(id, json);
 }
 static void handle_card_manager_click(int id, const char *json)
@@ -760,6 +796,8 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);
     (void)psx_debug_add_command("card_packs",         handle_card_packs);
     (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
+    (void)psx_debug_add_command("card_effects",       handle_card_effects);
+    (void)psx_debug_add_command("card_share",         handle_card_share);
     (void)psx_debug_add_command("card_manager",       handle_card_manager);
     (void)psx_debug_add_command("card_manager_set",   handle_card_manager_set);
     (void)psx_debug_add_command("card_manager_click", handle_card_manager_click);

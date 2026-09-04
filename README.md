@@ -189,6 +189,52 @@ Titles are rasterised in the game's own style (Times New Roman Bold, 12 px,
 squeezed for long names) when a `timesbd.ttf` sits in `cards/`; without one,
 a plain bitmap font is used.
 
+#### Effects
+
+The same `card.ini` carries what a card **does**, and the manager shows the
+rows that make sense for the card's type:
+
+```
+effect = damage            what a Magic card does when played (see the list)
+amount = 2000              its number: LP healed or lost, the ATK threshold,
+                           or how much the opponent's monsters lose
+target = Dragon            for effect = destroy_type
+terrain = Yami             for effect = field
+ritual = 58, 58, 58 -> 26  for effect = ritual: three materials on your field -> result
+equip_bonus = 1500         an Equip card's ATK/DEF bonus (stock 500, Megamorph 1000)
+equips = Dragon, Warrior, 5, 12   the monsters it fits: types, card ids, all or none
+                           (this REPLACES the stock list; leave it out to keep it)
+boost = Dragon +1000, Fairy -500  a field card (Forest..Yami): each type's boost
+trap_atk_max = 3000        a trap (House of Adhesive Tape..Widespread Ruin):
+                           attackers at or under this ATK are stopped
+```
+
+Effects a Magic card can be given: `none`, `heal`, `damage`, `destroy_type`,
+`destroy_atk`, `raigeki` (every opponent monster), `dark_hole` (both
+fields), `dragon_jar` (their Dragons), `stop_defense`, `flip` (face-down
+monsters up), `weaken` (opponent's monsters lose `amount` ATK and DEF; a
+negative amount strengthens them), `swords`, `cursebreaker`, `harpie`
+(their magic/trap zone), `field`, `ritual`. Any Magic or Ritual card can take
+any of them; the game's own handler for that effect runs, with your number.
+Equip compatibility, ritual recipes, field boosts and trap ceilings are the
+game's own tables, served edited. Every one of these was verified in a live
+Free Duel.
+
+What stays as it is, because it is code rather than data: which cards count
+as traps (only 681–686 have a ceiling), the trap's response, Goblin Fan /
+Bad Reaction to Simochi / Reverse Trap / Fake Trap, `weaken` reaching only
+the opponent's side, the guardian-star wheel, and the granularity of heal
+(steps of 100, up to 25500) and damage (steps of 10, up to 2550).
+
+#### One file to share
+
+`Export…` writes every edited card — `card.ini` and PNGs — plus your
+`drop_table_edits.ini` to a single `.ygocards` file (a plain zip with a
+manifest, so it opens anywhere). `Import…` reads one, first showing how many
+cards it holds, which of **your** edited cards it would replace and whether
+it carries drop table edits, and only then replaces them. A file re-zipped
+by hand, stored or deflated, imports too.
+
 ### 🛒 Card shop — `MODS → CARD SHOP`
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
