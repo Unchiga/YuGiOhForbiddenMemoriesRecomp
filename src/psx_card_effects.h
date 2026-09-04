@@ -24,6 +24,14 @@ void psx_card_effects_stock(int id, PsxCardStock *out);
 /* What the layer can and cannot do to this card, one line for the manager. */
 const char *psx_card_effects_note(int id, int effective_type);
 
+/* 1 when the card is a monster carrying any monster effect (see
+ * psx_monster_effects.c); the colour module paints those orange by default. */
+int psx_card_effects_monster_has_effect(int id);
+
+/* The effect as card text, in the game's 20-column lines separated by "|",
+ * for the description. Empty when the card has no edited effect. */
+int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap);
+
 /* Debug-server state line. */
 int psx_card_effects_state_json(char *out, unsigned cap);
 

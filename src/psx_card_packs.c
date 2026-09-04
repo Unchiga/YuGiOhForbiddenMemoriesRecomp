@@ -200,6 +200,41 @@ static int encode_desc(const char *text, uint8_t *out, int cap)
     return n;
 }
 
+int psx_card_packs_desc_layout(const char *text, int *lines, int *longest, int *first_wide)
+{
+    int n = 0, lg = 0, wide = 0;
+    const char *p = text;
+    const int explicit_breaks = strchr(text, '|') != NULL;
+    while (*p) {
+        const char *e = strchr(p, '|');
+        const int len = e ? (int)(e - p) : (int)strlen(p);
+        if (explicit_breaks) {
+            n++;
+            if (len > lg) lg = len;
+            if (len > PSX_CARD_PACK_DESC_COLS && !wide) wide = n;
+        } else {
+            /* the game's greedy wrap at 20 columns on spaces */
+            int at = 0;
+            while (at < len) {
+                int cut = at + PSX_CARD_PACK_DESC_COLS;
+                if (cut >= len) cut = len;
+                else { int k = cut; while (k > at && p[k] != ' ') k--; if (k > at) cut = k; }
+                int ll = cut - at; while (ll > 0 && p[at + ll - 1] == ' ') ll--;
+                n++;
+                if (ll > lg) lg = ll;
+                at = cut; while (at < len && p[at] == ' ') at++;
+            }
+            if (!len) n++;
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    if (lines) *lines = n;
+    if (longest) *longest = lg;
+    if (first_wide) *first_wide = wide;
+    return n <= PSX_CARD_PACK_DESC_LINES && !wide;
+}
+
 static const char *const TYPE_NAMES[24] = {
     "Dragon", "Spellcaster", "Zombie", "Warrior", "Beast-Warrior", "Beast",
     "Winged Beast", "Fiend", "Fairy", "Insect", "Dinosaur", "Reptile",
@@ -224,6 +259,25 @@ static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
     "Change the field", "Ritual summon"
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
+static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
+    "Yellow (normal)", "Green (spell)", "Pink (trap)", "Blue (ritual)", "Purple (fusion)", "Orange (effect)"
+};
+static const char *const COLOR_KEYS[PSX_CARD_COLOR_COUNT][4] = {
+    { "yellow", "normal", "monster", "" }, { "green", "spell", "magic", "" }, { "pink", "trap", "magenta", "" },
+    { "blue", "ritual", "", "" }, { "purple", "fusion", "violet", "" }, { "orange", "effect", "", "" }
+};
+const char *psx_card_packs_color_name(int slot) { return (slot >= 0 && slot < PSX_CARD_COLOR_COUNT) ? COLOR_NAMES[slot] : "?"; }
+int psx_card_packs_parse_color(const char *v)
+{
+    if (*v >= '0' && *v <= '9') { const int x = atoi(v); return (x >= 0 && x < PSX_CARD_COLOR_COUNT) ? x : -1; }
+    for (int i = 0; i < PSX_CARD_COLOR_COUNT; i++)
+        for (int k = 0; k < 4 && COLOR_KEYS[i][k][0]; k++) {
+            const char *a = v, *b = COLOR_KEYS[i][k];
+            while (*a && *b && (*a | 32) == *b) { a++; b++; }
+            if (!*b && (!*a || *a == ' ' || *a == '(')) return i;
+        }
+    return -1;
+}
 const char *psx_card_packs_effect_name(int fx)  { return (fx >= 0 && fx < PSX_CARD_FX_COUNT) ? FX_NAMES[fx] : "?"; }
 const char *psx_card_packs_effect_label(int fx) { return (fx >= 0 && fx < PSX_CARD_FX_COUNT) ? FX_LABELS[fx] : "?"; }
 const char *psx_card_packs_terrain_name(int t)  { return (t >= 0 && t < 7) ? TERRAIN_NAMES[t] : "?"; }
@@ -640,6 +694,7 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     for (int t = 0; t < 20; t++) c->boost[t] = PSX_CARD_PACK_BOOST_UNSET;
     c->ritual_set = 0;
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
+    c->color = -1;
 }
 
 int psx_card_packs_parse_effect(const char *v)
@@ -831,6 +886,8 @@ static int read_ini(int id, PsxCardPack *c)
             const int v = atoi(val); if (v >= 0 && v <= 25500) c->trap_atk_max = v / 100 * 100;
         } else if (!strcmp(key, "ritual") || !strcmp(key, "recipe")) {
             (void)psx_card_packs_parse_ritual(val, c, NULL, 0);
+        } else if (!strcmp(key, "color") || !strcmp(key, "colour") || !strcmp(key, "frame")) {
+            c->color = psx_card_packs_parse_color(val);
         }
     }
     fclose(f);
@@ -1166,6 +1223,7 @@ int psx_card_packs_stock(int id, PsxCardStock *out)
         }
     }
     psx_card_effects_stock(id, out);
+    out->color = out->type < 20 ? PSX_CARD_COLOR_YELLOW : out->type == 21 ? PSX_CARD_COLOR_PINK : out->type == 22 ? PSX_CARD_COLOR_BLUE : PSX_CARD_COLOR_GREEN;
     return 1;
 }
 
@@ -1200,6 +1258,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->boost_set)      { char b[512];  psx_card_packs_format_boost(c, b, sizeof b);  fprintf(f, "boost = %s\n", b); }
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
+    if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);
     fclose(f);
     load_pack(c->id);
     return 1;

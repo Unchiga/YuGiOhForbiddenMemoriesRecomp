@@ -564,6 +564,84 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
     eq_apply();
 }
 
+/* Wrap `text` into "|"-separated lines of at most 20 columns, appended to out. */
+static void wrap_append(char *out, unsigned cap, const char *text)
+{
+    unsigned n = (unsigned)strlen(out);
+    const char *p = text;
+    int col = 0;
+    if (n && out[n - 1] != '|' && n + 1 < cap) { out[n++] = '|'; out[n] = 0; }
+    while (*p && n + 2 < cap) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *e = p; while (*e && *e != ' ') e++;
+        const int wl = (int)(e - p);
+        if (col && col + 1 + wl > 20) { out[n++] = '|'; col = 0; }
+        else if (col) { out[n++] = ' '; col++; }
+        for (const char *q = p; q < e && n + 1 < cap; q++) { out[n++] = *q; col++; }
+        p = e;
+    }
+    out[n] = 0;
+}
+
+int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
+{
+    char t[256]; t[0] = 0;
+    out[0] = 0;
+    if (!c) return 0;
+    const int amt = c->amount;
+    switch (c->effect) {
+    case PSX_CARD_FX_NONE:         snprintf(t, sizeof t, "No effect."); break;
+    case PSX_CARD_FX_HEAL:         snprintf(t, sizeof t, "Restores %d of your LP.", amt >= 0 ? amt : 500); break;
+    case PSX_CARD_FX_DAMAGE:       snprintf(t, sizeof t, "Inflicts %d damage to the opponent.", amt >= 0 ? amt : 500); break;
+    case PSX_CARD_FX_DESTROY_TYPE: snprintf(t, sizeof t, "Destroys all %s monsters on the opponent's field.", psx_card_packs_type_name(c->target >= 0 ? c->target : 3)); break;
+    case PSX_CARD_FX_DESTROY_ATK:  snprintf(t, sizeof t, "Destroys the opponent's monsters with %d ATK or more.", amt >= 0 ? amt : 1500); break;
+    case PSX_CARD_FX_RAIGEKI:      snprintf(t, sizeof t, "Destroys all monsters on the opponent's field."); break;
+    case PSX_CARD_FX_DARK_HOLE:    snprintf(t, sizeof t, "Destroys every card on both fields."); break;
+    case PSX_CARD_FX_DRAGON_JAR:   snprintf(t, sizeof t, "Destroys all Dragon monsters on the opponent's field."); break;
+    case PSX_CARD_FX_STOP_DEFENSE: snprintf(t, sizeof t, "Switches the opponent's defenders to attack position."); break;
+    case PSX_CARD_FX_FLIP:         snprintf(t, sizeof t, "Turns every face-down monster face up."); break;
+    case PSX_CARD_FX_WEAKEN:
+        if (amt < 0 && amt != -1) snprintf(t, sizeof t, "Raises the ATK and DEF of the opponent's monsters by %d.", -amt);
+        else snprintf(t, sizeof t, "Lowers the ATK and DEF of the opponent's monsters by %d.", amt >= 0 ? amt : 500);
+        break;
+    case PSX_CARD_FX_SWORDS:       snprintf(t, sizeof t, "Flips the opponent's monsters face up and stops their attacks for 3 turns."); break;
+    case PSX_CARD_FX_CURSEBREAKER: snprintf(t, sizeof t, "Removes the curses on your monsters."); break;
+    case PSX_CARD_FX_HARPIE:       snprintf(t, sizeof t, "Destroys every magic and trap card on the opponent's field."); break;
+    case PSX_CARD_FX_FIELD:        snprintf(t, sizeof t, "Changes the field to %s.", psx_card_packs_terrain_name(c->terrain >= 1 ? c->terrain : 1)); break;
+    case PSX_CARD_FX_RITUAL:
+        if (c->ritual_set) snprintf(t, sizeof t, "Offer monsters %d, %d and %d on your field to summon %s.", c->ritual_mat[0], c->ritual_mat[1], c->ritual_mat[2], psx_card_db_name(c->ritual_result));
+        else snprintf(t, sizeof t, "A ritual summon.");
+        break;
+    default: break;
+    }
+    if (t[0]) wrap_append(out, cap, t);
+    if (c->equip_bonus >= 0 || c->equips_set || c->equip_types) {
+        char e[200] = "";
+        if (c->equips_set || c->equip_types) {
+            char list[512]; psx_card_packs_format_equips(c, list, sizeof list);
+            snprintf(e, sizeof e, "Equip to %s: ATK and DEF +%d.", list, c->equip_bonus >= 0 ? c->equip_bonus : 500);
+        } else snprintf(e, sizeof e, "Raises the ATK and DEF of the equipped monster by %d.", c->equip_bonus);
+        wrap_append(out, cap, e);
+    }
+    if (c->trap_atk_max >= 0) {
+        char e[120]; snprintf(e, sizeof e, "Destroys an attacking monster with %d ATK or less.", c->trap_atk_max);
+        wrap_append(out, cap, e);
+    }
+    if (c->boost_set) {
+        char list[512]; psx_card_packs_format_boost(c, list, sizeof list);
+        char e[560]; snprintf(e, sizeof e, "Field: %s.", list);
+        wrap_append(out, cap, e);
+    }
+    return out[0] != 0;
+}
+
+int psx_card_effects_monster_has_effect(int id)
+{
+    (void)id;
+    return 0;   /* filled in by the monster effects layer */
+}
+
 /* ---- debug -------------------------------------------------------------------- */
 int psx_card_effects_state_json(char *out, unsigned cap)
 {

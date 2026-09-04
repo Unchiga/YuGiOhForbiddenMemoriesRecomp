@@ -57,7 +57,23 @@ typedef struct {
     int  trap_atk_max;                    /* 0..25500; -1 = stock (traps 681..686) */
     int  ritual_set;
     int  ritual_mat[3], ritual_result;    /* card ids */
+    int  color;                           /* frame colour slot 0..5 (PSX_CARD_COLOR_*), -1 = stock */
 } PsxCardPack;
+
+/* Frame colours: the disc carries six palettes (only four are used in stock:
+ * monsters yellow, magic green, traps pink, rituals blue; purple and orange
+ * sit unused). See psx_card_colors.c. */
+enum {
+    PSX_CARD_COLOR_YELLOW = 0,    /* normal monster */
+    PSX_CARD_COLOR_GREEN,         /* spell */
+    PSX_CARD_COLOR_PINK,          /* trap */
+    PSX_CARD_COLOR_BLUE,          /* ritual */
+    PSX_CARD_COLOR_PURPLE,        /* fusion */
+    PSX_CARD_COLOR_ORANGE,        /* effect monster */
+    PSX_CARD_COLOR_COUNT          /* the disc's seventh palette is empty and the grid has no sprite for it */
+};
+const char *psx_card_packs_color_name(int slot);   /* "Yellow (normal)" */
+int  psx_card_packs_parse_color(const char *v);
 
 
 /* Effects a Magic card can carry. Each is a stock effect class the game
@@ -99,6 +115,13 @@ void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap)
 /* Set every effect field of a pack to unset. */
 void psx_card_packs_effects_reset(PsxCardPack *c);
 
+/* How the game will lay a description out: the number of lines (auto-wrapped
+ * at 20 columns, or as broken by "|"), the longest line, and the first line
+ * (1-based) longer than 20 columns, 0 when none. The game shows 6 lines. */
+#define PSX_CARD_PACK_DESC_COLS  20
+#define PSX_CARD_PACK_DESC_LINES 6
+int  psx_card_packs_desc_layout(const char *text, int *lines, int *longest, int *first_wide);
+
 /* The stock values of a card, read from the game's own tables. Valid once
  * psx_card_db_ready(). */
 typedef struct {
@@ -114,6 +137,7 @@ typedef struct {
     int  trap_atk_max;      /* traps 681..686 */
     int  boost[20];         /* field cards */
     int  ritual_mat[3], ritual_result;
+    int  color;             /* the frame colour the stock card draws with */
 } PsxCardStock;
 
 /* Player folder holding the packs (".../cards"); "" before boot. */

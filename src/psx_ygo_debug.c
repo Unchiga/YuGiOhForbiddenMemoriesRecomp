@@ -35,6 +35,7 @@
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
 #include "psx_card_share.h"
+#include "psx_card_colors.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -330,6 +331,15 @@ static void handle_card_share(int id, const char *json)
         send_fmt("{\"id\":%d,\"ok\":%s,\"error\":\"%s\",\"version\":%d,\"cards\":[%s],\"replace\":%d,\"drops\":%d,\"bytes\":%ld}",
                  id, ok ? "true" : "false", info.error, info.version, ids, info.replace_n, info.has_drops, info.bytes);
     } else send_err(id, "op is export, inspect or import");
+}
+
+/* card_colors — frame colour slots and patch state. */
+static void handle_card_colors(int id, const char *json)
+{
+    (void)json;
+    char buf[512];
+    if (!psx_card_colors_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
 /* card_packs_reload — re-read one pack (card) or all (no card). */
@@ -798,6 +808,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
     (void)psx_debug_add_command("card_effects",       handle_card_effects);
     (void)psx_debug_add_command("card_share",         handle_card_share);
+    (void)psx_debug_add_command("card_colors",        handle_card_colors);
     (void)psx_debug_add_command("card_manager",       handle_card_manager);
     (void)psx_debug_add_command("card_manager_set",   handle_card_manager_set);
     (void)psx_debug_add_command("card_manager_click", handle_card_manager_click);

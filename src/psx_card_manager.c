@@ -42,6 +42,7 @@
 #include "psx_card_db.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
+#include "psx_card_colors.h"
 #include "psx_card_share.h"
 #include "psx_game_hooks.h"
 #include "psx_ui_draw.h"
@@ -116,16 +117,16 @@ static int  s_sel = 1;
 static int  s_sb_drag, s_sb_grab;
 
 /* --- editor ---------------------------------------------------------------- */
-enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD,
+enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR,
        F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_TRAP_MAX, F_COUNT };
 #define F_FX_FIRST F_EFFECT
 static const char *const FIELD_LABEL[F_COUNT] = {
-    "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password",
+    "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame",
     "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max"
 };
-enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EXPORT, B_IMPORT, B_COUNT };
+enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT, B_EXPORT, B_IMPORT, B_COUNT };
 static const char *const BTN_LABEL[B_COUNT] = { "Save", "Restore stock", "Open folder", "Pick art\xE2\x80\xA6", "Pick thumbnail\xE2\x80\xA6", "Pick title\xE2\x80\xA6",
-                                                "Export\xE2\x80\xA6", "Import\xE2\x80\xA6" };
+                                                "Effect text \xE2\x86\x92 description", "Export\xE2\x80\xA6", "Import\xE2\x80\xA6" };
 #define FTEXT 2048                    /* the longest field text (an equip list) */
 
 static int          s_stock_ok;
@@ -171,7 +172,7 @@ typedef struct {
 } Layout;
 static Layout s_L;
 
-static int field_is_enum(int f) { return f == F_STAR1 || f == F_STAR2 || f == F_TYPE || f == F_ATTR || f == F_EFFECT || f == F_TARGET || f == F_TERRAIN; }
+static int field_is_enum(int f) { return f == F_STAR1 || f == F_STAR2 || f == F_TYPE || f == F_ATTR || f == F_COLOR || f == F_EFFECT || f == F_TARGET || f == F_TERRAIN; }
 static int field_is_set(int f);
 static PsxCardPack  s_edit;
 static PsxCardStock s_stock;
@@ -244,13 +245,13 @@ static void layout_compute(void)
             L->fx_note_y = y;
             y += psx_ui_font_line_height(face_small()) + px(4.0f);
         }
-        const int fh = (f == F_DESC) ? desc_h + px(3.0f) : px(U_FIELD_H);
+        const int fh = (f == F_DESC) ? desc_h + px(3.0f) + psx_ui_font_line_height(face_small()) + px(2.0f) : px(U_FIELD_H);
         L->label[f] = (Rect){ ex, y, label_w, box_h };
         int vx = ex + label_w, vw;
         if (field_is_enum(f)) {
             L->step_l[f] = (Rect){ vx, y, step_w, box_h };
             vx += step_w + sgap;
-            vw = (f == F_EFFECT) ? px(190.0f) : px(90.0f);
+            vw = (f == F_EFFECT) ? px(190.0f) : (f == F_COLOR) ? px(120.0f) : px(90.0f);
             L->value[f] = (Rect){ vx, y, vw, box_h };
             L->step_r[f] = (Rect){ vx + vw + sgap, y, step_w, box_h };
             L->clear[f] = (Rect){ L->step_r[f].x + step_w + sgap * 2, y, step_w, box_h };
@@ -429,6 +430,7 @@ static int field_is_set(int f)
     case F_ATTR: return s_edit.attribute >= 0;
     case F_PRICE: return s_edit.price >= 0;
     case F_PASSWORD: return s_edit.password[0] != 0;
+    case F_COLOR: return s_edit.color >= 0;
     case F_EFFECT: return s_edit.effect >= 0;
     case F_AMOUNT: return s_edit.amount != -1;
     case F_TARGET: return s_edit.target >= 0;
@@ -456,6 +458,7 @@ static void field_clear(int f)
     case F_ATTR: s_edit.attribute = -1; break;
     case F_PRICE: s_edit.price = -1; break;
     case F_PASSWORD: s_edit.password[0] = 0; break;
+    case F_COLOR: s_edit.color = -1; break;
     case F_EFFECT: s_edit.effect = -1; break;
     case F_AMOUNT: s_edit.amount = -1; break;
     case F_TARGET: s_edit.target = -1; break;
@@ -485,6 +488,7 @@ static void field_text(int f, int stock, char *out, size_t cap)
     case F_ATTR: snprintf(out, cap, "%s", psx_card_packs_attribute_name(set ? s_edit.attribute : s_stock.attribute)); break;
     case F_PRICE: snprintf(out, cap, "%d", set ? s_edit.price : s_stock.price); break;
     case F_PASSWORD: snprintf(out, cap, "%s", set ? s_edit.password : (s_stock.password[0] ? s_stock.password : "none")); break;
+    case F_COLOR: snprintf(out, cap, "%s", psx_card_packs_color_name(set ? s_edit.color : (stock ? s_stock.color : psx_card_colors_slot(s_sel)))); break;
     case F_EFFECT: {
         const int e = set ? s_edit.effect : s_stock.effect;
         snprintf(out, cap, "%s", e >= 0 ? psx_card_packs_effect_label(e) : "code only");
@@ -523,6 +527,7 @@ static void field_step(int f, int dir)
     case F_STAR2: v = &s_edit.star2; lo = 1; hi = 10; stock = s_stock.star2; break;
     case F_TYPE:  v = &s_edit.type;  lo = 0; hi = 23; stock = s_stock.type; break;
     case F_ATTR:  v = &s_edit.attribute; lo = 0; hi = 7; stock = s_stock.attribute; break;
+    case F_COLOR: v = &s_edit.color; lo = 0; hi = PSX_CARD_COLOR_COUNT - 1; stock = psx_card_colors_slot(s_sel); break;
     case F_EFFECT: v = &s_edit.effect; lo = 0; hi = PSX_CARD_FX_COUNT - 1; stock = s_stock.effect >= 0 ? s_stock.effect : 0; break;
     case F_TARGET: v = &s_edit.target; lo = 0; hi = 19; stock = (s_stock.effect == PSX_CARD_FX_DESTROY_TYPE && s_stock.amount >= 0) ? s_stock.amount : 3; break;
     case F_TERRAIN: v = &s_edit.terrain; lo = 1; hi = 6; stock = (s_stock.effect == PSX_CARD_FX_FIELD && s_stock.amount >= 1) ? s_stock.amount : 1; break;
@@ -679,6 +684,24 @@ static void do_pick(int kind)
     (void)kind;
     say("No file dialog in this build; drop a PNG in the card's folder");
 #endif
+}
+
+/* Append the effect's wording to the description, or tell why not. */
+static void do_effect_text(void)
+{
+    if (s_focus >= 0) focus_commit();
+    char fx[FTEXT];
+    if (!psx_card_effects_describe(&s_edit, fx, sizeof fx)) { say("This card has no edited effect to describe"); return; }
+    char cur[FTEXT]; field_text(F_DESC, 0, cur, sizeof cur);
+    if (strstr(cur, fx)) { say("The description already has the effect text"); return; }
+    char out[FTEXT];
+    if (cur[0]) snprintf(out, sizeof out, "%s|%s", cur, fx); else snprintf(out, sizeof out, "%s", fx);
+    if (strlen(out) > PSX_CARD_PACK_DESC_MAX) { say("Too long: the description holds 199 characters"); return; }
+    snprintf(s_edit.description, sizeof s_edit.description, "%s", out);
+    s_changed = 1; s_dirty = 1;
+    int lines = 0, longest = 0, wide = 0;
+    if (!psx_card_packs_desc_layout(out, &lines, &longest, &wide)) say("Effect text added; the description is now longer than the card shows");
+    else say("Effect text added to the description");
 }
 
 static void do_export(void)
@@ -908,10 +931,32 @@ static void draw_editor(void)
                 text_in(v, px(6.0f), t, set ? COL_EDITED : COL_TEXT, fb);
             }
         }
+        if (f == F_DESC) {
+            /* how the game will lay it out */
+            char cur[FTEXT]; field_text(F_DESC, 0, cur, sizeof cur);
+            const char *txt = (s_focus == F_DESC) ? s_buf : cur;
+            int lines = 0, longest = 0, wide = 0;
+            const int ok = psx_card_packs_desc_layout(txt, &lines, &longest, &wide);
+            char w[160];
+            if (wide) snprintf(w, sizeof w, "Line %d is %d characters; the card shows 20 per line", wide, longest);
+            else if (lines > PSX_CARD_PACK_DESC_LINES) snprintf(w, sizeof w, "%d lines; the card shows %d", lines, PSX_CARD_PACK_DESC_LINES);
+            else snprintf(w, sizeof w, "%d of %d lines, longest %d of 20 characters", lines, PSX_CARD_PACK_DESC_LINES, longest);
+            psx_ui_text_clip(&s_cv, v->x, v->y + v->h + px(2.0f) + psx_ui_font_ascent(fs), w, ok ? COL_DIM : COL_WARN, fs, right - v->x);
+        }
         if (field_is_enum(f)) {
             const Rect *l = &L->step_l[f], *r = &L->step_r[f];
             psx_ui_round_rect(&s_cv, l->x, l->y, l->w, l->h, l->h * 0.5f, COL_BTN); draw_caret(l, -1, COL_TEXT);
             psx_ui_round_rect(&s_cv, r->x, r->y, r->w, r->h, r->h * 0.5f, COL_BTN); draw_caret(r, +1, COL_TEXT);
+        }
+        if (f == F_COLOR) {
+            /* three tones of the palette the card will draw with */
+            unsigned char sw[9];
+            const int slot = set ? s_edit.color : psx_card_colors_slot(s_sel);
+            if (psx_card_colors_swatch(slot, sw)) {
+                const int sx = v->x + v->w - px(3.0f) - px(10.0f) * 3, sy = v->y + px(3.0f), sh = v->h - px(6.0f);
+                for (int i = 0; i < 3; i++)
+                    psx_ui_round_rect(&s_cv, sx + i * px(10.0f), sy, px(9.0f), sh, (float)px(2.0f), 0xFF000000u | ((uint32_t)sw[i*3] << 16) | ((uint32_t)sw[i*3+1] << 8) | sw[i*3+2]);
+            }
         }
         if (set) {
             const Rect *c = &L->clear[f];
@@ -1048,6 +1093,7 @@ static void click(int x, int y, int button)
         case B_ART: do_pick(1); break;
         case B_THUMB: do_pick(2); break;
         case B_TITLE: do_pick(3); break;
+        case B_EFFECT_TEXT: do_effect_text(); break;
         case B_EXPORT: do_export(); break;
         case B_IMPORT: do_import(); break;
         }
@@ -1321,11 +1367,11 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         "\"search\":\"%s\",\"rows\":%d,\"scroll\":%d,\"w\":%d,\"h\":%d,\"unit\":%.2f,\"msg\":\"%s\","
         "\"name\":\"%s\",\"desc\":\"%s\",\"atk\":\"%s\",\"def\":\"%s\",\"star1\":\"%s\",\"star2\":\"%s\",\"type\":\"%s\","
         "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"password\":\"%s\","
-        "\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"trap_max\":\"%s\","
+        "\"color\":\"%s\",\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"trap_max\":\"%s\","
         "\"art\":%d,\"thumb\":%d,\"title\":%d,\"presents\":%u,\"modal\":%d,\"geom\":{",
         s_win != NULL, s_sel, s_has_pack, s_changed, s_focus, s_buf, s_search, s_order_n, s_scroll,
         s_w, s_h, s_u, s_msg, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
-        t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19],
+        t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20],
         s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal);
     if (s_win && n < cap) {
         n += (unsigned)snprintf(out + n, cap - n, "\"rows\":[%d,%d,%d,%d],\"row_h\":%d,\"visible\":%d,\"sb\":[%d,%d,%d,%d],\"value\":[",
@@ -1461,7 +1507,7 @@ static void row_activate(void) { psx_card_manager_open(); }
 PSX_MOD_CONSTRUCTOR(psx_card_manager_install)
 {
     (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Card manager",
-                                    "Change a card's name, description, art, stats, stars, effects, price and password; export or import them",
+                                    "Change a card's name, description, art, frame colour, stats, stars, effects, price and password; export or import them",
                                     row_activate);
     (void)psx_game_add_frame_hook(tick);
     (void)psx_game_add_event_hook(on_event);
