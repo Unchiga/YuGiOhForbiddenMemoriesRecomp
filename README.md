@@ -247,7 +247,9 @@ immune    = traps, magic        traps never fire on it; destruction magic passes
 The cast effects are the same list a Magic card can be given (`heal`,
 `damage`, `destroy_type Dragon`, `destroy_atk 1500`, `raigeki`, `dark_hole`,
 `dragon_jar`, `stop_defense`, `flip`, `weaken 500`, `swords`, `cursebreaker`,
-`harpie`, `field Yami`); they run through the game's own effect engine, with
+`harpie`, `field Yami`), plus `gamble`, Time Wizard's coin: heads destroys
+the opponent's monsters, tails destroys your own and their total ATK comes
+off your LP. They run through the game's own effect engine, with
 the popup and sound the matching spell would show, the moment the duel is
 idle after the trigger. A monster with any of these draws with the orange
 effect-monster frame unless `color` says otherwise, and `Effect text →

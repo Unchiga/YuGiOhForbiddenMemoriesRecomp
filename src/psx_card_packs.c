@@ -250,13 +250,13 @@ static const char *const STAR_NAMES[11] = {
 };
 static const char *const FX_NAMES[PSX_CARD_FX_COUNT] = {
     "none", "heal", "damage", "destroy_type", "destroy_atk", "raigeki", "dark_hole", "dragon_jar",
-    "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual"
+    "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual", "gamble"
 };
 static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
     "No effect", "Heal LP", "Damage LP", "Destroy a type", "Destroy by ATK", "Destroy all monsters (Raigeki)",
     "Destroy everything (Dark Hole)", "Destroy Dragons", "Stop Defense", "Flip face-down monsters",
     "Weaken opponent's monsters", "Swords of Revealing Light", "Cursebreaker", "Destroy magic/trap zone (Harpie)",
-    "Change the field", "Ritual summon"
+    "Change the field", "Ritual summon", "Coin flip (Time Wizard)"
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
 static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
@@ -306,6 +306,7 @@ int psx_card_packs_parse_spec(const char *v, PsxCardFxSpec *out, char *err, unsi
     if (!n) { seterr(err, errcap, "an effect name comes first, like damage 1000"); return 0; }
     const int fx = psx_card_packs_parse_effect(tok[0]);
     if (fx < 0 || fx == PSX_CARD_FX_RITUAL) { char m[96]; snprintf(m, sizeof m, "'%s' is not an effect", tok[0]); seterr(err, errcap, m); return 0; }
+    if (!strcmp(tok[0], "coin") || !strcmp(tok[0], "timewizard")) out->fx = PSX_CARD_FX_GAMBLE;
     out->fx = fx;
     for (int i = 1; i < n; i++) {
         const char *t = tok[i];
@@ -968,6 +969,7 @@ static int read_ini(int id, PsxCardPack *c)
             if (ok) memcpy(c->password, val, 9);
         } else if (!strcmp(key, "effect")) {
             c->effect = psx_card_packs_parse_effect(val);
+            if (c->effect == PSX_CARD_FX_GAMBLE) c->effect = -1;      /* monster triggers only */
         } else if (!strcmp(key, "amount")) {
             const int v = atoi(val); if (v >= -9999 && v <= 25500) c->amount = v;
         } else if (!strcmp(key, "target")) {

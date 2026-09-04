@@ -184,7 +184,7 @@ static PsxCardPack  s_edit;
 static PsxCardStock s_stock;
 static const int TRIG_FX[] = { -1, PSX_CARD_FX_HEAL, PSX_CARD_FX_DAMAGE, PSX_CARD_FX_DESTROY_TYPE, PSX_CARD_FX_DESTROY_ATK,
     PSX_CARD_FX_RAIGEKI, PSX_CARD_FX_DARK_HOLE, PSX_CARD_FX_DRAGON_JAR, PSX_CARD_FX_STOP_DEFENSE, PSX_CARD_FX_FLIP,
-    PSX_CARD_FX_WEAKEN, PSX_CARD_FX_SWORDS, PSX_CARD_FX_CURSEBREAKER, PSX_CARD_FX_HARPIE, PSX_CARD_FX_FIELD };
+    PSX_CARD_FX_WEAKEN, PSX_CARD_FX_SWORDS, PSX_CARD_FX_CURSEBREAKER, PSX_CARD_FX_HARPIE, PSX_CARD_FX_FIELD, PSX_CARD_FX_GAMBLE };
 #define TRIG_N ((int)(sizeof TRIG_FX / sizeof TRIG_FX[0]))
 static const char *const BATTLE_LABEL[PSX_CARD_BATTLE_COUNT] = { "Normal", "Never destroyed in battle", "Destroys itself and its foe", "Destroys its foe" };
 static const char *const IMMUNE_LABEL[4] = { "Nothing", "Traps", "Destruction magic", "Traps and magic" };
@@ -226,7 +226,7 @@ static int enum_count(int f)
     case F_TYPE: return 24;
     case F_ATTR: return 8;
     case F_COLOR: return PSX_CARD_COLOR_COUNT;
-    case F_EFFECT: return PSX_CARD_FX_COUNT;
+    case F_EFFECT: return PSX_CARD_FX_GAMBLE;          /* the coin flip is a monster trigger only */
     case F_TARGET: return 20;
     case F_TERRAIN: return 6;
     case F_BATTLE: return PSX_CARD_BATTLE_COUNT;

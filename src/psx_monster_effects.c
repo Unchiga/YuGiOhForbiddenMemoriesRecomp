@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cpu_state.h"
 #include "mod_plugins.h"
@@ -115,9 +116,48 @@ static int side_of_row(int row) { return row >= 15; }
 static int is_monster_row(int row) { const int r = row % 15; return r >= 5 && r <= 9; }
 static int playing_side(void) { return psx_mod_read_byte(SIDE_BYTE) & 1; }
 
+static void enqueue_raw(int side, int card, int fx, int amount, int target, int terrain)
+{
+    if (((s_qt + 1) % 24) == s_qh) return;
+    Cast *c = &s_q[s_qt]; s_qt = (s_qt + 1) % 24;
+    c->side = side; c->card = card; c->fx = fx; c->amount = amount; c->target = target; c->terrain = terrain;
+    ev("queue", card, fx, side);
+}
+
+/* Time Wizard's coin. Heads: Raigeki as the owner (their monsters go).
+ * Tails: Raigeki cast as the opponent, so the owner's own monsters go, then
+ * their total ATK as damage to the owner: the burn popup for what its
+ * byte can show (2550) and a direct LP write for any remainder. */
+static void gamble(int side, int card)
+{
+    const unsigned r = (unsigned)rand() ^ s_frame;
+    const int heads = (r & 1u) != 0;
+    if (heads) { enqueue_raw(side, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); ev("coin_heads", card, side, 0); return; }
+    int total = 0;
+    for (int r5 = 5; r5 <= 9; r5++) {
+        const int row = 15 * side + r5;
+        if (!(row_flags(row) & 0x8000u)) continue;
+        const uint32_t at = ROWS + (uint32_t)row * ROW_STRIDE;
+        int atk = (int)(int16_t)psx_mod_read_half(at + 0xE) + (int)(int16_t)psx_mod_read_half(at + 0x12) + (int)(int16_t)psx_mod_read_half(at + 0x14);
+        if (atk < 0) atk = 0; if (atk > 9999) atk = 9999;
+        total += atk;
+    }
+    enqueue_raw(side ^ 1, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1);
+    const int shown = total > 2550 ? 2550 : total;
+    if (shown > 0) enqueue_raw(side ^ 1, card, PSX_CARD_FX_DAMAGE, shown, -1, -1);
+    if (total > shown) {
+        const uint32_t lpat = SIDES + (uint32_t)side * 0x20u + 0x14u;
+        int lp = psx_mod_read_half(lpat) - (total - shown);
+        if (lp < 0) lp = 0;
+        psx_mod_write_half(lpat, (uint16_t)lp);
+    }
+    ev("coin_tails", card, side, total);
+}
+
 static void enqueue(int side, int card, const PsxCardFxSpec *sp)
 {
     if (!sp || sp->fx < 0 || sp->fx == PSX_CARD_FX_RITUAL || sp->fx == PSX_CARD_FX_NONE) return;
+    if (sp->fx == PSX_CARD_FX_GAMBLE) { gamble(side, card); return; }
     if (((s_qt + 1) % 24) == s_qh) return;
     Cast *c = &s_q[s_qt]; s_qt = (s_qt + 1) % 24;
     c->side = side; c->card = card; c->fx = sp->fx; c->amount = sp->amount; c->target = sp->target; c->terrain = sp->terrain;
@@ -416,4 +456,5 @@ PSX_MOD_CONSTRUCTOR(psx_monster_effects_install)
     (void)psx_mod_register_function_entry_plugin("monster_fx_destroy", HOOK_DESTROY,  hook_destroy);
     (void)psx_mod_register_function_entry_plugin("monster_fx_afterfx", HOOK_AFTER_FX, hook_after_fx);
     (void)psx_game_add_frame_hook(tick);
+    srand((unsigned)time(NULL));
 }

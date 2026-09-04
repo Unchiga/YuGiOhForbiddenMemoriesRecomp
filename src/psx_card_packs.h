@@ -120,6 +120,8 @@ enum {
     PSX_CARD_FX_HARPIE,           /* destroy the opponent's magic/trap zone */
     PSX_CARD_FX_FIELD,            /* change the field to `terrain` */
     PSX_CARD_FX_RITUAL,           /* the ritual recipe below */
+    PSX_CARD_FX_GAMBLE,           /* Time Wizard's coin: heads destroys the opponent's monsters, tails your own
+                                     and their total ATK comes off your LP (monster triggers only) */
     PSX_CARD_FX_COUNT
 };
 const char *psx_card_packs_effect_name(int fx);      /* ini spelling */

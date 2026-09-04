@@ -641,6 +641,9 @@ static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *ou
         if (c->ritual_set) snprintf(t, sizeof t, "Offer monsters %d, %d and %d on your field to summon %s.", c->ritual_mat[0], c->ritual_mat[1], c->ritual_mat[2], psx_card_db_name(c->ritual_result));
         else snprintf(t, sizeof t, "A ritual summon.");
         break;
+    case PSX_CARD_FX_GAMBLE:
+        snprintf(t, sizeof t, "Flip a coin. Heads: destroy all the opponent's monsters. Tails: destroy all your own monsters and lose LP equal to their total ATK.");
+        break;
     default: break;
     }
     if (t[0]) wrap_append(out, cap, t);
