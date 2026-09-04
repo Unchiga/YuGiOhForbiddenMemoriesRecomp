@@ -62,6 +62,7 @@
 #include "psx_game_hooks.h"
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
+#include "psx_lp_popup.h"
 
 #define CARD_COUNT 722
 #define SECTOR 2048
@@ -125,6 +126,7 @@ static struct {
     uint32_t malus;
 } s_hold;
 static int s_malus_dirty;
+static int s_hold_amount;
 
 /* the equip bonus in force */
 static int s_eq_active, s_eq_dirty, s_eq_bonus, s_eq_card;
@@ -426,6 +428,43 @@ static void rebuild(void)
 static void assert_byte(uint32_t at, uint8_t v) { if (psx_mod_read_byte(at) != v) psx_mod_write_byte(at, v); }
 static void assert_code(uint32_t at, uint32_t v) { if (psx_mod_read_word(at) != v) psx_mod_write_code_word(at, v); }
 
+/* The LP popups (heal kind 5, burn kinds 6 and 7) are phase records in the
+ * D_800EAD88 pool that the duel overlay draws after the handler is gone;
+ * they read the parameter table live, so the hold must outlast them. */
+#define PHASE_POOL 0x800EAD88u
+static int lp_popup_live(void)
+{
+    for (int i = 0; i < 8; i++) {
+        const uint32_t rec = PHASE_POOL + (uint32_t)i * 0x20u;
+        if (!(psx_mod_read_byte(rec + 0x1C) & 0x80u)) continue;
+        const unsigned k = psx_mod_read_half(rec + 0x18);
+        if (k == 5 || k == 6 || k == 7) return 1;
+    }
+    return 0;
+}
+
+/* The burn popup (kind 6/7) and the heal popup (kind 5) are fixed sprites
+ * for the stock amounts ("-50", "+200"...), picked by the table index the
+ * handler leaves in f1A; no hold can change what they say. While an edited
+ * amount is held, the record is released before the overlay draws it and
+ * the number is shown by psx_lp_popup instead. */
+static void popup_fix(void)
+{
+    if (!s_hold.active || (s_hold.kind != PSX_CARD_FX_DAMAGE && s_hold.kind != PSX_CARD_FX_HEAL)) return;
+    for (int i = 0; i < 8; i++) {
+        const uint32_t rec = PHASE_POOL + (uint32_t)i * 0x20u;
+        if (!(psx_mod_read_byte(rec + 0x1C) & 0x80u)) continue;
+        const unsigned k = psx_mod_read_half(rec + 0x18);
+        const int burn = (k == 6 || k == 7), heal = (k == 5);
+        if ((s_hold.kind == PSX_CARD_FX_DAMAGE && burn) || (s_hold.kind == PSX_CARD_FX_HEAL && heal)) {
+            psx_mod_write_byte(rec + 0x1C, 0);
+            psx_mod_write_half(rec + 0x18, 0);
+            psx_lp_popup_show(s_hold_amount, heal);
+            ev(0x600u, (int)k, s_hold_amount, i);
+        }
+    }
+}
+
 static void hold_release(void)
 {
     s_hold.active = 0;
@@ -478,8 +517,9 @@ static void tick(void)
     for (int i = 0; i < 6; i++)   assert_byte(TRAP_TAB + (uint32_t)i, s_want_trap[i]);
     for (int i = 0; i < 101; i++) assert_byte(CLASS_TAB + (uint32_t)i, s_want_class[i]);
     if (s_hold.active) {
-        if (s_frame > s_hold.since + 2 && !(psx_mod_read_half(FX_STATE) & 0x8000u)) hold_release();
-        else hold_apply();
+        const int done = s_frame > s_hold.since + 2 && !(psx_mod_read_half(FX_STATE) & 0x8000u);
+        if ((done && !lp_popup_live() && s_frame > s_hold.since + 6) || s_frame > s_hold.since + 900) hold_release();
+        else { hold_apply(); popup_fix(); }
     }
     eq_apply();
 }
@@ -494,8 +534,8 @@ static int fx_prepare(int fx, int amount, int target, int terrain)
     int proxy = -1;
     memset(&s_hold, 0, sizeof s_hold);
     switch (fx) {
-    case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((amount >= 0 ? amount : 500) / 100); break;
-    case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((amount >= 0 ? amount : 500) / 10); break;
+    case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((amount >= 0 ? amount : 500) / 100); s_hold_amount = s_hold.heal * 100; break;
+    case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((amount >= 0 ? amount : 500) / 10); s_hold_amount = s_hold.burn * 10; break;
     case PSX_CARD_FX_DESTROY_TYPE: proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = (uint8_t)(target >= 0 && target < 20 ? target : 3); break;
     case PSX_CARD_FX_DESTROY_ATK: {
         long a = (amount >= 0 ? amount : 1500) / 10;
