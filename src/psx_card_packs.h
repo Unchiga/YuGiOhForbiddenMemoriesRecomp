@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 #define PSX_CARD_PACK_NAME_MAX 40
-#define PSX_CARD_PACK_DESC_MAX 199   /* "|" separates lines; auto-wrapped at 20 columns otherwise */
+#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 6 x 20 */
 #define PSX_CARD_PACK_EQUIP_MAX   256
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)

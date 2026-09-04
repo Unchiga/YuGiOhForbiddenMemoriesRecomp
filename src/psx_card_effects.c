@@ -612,6 +612,7 @@ static void wrap_append(char *out, unsigned cap, const char *text)
 
 #define FXCAP 512
 static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *out, unsigned cap);
+static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsigned cap);
 
 static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *out, unsigned cap)
 {
@@ -649,6 +650,21 @@ int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
 {
     out[0] = 0;
     if (!c) return 0;
+    char body[FXCAP * 2]; body[0] = 0;
+    const int ok = psx_card_effects_describe_body(c, body, sizeof body);
+    if (!ok) return 0;
+    /* "Effect:" leads, then the wording re-wrapped after it */
+    char flat[FXCAP * 2]; unsigned n = 0;
+    for (const char *q = body; *q && n + 1 < sizeof flat; q++) flat[n++] = (*q == '|') ? ' ' : *q;
+    flat[n] = 0;
+    char lead[FXCAP * 2]; snprintf(lead, sizeof lead, "Effect: %s", flat);
+    wrap_append(out, cap, lead);
+    return out[0] != 0;
+}
+
+static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsigned cap)
+{
+    out[0] = 0;
     psx_card_effects_describe_effect_only(c, out, cap);
     if (c->equip_bonus >= 0 || c->equips_set || c->equip_types) {
         char e[200] = "";
