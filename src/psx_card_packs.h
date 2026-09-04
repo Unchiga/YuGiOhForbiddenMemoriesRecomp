@@ -23,6 +23,9 @@ extern "C" {
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
 
+/* One triggered effect: a magic effect class and its number. */
+typedef struct { int fx, amount, target, terrain; } PsxCardFxSpec;
+
 /* Everything a pack can set. A field left at its "unset" value (-1, or an
  * empty name) keeps the stock value; that is how a pack that only changes
  * the art leaves the numbers alone. */
@@ -58,7 +61,29 @@ typedef struct {
     int  ritual_set;
     int  ritual_mat[3], ritual_result;    /* card ids */
     int  color;                           /* frame colour slot 0..5 (PSX_CARD_COLOR_*), -1 = stock */
+
+    /* ---- monster effects (see psx_monster_effects.c) ---------------------- */
+    int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
+    PsxCardFxSpec on_summon, on_death, on_attack, each_turn;   /* fx = -1 = none */
+    int  bonus_flat, bonus_ally, bonus_enemy;   /* ATK/DEF while on the field; PSX_CARD_PACK_BOOST_UNSET */
+    int  immune;                          /* -1 unset; bit 1 traps, bit 2 magic destruction */
 } PsxCardPack;
+
+enum { PSX_CARD_BATTLE_NONE = 0, PSX_CARD_BATTLE_INDESTRUCTIBLE, PSX_CARD_BATTLE_MUTUAL, PSX_CARD_BATTLE_SLAYER, PSX_CARD_BATTLE_COUNT };
+#define PSX_CARD_IMMUNE_TRAPS 1
+#define PSX_CARD_IMMUNE_MAGIC 2
+const char *psx_card_packs_battle_name(int b);
+int  psx_card_packs_parse_battle(const char *v);
+/* "damage 1000", "destroy_type Dragon", "field Yami", "raigeki", "none" */
+int  psx_card_packs_parse_spec(const char *v, PsxCardFxSpec *out, char *err, unsigned errcap);
+void psx_card_packs_format_spec(const PsxCardFxSpec *f, char *out, unsigned cap);
+/* "500, 200 per ally, 100 per enemy" */
+int  psx_card_packs_parse_bonus(const char *v, PsxCardPack *c, char *err, unsigned errcap);
+void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap);
+const char *psx_card_packs_immune_name(int bits);   /* 0..3 */
+int  psx_card_packs_parse_immune(const char *v);
+/* 1 when any monster-effect field is set. */
+int  psx_card_packs_has_monster_effect(const PsxCardPack *c);
 
 /* Frame colours: the disc carries six palettes (only four are used in stock:
  * monsters yellow, magic green, traps pink, rituals blue; purple and orange

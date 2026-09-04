@@ -24,9 +24,18 @@ void psx_card_effects_stock(int id, PsxCardStock *out);
 /* What the layer can and cannot do to this card, one line for the manager. */
 const char *psx_card_effects_note(int id, int effective_type);
 
-/* 1 when the card is a monster carrying any monster effect (see
+/* 1 when the card is a monster carrying any monster effect (implemented in
  * psx_monster_effects.c); the colour module paints those orange by default. */
 int psx_card_effects_monster_has_effect(int id);
+
+/* Run a magic effect class now, through the game's own effect driver, as
+ * if the playing side had just played the stock card that implements it:
+ * sets the parameter hold and arms D_8009B1A8 / D_8009B1D2 / D_8009B220.
+ * Only when the duel is idle (the caller checks). Returns 0 for an effect
+ * the driver cannot run this way (none, ritual). */
+int psx_card_effects_cast(int fx, int amount, int target, int terrain);
+/* 1 while a parameter hold (a running cast or played effect) is active. */
+int psx_card_effects_hold_active(void);
 
 /* The effect as card text, in the game's 20-column lines separated by "|",
  * for the description. Empty when the card has no edited effect. */

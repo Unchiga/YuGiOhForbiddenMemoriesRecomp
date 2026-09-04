@@ -163,6 +163,7 @@ An edited card is a folder in your player-data:
 
 ```
 cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
+                        color = purple       (yellow, green, pink, blue, purple, orange)
                         description = Text with|a line break   (| = new line; no | = wrapped at 20)
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
@@ -225,6 +226,32 @@ as traps (only 681–686 have a ceiling), the trap's response, Goblin Fan /
 Bad Reaction to Simochi / Reverse Trap / Fake Trap, `weaken` reaching only
 the opponent's side, the guardian-star wheel, and the granularity of heal
 (steps of 100, up to 25500) and damage (steps of 10, up to 2550).
+
+#### Monster effects
+
+Stock monsters do nothing but fight. An edited monster can carry, in the
+same `card.ini` (and the manager's right-hand column):
+
+```
+battle    = indestructible      never destroyed in battle (its owner still takes the damage)
+            mutual              destroys itself and whatever it battles
+            slayer              destroys whatever it battles
+on_summon = damage 1000         cast a magic effect when it lands
+on_death  = raigeki             ... when it is destroyed (battle, trap or magic)
+on_attack = heal 500            ... when it declares an attack
+each_turn = damage 200          ... at the start of its owner's turn, while on the field
+bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field
+immune    = traps, magic        traps never fire on it; destruction magic passes it by
+```
+
+The cast effects are the same list a Magic card can be given (`heal`,
+`damage`, `destroy_type Dragon`, `destroy_atk 1500`, `raigeki`, `dark_hole`,
+`dragon_jar`, `stop_defense`, `flip`, `weaken 500`, `swords`, `cursebreaker`,
+`harpie`, `field Yami`); they run through the game's own effect engine, with
+the popup and sound the matching spell would show, the moment the duel is
+idle after the trigger. A monster with any of these draws with the orange
+effect-monster frame unless `color` says otherwise, and `Effect text →
+description` writes the wording onto the card.
 
 #### One file to share
 

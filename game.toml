@@ -148,6 +148,33 @@ mod_function_entry_funcs = [
     #             byte (heal/burn table, kill table, malus immediate) for the
     #             duration of the resolution.
     "0x80026BA4",
+    # ---- MONSTER EFFECTS (psx_monster_effects.c) ---------------------------
+    # 0x8001825C  action 11, back from the 3D scene: gp+0x300/0x301 hold the
+    #             rows it destroys; rewritten to match the battle effects.
+    "0x8001825C",
+    # 0x8001B170  the summon action: state 5 = a monster just landed, which
+    #             is where on_summon triggers are queued.
+    "0x8001B170",
+    # 0x8001F560  the attack action, entered every frame it runs. Its first
+    #             frame = an attack was declared (on_attack triggers); the
+    #             first frame of its state 4 is right after state 3 decided
+    #             the outcome words gp+0x2A8/0x2A9, which are rewritten there
+    #             for indestructible / mutual / slayer monsters. Its states
+    #             are blocks of this one function, so this is the only entry.
+    "0x8001F560",
+    # 0x8001F0D0  the trap check: a0 = attacker object; the ceilings are
+    #             zeroed for a trap-immune attacker.
+    "0x8001F0D0",
+    # 0x8002892C  called by the per-frame duel tick right after the magic
+    #             effect driver, in the same frame the driver reports an
+    #             effect finished and before the action machine dispatches:
+    #             the only place a side flipped for a triggered cast can be
+    #             put back without the next action seeing the wrong side.
+    "0x8002892C",
+    # 0x80024954  the destroy helper: a0 = row; redirected to a scratch row
+    #             for a magic-immune monster while an effect runs, and the
+    #             on_death trigger is queued for real destructions.
+    "0x80024954",
 ]
 
 [runtime]

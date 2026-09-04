@@ -36,6 +36,7 @@
 #include "psx_card_effects.h"
 #include "psx_card_share.h"
 #include "psx_card_colors.h"
+#include "psx_monster_effects.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -339,6 +340,15 @@ static void handle_card_colors(int id, const char *json)
     (void)json;
     char buf[512];
     if (!psx_card_colors_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* monster_effects — queue, battle decision, hook events. */
+static void handle_monster_effects(int id, const char *json)
+{
+    (void)json;
+    static char buf[8192];
+    if (!psx_monster_effects_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
@@ -809,6 +819,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_effects",       handle_card_effects);
     (void)psx_debug_add_command("card_share",         handle_card_share);
     (void)psx_debug_add_command("card_colors",        handle_card_colors);
+    (void)psx_debug_add_command("monster_effects",    handle_monster_effects);
     (void)psx_debug_add_command("card_manager",       handle_card_manager);
     (void)psx_debug_add_command("card_manager_set",   handle_card_manager_set);
     (void)psx_debug_add_command("card_manager_click", handle_card_manager_click);

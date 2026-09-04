@@ -266,6 +266,97 @@ static const char *const COLOR_KEYS[PSX_CARD_COLOR_COUNT][4] = {
     { "yellow", "normal", "monster", "" }, { "green", "spell", "magic", "" }, { "pink", "trap", "magenta", "" },
     { "blue", "ritual", "", "" }, { "purple", "fusion", "violet", "" }, { "orange", "effect", "", "" }
 };
+static int match_name(const char *v, const char *const *names, int n, int first);
+static void seterr(char *err, unsigned cap, const char *m);
+static int split_list(const char *v, char tok[][48], int n);
+static const char *const BATTLE_NAMES[PSX_CARD_BATTLE_COUNT] = { "none", "indestructible", "mutual", "slayer" };
+static const char *const IMMUNE_NAMES[4] = { "none", "traps", "magic", "traps, magic" };
+const char *psx_card_packs_battle_name(int b) { return (b >= 0 && b < PSX_CARD_BATTLE_COUNT) ? BATTLE_NAMES[b] : "?"; }
+int psx_card_packs_parse_battle(const char *v)
+{
+    for (int i = 0; i < PSX_CARD_BATTLE_COUNT; i++) { const char *a = v, *b = BATTLE_NAMES[i]; while (*a && *b && (*a | 32) == *b) { a++; b++; } if (!*b && !*a) return i; }
+    if (!strcmp(v, "kamikaze") || !strcmp(v, "explode")) return PSX_CARD_BATTLE_MUTUAL;
+    if (!strcmp(v, "unkillable") || !strcmp(v, "immortal")) return PSX_CARD_BATTLE_INDESTRUCTIBLE;
+    if (*v >= '0' && *v <= '9') { const int x = atoi(v); return (x >= 0 && x < PSX_CARD_BATTLE_COUNT) ? x : -1; }
+    return -1;
+}
+const char *psx_card_packs_immune_name(int bits) { return (bits >= 0 && bits < 4) ? IMMUNE_NAMES[bits] : "?"; }
+int psx_card_packs_parse_immune(const char *v)
+{
+    int bits = 0;
+    if (strstr(v, "trap")) bits |= PSX_CARD_IMMUNE_TRAPS;
+    if (strstr(v, "magic") || strstr(v, "spell")) bits |= PSX_CARD_IMMUNE_MAGIC;
+    if (!strcmp(v, "both") || !strcmp(v, "all")) bits = 3;
+    if (*v >= '0' && *v <= '9') bits = atoi(v) & 3;
+    return bits;
+}
+int psx_card_packs_parse_spec(const char *v, PsxCardFxSpec *out, char *err, unsigned errcap)
+{
+    static char tok[8][48];
+    char buf[256]; snprintf(buf, sizeof buf, "%s", v);
+    /* tokens are space separated; type names may contain a hyphen or a space ("Beast-Warrior", "Sea Serpent") */
+    int n = 0; char *p = buf;
+    while (*p && n < 8) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        int m = 0; while (*p && *p != ' ' && *p != ',' && m < 47) tok[n][m++] = *p++;
+        tok[n][m] = 0; n++;
+    }
+    out->fx = -1; out->amount = -1; out->target = -1; out->terrain = -1;
+    if (!n) { seterr(err, errcap, "an effect name comes first, like damage 1000"); return 0; }
+    const int fx = psx_card_packs_parse_effect(tok[0]);
+    if (fx < 0 || fx == PSX_CARD_FX_RITUAL) { char m[96]; snprintf(m, sizeof m, "'%s' is not an effect", tok[0]); seterr(err, errcap, m); return 0; }
+    out->fx = fx;
+    for (int i = 1; i < n; i++) {
+        const char *t = tok[i];
+        if ((*t >= '0' && *t <= '9') || *t == '-' || *t == '+') { out->amount = atoi(t); continue; }
+        int x = match_name(t, TYPE_NAMES, 20, 0);
+        if (x < 0 && i + 1 < n) { char two[96]; snprintf(two, sizeof two, "%s %s", t, tok[i + 1]); x = match_name(two, TYPE_NAMES, 20, 0); if (x >= 0) i++; }
+        if (x >= 0) { out->target = x; continue; }
+        x = match_name(t, TERRAIN_NAMES, 7, 0);
+        if (x >= 1) { out->terrain = x; continue; }
+        char m[96]; snprintf(m, sizeof m, "'%s' is not a number, a monster type or a field", t); seterr(err, errcap, m); return 0;
+    }
+    return 1;
+}
+void psx_card_packs_format_spec(const PsxCardFxSpec *f, char *out, unsigned cap)
+{
+    if (!f || f->fx < 0) { snprintf(out, cap, "none"); return; }
+    unsigned n = (unsigned)snprintf(out, cap, "%s", psx_card_packs_effect_name(f->fx));
+    if (f->amount != -1 && n < cap) n += (unsigned)snprintf(out + n, cap - n, " %d", f->amount);
+    if (f->target >= 0 && n < cap) n += (unsigned)snprintf(out + n, cap - n, " %s", psx_card_packs_type_name(f->target));
+    if (f->terrain >= 1 && n < cap) n += (unsigned)snprintf(out + n, cap - n, " %s", psx_card_packs_terrain_name(f->terrain));
+}
+int psx_card_packs_parse_bonus(const char *v, PsxCardPack *c, char *err, unsigned errcap)
+{
+    static char tok[8][48];
+    const int n = split_list(v, tok, 8);
+    int flat = PSX_CARD_PACK_BOOST_UNSET, ally = PSX_CARD_PACK_BOOST_UNSET, enemy = PSX_CARD_PACK_BOOST_UNSET;
+    for (int i = 0; i < n; i++) {
+        const int val = atoi(tok[i]);
+        if (val < -9990 || val > 9990) { seterr(err, errcap, "a bonus is -9990 to 9990"); return 0; }
+        if (strstr(tok[i], "ally") || strstr(tok[i], "friend") || strstr(tok[i], "own")) ally = val / 10 * 10;
+        else if (strstr(tok[i], "enemy") || strstr(tok[i], "opp")) enemy = val / 10 * 10;
+        else if ((tok[i][0] >= '0' && tok[i][0] <= '9') || tok[i][0] == '-' || tok[i][0] == '+') flat = val / 10 * 10;
+        else { char m[96]; snprintf(m, sizeof m, "'%s': use a number, 'N per ally' or 'N per enemy'", tok[i]); seterr(err, errcap, m); return 0; }
+    }
+    c->bonus_flat = flat; c->bonus_ally = ally; c->bonus_enemy = enemy;
+    return 1;
+}
+void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap)
+{
+    unsigned n = 0; out[0] = 0;
+    if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(out + n, cap - n, "%d", c->bonus_flat);
+    if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET && n < cap) n += (unsigned)snprintf(out + n, cap - n, "%s%d per ally", n ? ", " : "", c->bonus_ally);
+    if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET && n < cap) n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy", n ? ", " : "", c->bonus_enemy);
+    if (!n) snprintf(out, cap, "none");
+}
+int psx_card_packs_has_monster_effect(const PsxCardPack *c)
+{
+    return c->battle > 0 || c->on_summon.fx >= 0 || c->on_death.fx >= 0 || c->on_attack.fx >= 0 || c->each_turn.fx >= 0 ||
+           c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET ||
+           c->immune > 0;
+}
 const char *psx_card_packs_color_name(int slot) { return (slot >= 0 && slot < PSX_CARD_COLOR_COUNT) ? COLOR_NAMES[slot] : "?"; }
 int psx_card_packs_parse_color(const char *v)
 {
@@ -695,6 +786,13 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->ritual_set = 0;
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
+    c->battle = -1;
+    c->on_summon.fx = c->on_death.fx = c->on_attack.fx = c->each_turn.fx = -1;
+    c->on_summon.amount = c->on_death.amount = c->on_attack.amount = c->each_turn.amount = -1;
+    c->on_summon.target = c->on_death.target = c->on_attack.target = c->each_turn.target = -1;
+    c->on_summon.terrain = c->on_death.terrain = c->on_attack.terrain = c->each_turn.terrain = -1;
+    c->bonus_flat = c->bonus_ally = c->bonus_enemy = PSX_CARD_PACK_BOOST_UNSET;
+    c->immune = -1;
 }
 
 int psx_card_packs_parse_effect(const char *v)
@@ -876,7 +974,7 @@ static int read_ini(int id, PsxCardPack *c)
             c->target = parse_enum(val, TYPE_NAMES, 20, 0, 0, 19);
         } else if (!strcmp(key, "terrain") || !strcmp(key, "field")) {
             c->terrain = parse_enum(val, TERRAIN_NAMES, 7, 0, 1, 6);
-        } else if (!strcmp(key, "equip_bonus") || !strcmp(key, "bonus")) {
+        } else if (!strcmp(key, "equip_bonus")) {
             const int v = atoi(val); if (v >= -9990 && v <= 9990) c->equip_bonus = v / 10 * 10;
         } else if (!strcmp(key, "equips")) {
             (void)psx_card_packs_parse_equips(val, c, NULL, 0);
@@ -888,6 +986,20 @@ static int read_ini(int id, PsxCardPack *c)
             (void)psx_card_packs_parse_ritual(val, c, NULL, 0);
         } else if (!strcmp(key, "color") || !strcmp(key, "colour") || !strcmp(key, "frame")) {
             c->color = psx_card_packs_parse_color(val);
+        } else if (!strcmp(key, "battle")) {
+            c->battle = psx_card_packs_parse_battle(val);
+        } else if (!strcmp(key, "on_summon") || !strcmp(key, "summon")) {
+            (void)psx_card_packs_parse_spec(val, &c->on_summon, NULL, 0);
+        } else if (!strcmp(key, "on_death") || !strcmp(key, "death") || !strcmp(key, "on_destroy")) {
+            (void)psx_card_packs_parse_spec(val, &c->on_death, NULL, 0);
+        } else if (!strcmp(key, "on_attack") || !strcmp(key, "attack_effect")) {
+            (void)psx_card_packs_parse_spec(val, &c->on_attack, NULL, 0);
+        } else if (!strcmp(key, "each_turn") || !strcmp(key, "turn")) {
+            (void)psx_card_packs_parse_spec(val, &c->each_turn, NULL, 0);
+        } else if (!strcmp(key, "bonus") || !strcmp(key, "field_bonus")) {
+            (void)psx_card_packs_parse_bonus(val, c, NULL, 0);
+        } else if (!strcmp(key, "immune") || !strcmp(key, "immunity")) {
+            c->immune = psx_card_packs_parse_immune(val);
         }
     }
     fclose(f);
@@ -1259,6 +1371,15 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);
+    if (c->battle >= 0)    fprintf(f, "battle = %s\n", psx_card_packs_battle_name(c->battle));
+    { char b[128];
+      if (c->on_summon.fx >= 0) { psx_card_packs_format_spec(&c->on_summon, b, sizeof b); fprintf(f, "on_summon = %s\n", b); }
+      if (c->on_death.fx >= 0)  { psx_card_packs_format_spec(&c->on_death, b, sizeof b);  fprintf(f, "on_death = %s\n", b); }
+      if (c->on_attack.fx >= 0) { psx_card_packs_format_spec(&c->on_attack, b, sizeof b); fprintf(f, "on_attack = %s\n", b); }
+      if (c->each_turn.fx >= 0) { psx_card_packs_format_spec(&c->each_turn, b, sizeof b); fprintf(f, "each_turn = %s\n", b); }
+      if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) { psx_card_packs_format_bonus(c, b, sizeof b); fprintf(f, "bonus = %s\n", b); }
+    }
+    if (c->immune >= 0)    fprintf(f, "immune = %s\n", psx_card_packs_immune_name(c->immune));
     fclose(f);
     load_pack(c->id);
     return 1;

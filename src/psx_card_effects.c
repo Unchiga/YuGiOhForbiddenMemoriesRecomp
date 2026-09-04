@@ -264,6 +264,7 @@ const char *psx_card_effects_note(int id, int type)
     if (id >= 330 && id <= 335) return "A field card: each monster type's boost while this field is up.";
     if (type == 20) return (fx_index(id) >= 0) ? "A magic card: pick what it does when played and how much."
                                                : "This card id is outside the game's magic dispatch (301-350, 651-700, 721).";
+    if (type < 20) return "Monster effects: how it fights, what it casts when summoned, destroyed, attacking or each turn, bonuses, immunities.";
     return "";
 }
 
@@ -486,22 +487,18 @@ static void tick(void)
 /* ---- the hooks ------------------------------------------------------------------ */
 /* func_80026BA4(cardId, phase): deliver an edited Magic effect through the
  * stock card that implements it. */
-static void hook_magic(struct CPUState *cpu, uint32_t address)
+/* Fill the hold for an effect and return the stock card id whose class
+ * implements it, or -1 (none, ritual: the class byte does those). */
+static int fx_prepare(int fx, int amount, int target, int terrain)
 {
-    (void)address;
-    if (!s_stock_ok) return;
-    const int id = (int)(int16_t)cpu->gpr[4];
-    const Fx *f = fx_of(id);
-    if (!f || f->cfg.effect < 0) return;
-    const PsxCardPack *c = &f->cfg;
     int proxy = -1;
     memset(&s_hold, 0, sizeof s_hold);
-    switch (c->effect) {
-    case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((c->amount >= 0 ? c->amount : 500) / 100); break;
-    case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((c->amount >= 0 ? c->amount : 500) / 10); break;
-    case PSX_CARD_FX_DESTROY_TYPE: proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = (uint8_t)(c->target >= 0 && c->target < 20 ? c->target : 3); break;
+    switch (fx) {
+    case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((amount >= 0 ? amount : 500) / 100); break;
+    case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((amount >= 0 ? amount : 500) / 10); break;
+    case PSX_CARD_FX_DESTROY_TYPE: proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = (uint8_t)(target >= 0 && target < 20 ? target : 3); break;
     case PSX_CARD_FX_DESTROY_ATK: {
-        long a = (c->amount >= 0 ? c->amount : 1500) / 10;
+        long a = (amount >= 0 ? amount : 1500) / 10;
         if (a < 21) a = 21;
         proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = clamp_u8(a); break;
     }
@@ -511,23 +508,52 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
     case PSX_CARD_FX_STOP_DEFENSE: proxy = 320; break;
     case PSX_CARD_FX_FLIP:         proxy = 350; break;
     case PSX_CARD_FX_WEAKEN: {
-        int a = (c->amount != -1) ? c->amount : 500;
+        int a = (amount != -1) ? amount : 500;
         if (a > 9999) a = 9999; if (a < -9999) a = -9999;
         proxy = 349; s_hold.malus = 0x24420000u | ((uint32_t)(-a) & 0xFFFFu); break;
     }
     case PSX_CARD_FX_SWORDS:       proxy = 348; break;
     case PSX_CARD_FX_CURSEBREAKER: proxy = 655; break;
     case PSX_CARD_FX_HARPIE:       proxy = 672; break;
-    case PSX_CARD_FX_FIELD:        proxy = 329 + (c->terrain >= 1 && c->terrain <= 6 ? c->terrain : 1); break;
-    default: break;                /* none / ritual: the class byte does it */
+    case PSX_CARD_FX_FIELD:        proxy = 329 + (terrain >= 1 && terrain <= 6 ? terrain : 1); break;
+    default: break;
     }
-    if (proxy < 0) return;
+    if (proxy < 0) return -1;
     s_hold.active = 1;
     s_hold.since = s_frame;
-    s_hold.kind = c->effect;
+    s_hold.kind = fx;
     hold_apply();
+    return proxy;
+}
+
+static void hook_magic(struct CPUState *cpu, uint32_t address)
+{
+    (void)address;
+    if (!s_stock_ok) return;
+    const int id = (int)(int16_t)cpu->gpr[4];
+    const Fx *f = fx_of(id);
+    if (!f || f->cfg.effect < 0) return;
+    const PsxCardPack *c = &f->cfg;
+    const int proxy = fx_prepare(c->effect, c->amount, c->target, c->terrain);
+    if (proxy < 0) return;
     cpu->gpr[4] = (uint32_t)proxy;
     ev(HOOK_MAGIC, id, (int)cpu->gpr[5], proxy);
+}
+
+int psx_card_effects_hold_active(void) { return s_hold.active; }
+
+int psx_card_effects_cast(int fx, int amount, int target, int terrain)
+{
+    if (!s_stock_ok) return 0;
+    const int proxy = fx_prepare(fx, amount, target, terrain);
+    if (proxy < 0) return 0;
+    /* what func_80026BA4(proxy, 1) would set */
+    const int idx = fx_index(proxy);
+    psx_mod_write_half(0x8009B1A8u, (uint16_t)idx);
+    psx_mod_write_half(0x8009B1D2u, (uint16_t)proxy);
+    psx_mod_write_half(FX_STATE, 0xC000u);
+    ev(0xC000u, fx, amount, proxy);
+    return 1;
 }
 
 /* equip_table_lookup(key, card): answer an edited equip's type list through
@@ -584,11 +610,12 @@ static void wrap_append(char *out, unsigned cap, const char *text)
     out[n] = 0;
 }
 
-int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
+#define FXCAP 512
+static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *out, unsigned cap);
+
+static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *out, unsigned cap)
 {
     char t[256]; t[0] = 0;
-    out[0] = 0;
-    if (!c) return 0;
     const int amt = c->amount;
     switch (c->effect) {
     case PSX_CARD_FX_NONE:         snprintf(t, sizeof t, "No effect."); break;
@@ -616,6 +643,13 @@ int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
     default: break;
     }
     if (t[0]) wrap_append(out, cap, t);
+}
+
+int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
+{
+    out[0] = 0;
+    if (!c) return 0;
+    psx_card_effects_describe_effect_only(c, out, cap);
     if (c->equip_bonus >= 0 || c->equips_set || c->equip_types) {
         char e[200] = "";
         if (c->equips_set || c->equip_types) {
@@ -633,13 +667,42 @@ int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap)
         char e[560]; snprintf(e, sizeof e, "Field: %s.", list);
         wrap_append(out, cap, e);
     }
+    /* monster effects */
+    {
+        static const char *const when[4] = { "When summoned", "When destroyed", "When it attacks", "Each turn" };
+        const PsxCardFxSpec *specs[4] = { &c->on_summon, &c->on_death, &c->on_attack, &c->each_turn };
+        for (int i = 0; i < 4; i++) {
+            if (specs[i]->fx < 0) continue;
+            PsxCardPack tmp; memset(&tmp, 0, sizeof tmp);
+            tmp.effect = specs[i]->fx; tmp.amount = specs[i]->amount; tmp.target = specs[i]->target; tmp.terrain = specs[i]->terrain;
+            tmp.equip_bonus = -1; tmp.trap_atk_max = -1;
+            char inner[FXCAP]; inner[0] = 0;
+            psx_card_effects_describe_effect_only(&tmp, inner, sizeof inner);
+            /* lower-case the first letter of the effect sentence and prefix the trigger */
+            for (char *q = inner; *q; q++) if (*q == '|') *q = ' ';
+            if (inner[0] >= 'A' && inner[0] <= 'Z') inner[0] = (char)(inner[0] + 32);
+            char e[FXCAP]; snprintf(e, sizeof e, "%s: %s", when[i], inner);
+            wrap_append(out, cap, e);
+        }
+        switch (c->battle) {
+        case PSX_CARD_BATTLE_INDESTRUCTIBLE: wrap_append(out, cap, "Cannot be destroyed in battle."); break;
+        case PSX_CARD_BATTLE_MUTUAL: wrap_append(out, cap, "Destroys itself and any monster it battles."); break;
+        case PSX_CARD_BATTLE_SLAYER: wrap_append(out, cap, "Destroys any monster it battles."); break;
+        default: break;
+        }
+        if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) {
+            char e[200] = ""; unsigned n = 0;
+            if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "ATK and DEF %+d on the field", c->bonus_flat);
+            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per allied monster", n ? ", " : "ATK and DEF ", c->bonus_ally);
+            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per enemy monster", n ? ", " : "ATK and DEF ", c->bonus_enemy);
+            snprintf(e + n, sizeof e - n, ".");
+            wrap_append(out, cap, e);
+        }
+        if (c->immune > 0) {
+            wrap_append(out, cap, c->immune == 3 ? "Unaffected by traps and destruction magic." : c->immune == 1 ? "Unaffected by traps." : "Unaffected by destruction magic.");
+        }
+    }
     return out[0] != 0;
-}
-
-int psx_card_effects_monster_has_effect(int id)
-{
-    (void)id;
-    return 0;   /* filled in by the monster effects layer */
 }
 
 /* ---- debug -------------------------------------------------------------------- */
