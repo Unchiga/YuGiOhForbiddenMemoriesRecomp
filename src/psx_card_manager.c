@@ -723,11 +723,23 @@ static void field_step(int f, int dir)
     enum_set(f, i);
 }
 
+/* Editing starts from what the box shows, so a stock description can be
+ * touched up rather than retyped; committing the stock text unchanged
+ * leaves the field at stock. Boxes that show a placeholder rather than a
+ * value ("stock list", "none") start empty. */
+static int field_placeholder(int f)
+{
+    if (f == F_EQUIPS && !field_is_set(f)) return 1;
+    if (f == F_MBONUS && !field_is_set(f)) return 1;
+    if (f == F_PASSWORD && !field_is_set(f) && !s_stock.password[0]) return 1;
+    return 0;
+}
+
 static void focus_begin(int f)
 {
     s_focus = f;
-    if (field_is_set(f)) field_text(f, 0, s_buf, sizeof s_buf);
-    else s_buf[0] = 0;
+    if (field_placeholder(f)) s_buf[0] = 0;
+    else field_text(f, 0, s_buf, sizeof s_buf);
     s_dirty = 1;
 }
 
@@ -738,6 +750,11 @@ static void focus_commit(void)
     s_dirty = 1;
     if (f < 0) return;
     if (!s_buf[0]) { field_clear(f); return; }
+    if (!is_param(f)) {
+        /* the stock text, unchanged: nothing to keep */
+        char st[FTEXT]; field_text(f, 1, st, sizeof st);
+        if (!strcmp(st, s_buf)) { if (field_is_set(f)) field_clear(f); return; }
+    }
     const int v = atoi(s_buf);
     switch (f) {
     case F_NAME: snprintf(s_edit.name, sizeof s_edit.name, "%s", s_buf); break;
