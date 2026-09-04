@@ -688,9 +688,9 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
     }
     /* monster effects */
     {
-        static const char *const when[4] = { "When summoned", "When destroyed", "When it attacks", "Each turn" };
-        const PsxCardFxSpec *specs[4] = { &c->on_summon, &c->on_death, &c->on_attack, &c->each_turn };
-        for (int i = 0; i < 4; i++) {
+        static const char *const when[5] = { "When summoned face-up", "When destroyed", "When it attacks", "Each turn", "When flipped face-up" };
+        const PsxCardFxSpec *specs[5] = { &c->on_summon, &c->on_death, &c->on_attack, &c->each_turn, &c->on_flip };
+        for (int i = 0; i < 5; i++) {
             if (specs[i]->fx < 0) continue;
             PsxCardPack tmp; memset(&tmp, 0, sizeof tmp);
             tmp.effect = specs[i]->fx; tmp.amount = specs[i]->amount; tmp.target = specs[i]->target; tmp.terrain = specs[i]->terrain;

@@ -64,7 +64,7 @@ typedef struct {
 
     /* ---- monster effects (see psx_monster_effects.c) ---------------------- */
     int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
-    PsxCardFxSpec on_summon, on_death, on_attack, each_turn;   /* fx = -1 = none */
+    PsxCardFxSpec on_summon, on_death, on_attack, each_turn, on_flip;   /* fx = -1 = none */
     int  bonus_flat, bonus_ally, bonus_enemy;   /* ATK/DEF while on the field; PSX_CARD_PACK_BOOST_UNSET */
     int  immune;                          /* -1 unset; bit 1 traps, bit 2 magic destruction */
 } PsxCardPack;

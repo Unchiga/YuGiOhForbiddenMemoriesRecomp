@@ -354,7 +354,7 @@ void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap)
 }
 int psx_card_packs_has_monster_effect(const PsxCardPack *c)
 {
-    return c->battle > 0 || c->on_summon.fx >= 0 || c->on_death.fx >= 0 || c->on_attack.fx >= 0 || c->each_turn.fx >= 0 ||
+    return c->battle > 0 || c->on_summon.fx >= 0 || c->on_death.fx >= 0 || c->on_attack.fx >= 0 || c->each_turn.fx >= 0 || c->on_flip.fx >= 0 ||
            c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET ||
            c->immune > 0;
 }
@@ -788,10 +788,10 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
     c->battle = -1;
-    c->on_summon.fx = c->on_death.fx = c->on_attack.fx = c->each_turn.fx = -1;
-    c->on_summon.amount = c->on_death.amount = c->on_attack.amount = c->each_turn.amount = -1;
-    c->on_summon.target = c->on_death.target = c->on_attack.target = c->each_turn.target = -1;
-    c->on_summon.terrain = c->on_death.terrain = c->on_attack.terrain = c->each_turn.terrain = -1;
+    c->on_summon.fx = c->on_death.fx = c->on_attack.fx = c->each_turn.fx = c->on_flip.fx = -1;
+    c->on_summon.amount = c->on_death.amount = c->on_attack.amount = c->each_turn.amount = c->on_flip.amount = -1;
+    c->on_summon.target = c->on_death.target = c->on_attack.target = c->each_turn.target = c->on_flip.target = -1;
+    c->on_summon.terrain = c->on_death.terrain = c->on_attack.terrain = c->each_turn.terrain = c->on_flip.terrain = -1;
     c->bonus_flat = c->bonus_ally = c->bonus_enemy = PSX_CARD_PACK_BOOST_UNSET;
     c->immune = -1;
 }
@@ -998,6 +998,8 @@ static int read_ini(int id, PsxCardPack *c)
             (void)psx_card_packs_parse_spec(val, &c->on_attack, NULL, 0);
         } else if (!strcmp(key, "each_turn") || !strcmp(key, "turn")) {
             (void)psx_card_packs_parse_spec(val, &c->each_turn, NULL, 0);
+        } else if (!strcmp(key, "on_flip") || !strcmp(key, "flip")) {
+            (void)psx_card_packs_parse_spec(val, &c->on_flip, NULL, 0);
         } else if (!strcmp(key, "bonus") || !strcmp(key, "field_bonus")) {
             (void)psx_card_packs_parse_bonus(val, c, NULL, 0);
         } else if (!strcmp(key, "immune") || !strcmp(key, "immunity")) {
@@ -1379,6 +1381,7 @@ int psx_card_packs_save(const PsxCardPack *c)
       if (c->on_death.fx >= 0)  { psx_card_packs_format_spec(&c->on_death, b, sizeof b);  fprintf(f, "on_death = %s\n", b); }
       if (c->on_attack.fx >= 0) { psx_card_packs_format_spec(&c->on_attack, b, sizeof b); fprintf(f, "on_attack = %s\n", b); }
       if (c->each_turn.fx >= 0) { psx_card_packs_format_spec(&c->each_turn, b, sizeof b); fprintf(f, "each_turn = %s\n", b); }
+      if (c->on_flip.fx >= 0)   { psx_card_packs_format_spec(&c->on_flip, b, sizeof b);   fprintf(f, "on_flip = %s\n", b); }
       if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) { psx_card_packs_format_bonus(c, b, sizeof b); fprintf(f, "bonus = %s\n", b); }
     }
     if (c->immune >= 0)    fprintf(f, "immune = %s\n", psx_card_packs_immune_name(c->immune));

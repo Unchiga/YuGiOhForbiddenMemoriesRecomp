@@ -119,14 +119,14 @@ static int  s_sb_drag, s_sb_grab;
 /* --- editor ---------------------------------------------------------------- */
 enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR,
        F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_TRAP_MAX,
-       F_BATTLE, F_ON_SUMMON, F_ON_SUMMON_P, F_ON_DEATH, F_ON_DEATH_P, F_ON_ATTACK, F_ON_ATTACK_P, F_EACH_TURN, F_EACH_TURN_P,
+       F_BATTLE, F_ON_SUMMON, F_ON_SUMMON_P, F_ON_FLIP, F_ON_FLIP_P, F_ON_DEATH, F_ON_DEATH_P, F_ON_ATTACK, F_ON_ATTACK_P, F_EACH_TURN, F_EACH_TURN_P,
        F_MBONUS, F_IMMUNE, F_COUNT };
 #define F_FX_FIRST F_EFFECT
 #define F_COL2_FIRST F_BATTLE          /* monster effects sit in a second column */
 static const char *const FIELD_LABEL[F_COUNT] = {
     "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame",
     "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max",
-    "In battle", "On summon", "", "On death", "", "On attack", "", "Each turn", "", "Bonus", "Immune to"
+    "In battle", "On summon", "", "On flip", "", "On death", "", "On attack", "", "Each turn", "", "Bonus", "Immune to"
 };
 enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT, B_EXPORT, B_IMPORT, B_COUNT };
 static const char *const BTN_LABEL[B_COUNT] = { "Save", "Restore stock", "Open folder", "Pick art\xE2\x80\xA6", "Pick thumbnail\xE2\x80\xA6", "Pick title\xE2\x80\xA6",
@@ -193,14 +193,15 @@ static PsxCardFxSpec *trig_spec(int f)
 {
     switch (f) {
     case F_ON_SUMMON: case F_ON_SUMMON_P: return &s_edit.on_summon;
+    case F_ON_FLIP:   case F_ON_FLIP_P:   return &s_edit.on_flip;
     case F_ON_DEATH:  case F_ON_DEATH_P:  return &s_edit.on_death;
     case F_ON_ATTACK: case F_ON_ATTACK_P: return &s_edit.on_attack;
     case F_EACH_TURN: case F_EACH_TURN_P: return &s_edit.each_turn;
     default: return NULL;
     }
 }
-static int is_trig(int f)  { return f == F_ON_SUMMON || f == F_ON_DEATH || f == F_ON_ATTACK || f == F_EACH_TURN; }
-static int is_param(int f) { return f == F_ON_SUMMON_P || f == F_ON_DEATH_P || f == F_ON_ATTACK_P || f == F_EACH_TURN_P; }
+static int is_trig(int f)  { return f == F_ON_SUMMON || f == F_ON_FLIP || f == F_ON_DEATH || f == F_ON_ATTACK || f == F_EACH_TURN; }
+static int is_param(int f) { return f == F_ON_SUMMON_P || f == F_ON_FLIP_P || f == F_ON_DEATH_P || f == F_ON_ATTACK_P || f == F_EACH_TURN_P; }
 /* what a trigger's parameter box holds: 'a' amount, 't' monster type, 'f' field, 0 nothing */
 static int param_kind(int f)
 {
@@ -342,8 +343,8 @@ static int field_applies(int f)
     case F_EQUIP_BONUS: case F_EQUIPS: return t == 23;
     case F_BOOST:   return s_sel >= 330 && s_sel <= 335;
     case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686;
-    case F_BATTLE: case F_ON_SUMMON: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: case F_MBONUS: case F_IMMUNE: return is_monster();
-    case F_ON_SUMMON_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: return is_monster() && param_kind(f) != 0;
+    case F_BATTLE: case F_ON_SUMMON: case F_ON_FLIP: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: case F_MBONUS: case F_IMMUNE: return is_monster();
+    case F_ON_SUMMON_P: case F_ON_FLIP_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: return is_monster() && param_kind(f) != 0;
     default: return 1;
     }
 }
@@ -608,8 +609,8 @@ static int field_is_set(int f)
     case F_BOOST: return s_edit.boost_set;
     case F_TRAP_MAX: return s_edit.trap_atk_max >= 0;
     case F_BATTLE: return s_edit.battle >= 0;
-    case F_ON_SUMMON: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: return trig_spec(f)->fx >= 0;
-    case F_ON_SUMMON_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
+    case F_ON_SUMMON: case F_ON_FLIP: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: return trig_spec(f)->fx >= 0;
+    case F_ON_SUMMON_P: case F_ON_FLIP_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
         const PsxCardFxSpec *sp = trig_spec(f); const int k = param_kind(f);
         return k == 'a' ? sp->amount != -1 : k == 't' ? sp->target >= 0 : k == 'f' ? sp->terrain >= 1 : 0;
     }
@@ -644,8 +645,8 @@ static void field_clear(int f)
     case F_BOOST: s_edit.boost_set = 0; for (int t = 0; t < 20; t++) s_edit.boost[t] = PSX_CARD_PACK_BOOST_UNSET; break;
     case F_TRAP_MAX: s_edit.trap_atk_max = -1; break;
     case F_BATTLE: s_edit.battle = -1; break;
-    case F_ON_SUMMON: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: trig_spec(f)->fx = -1; break;
-    case F_ON_SUMMON_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
+    case F_ON_SUMMON: case F_ON_FLIP: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: trig_spec(f)->fx = -1; break;
+    case F_ON_SUMMON_P: case F_ON_FLIP_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
         PsxCardFxSpec *sp = trig_spec(f); const int k = param_kind(f);
         if (k == 'a') sp->amount = -1; else if (k == 't') sp->target = -1; else sp->terrain = -1;
         break;
@@ -701,8 +702,8 @@ static void field_text(int f, int stock, char *out, size_t cap)
         break;
     case F_TRAP_MAX: snprintf(out, cap, "%d", set ? s_edit.trap_atk_max : s_stock.trap_atk_max); break;
     case F_BATTLE: snprintf(out, cap, "%s", BATTLE_LABEL[set ? s_edit.battle : 0]); break;
-    case F_ON_SUMMON: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: snprintf(out, cap, "%s", (set && !stock) ? enum_label(f, enum_current_index(f)) : "Nothing"); break;
-    case F_ON_SUMMON_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
+    case F_ON_SUMMON: case F_ON_FLIP: case F_ON_DEATH: case F_ON_ATTACK: case F_EACH_TURN: snprintf(out, cap, "%s", (set && !stock) ? enum_label(f, enum_current_index(f)) : "Nothing"); break;
+    case F_ON_SUMMON_P: case F_ON_FLIP_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
         const PsxCardFxSpec *sp = trig_spec(f); const int k = param_kind(f);
         if (k == 'a') snprintf(out, cap, "%d", sp->amount != -1 ? sp->amount : (sp->fx == PSX_CARD_FX_DESTROY_ATK ? 1500 : 500));
         else snprintf(out, cap, "%s", enum_label(f, enum_current_index(f)));
@@ -784,7 +785,7 @@ static void focus_commit(void)
     case F_RITUAL: { char err[96]; if (!psx_card_packs_parse_ritual(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
     case F_EQUIPS: { char err[96]; if (!psx_card_packs_parse_equips(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
     case F_BOOST:  { char err[96]; if (!psx_card_packs_parse_boost(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
-    case F_ON_SUMMON_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
+    case F_ON_SUMMON_P: case F_ON_FLIP_P: case F_ON_DEATH_P: case F_ON_ATTACK_P: case F_EACH_TURN_P: {
         PsxCardFxSpec *sp = trig_spec(f);
         if (param_kind(f) != 'a') return;
         const int e = sp->fx;
@@ -813,7 +814,7 @@ static void do_save(void)
     if (!field_applies(F_EQUIPS)) { s_edit.equip_bonus = -1; s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; }
     if (!field_applies(F_BOOST))  s_edit.boost_set = 0;
     if (!field_applies(F_TRAP_MAX)) s_edit.trap_atk_max = -1;
-    if (!field_applies(F_BATTLE)) { s_edit.battle = -1; s_edit.on_summon.fx = s_edit.on_death.fx = s_edit.on_attack.fx = s_edit.each_turn.fx = -1; s_edit.bonus_flat = s_edit.bonus_ally = s_edit.bonus_enemy = PSX_CARD_PACK_BOOST_UNSET; s_edit.immune = -1; }
+    if (!field_applies(F_BATTLE)) { s_edit.battle = -1; s_edit.on_summon.fx = s_edit.on_flip.fx = s_edit.on_death.fx = s_edit.on_attack.fx = s_edit.each_turn.fx = -1; s_edit.bonus_flat = s_edit.bonus_ally = s_edit.bonus_enemy = PSX_CARD_PACK_BOOST_UNSET; s_edit.immune = -1; }
     int any = 0;
     for (int f = 0; f < F_COUNT; f++) any |= field_is_set(f);
     if (!any && !s_edit.has_art && !s_edit.has_thumb && !s_edit.has_title) {
@@ -1684,8 +1685,8 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         s_w, s_h, s_u, s_msg, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
         t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20],
         s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal);
-    if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "\"monster\":{\"battle\":\"%s\",\"on_summon\":\"%s\",\"on_summon_p\":\"%s\",\"on_death\":\"%s\",\"on_death_p\":\"%s\",\"on_attack\":\"%s\",\"on_attack_p\":\"%s\",\"each_turn\":\"%s\",\"each_turn_p\":\"%s\",\"bonus\":\"%s\",\"immune\":\"%s\"},\"drop\":%d",
-                                         t[F_BATTLE], t[F_ON_SUMMON], t[F_ON_SUMMON_P], t[F_ON_DEATH], t[F_ON_DEATH_P], t[F_ON_ATTACK], t[F_ON_ATTACK_P], t[F_EACH_TURN], t[F_EACH_TURN_P], t[F_MBONUS], t[F_IMMUNE], s_drop);
+    if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "\"monster\":{\"battle\":\"%s\",\"on_summon\":\"%s\",\"on_summon_p\":\"%s\",\"on_flip\":\"%s\",\"on_flip_p\":\"%s\",\"on_death\":\"%s\",\"on_death_p\":\"%s\",\"on_attack\":\"%s\",\"on_attack_p\":\"%s\",\"each_turn\":\"%s\",\"each_turn_p\":\"%s\",\"bonus\":\"%s\",\"immune\":\"%s\"},\"drop\":%d",
+                                         t[F_BATTLE], t[F_ON_SUMMON], t[F_ON_SUMMON_P], t[F_ON_FLIP], t[F_ON_FLIP_P], t[F_ON_DEATH], t[F_ON_DEATH_P], t[F_ON_ATTACK], t[F_ON_ATTACK_P], t[F_EACH_TURN], t[F_EACH_TURN_P], t[F_MBONUS], t[F_IMMUNE], s_drop);
     if (s_win && n < cap) {
         n += (unsigned)snprintf(out + n, cap - n, ",\"rows\":[%d,%d,%d,%d],\"row_h\":%d,\"visible\":%d,\"sb\":[%d,%d,%d,%d],\"value\":[",
                                 s_L.list_rows.x, s_L.list_rows.y, s_L.list_rows.w, s_L.list_rows.h, s_L.row_h, s_L.rows,

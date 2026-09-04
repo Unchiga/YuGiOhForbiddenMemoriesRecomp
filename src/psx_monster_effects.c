@@ -13,6 +13,11 @@
  *   writes the rows to destroy to gp+0x300/0x301 and action 11 destroys
  *   them after the scene; that action's entry hook rewrites the two bytes
  *   from the same decision.
+ * FACE-DOWN: a monster set face-down (row flag 0x1000) has no effect: its
+ *   summon trigger is simply lost (on_flip is the trigger for being turned
+ *   face-up: attacked, flipped by the player, revealed by a spell), and its
+ *   bonus and each-turn effect count only while face-up. Battle kinds and
+ *   on_death still apply, since a battle turns it over first.
  * TRIGGERS (on_summon / on_death / on_attack / each_turn) queue a cast.
  *   A cast runs a magic effect class through the game's own per-frame
  *   effect driver (psx_card_effects_cast) the moment the duel is idle
@@ -100,6 +105,7 @@ static Battle s_bat;
 
 typedef struct { int id, applied; } Bonus;
 static Bonus s_bonus[30];
+static int   s_facedown[30];      /* card id of a monster set face-down in this row (its flip is still to come) */
 static uint8_t s_turn_last[2];
 static int s_in_duel;
 
@@ -237,11 +243,16 @@ static void bonus_tick(void)
         const unsigned fl = row_flags(row);
         const int id = row_id(row);
         Bonus *b = &s_bonus[row];
-        if (fl == 0 || id != b->id) { b->id = id; b->applied = 0; }
+        if (fl == 0 || id != b->id) { b->id = id; b->applied = 0; s_facedown[row] = 0; }
         if (!(fl & 0x8000u)) continue;
         const Mfx *m = mfx(id);
+        /* turned face-up (flipped by the player, attacked, revealed): the flip trigger */
+        if (s_facedown[row] == id && !(fl & 0x1000u)) {
+            s_facedown[row] = 0;
+            if (m && m->cfg.on_flip.fx >= 0) { ev("flip", id, row, side_of_row(row)); enqueue(side_of_row(row), id, &m->cfg.on_flip); }
+        }
         int want = 0;
-        if (m) {
+        if (m && !(fl & 0x1000u)) {
             const PsxCardPack *c = &m->cfg;
             const int s = side_of_row(row);
             if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_flat;
@@ -267,7 +278,8 @@ static void turn_tick(void)
         if (!s_in_duel) continue;
         for (int r = 5; r <= 9; r++) {
             const int row = 15 * s + r;
-            if (!(row_flags(row) & 0x8000u)) continue;
+            const unsigned fl = row_flags(row);
+            if (!(fl & 0x8000u) || (fl & 0x1000u)) continue;     /* on the field and face-up */
             const Mfx *m = mfx(row_id(row));
             if (m && m->cfg.each_turn.fx >= 0) enqueue(s, row_id(row), &m->cfg.each_turn);
         }
@@ -286,7 +298,7 @@ static void tick(void)
     }
     const int in_duel = psx_mod_read_byte(MODE_BYTE) == 0xC3 && psx_card_db_ready();
     if (!in_duel) {
-        if (s_in_duel) { s_in_duel = 0; s_qh = s_qt = 0; s_casting = 0; s_flipped = 0; memset(&s_bat, 0, sizeof s_bat); memset(s_bonus, 0, sizeof s_bonus); }
+        if (s_in_duel) { s_in_duel = 0; s_qh = s_qt = 0; s_casting = 0; s_flipped = 0; memset(&s_bat, 0, sizeof s_bat); memset(s_bonus, 0, sizeof s_bonus); memset(s_facedown, 0, sizeof s_facedown); }
         /* the 3D battle scene is mode 1: keep the pending path-A decision */
         if (psx_mod_read_byte(MODE_BYTE) != 1) { s_turn_last[0] = psx_mod_read_byte(SIDES + 1u); s_turn_last[1] = psx_mod_read_byte(SIDES + 0x21u); }
         return;
@@ -310,8 +322,11 @@ static void hook_summon(struct CPUState *cpu, uint32_t address)
     if (row == last_row && id == last_id) return;
     last_row = row; last_id = id;
     const Mfx *m = mfx(id);
-    ev("summon", id, row, playing_side());
-    if (m && is_monster_row(row) && m->cfg.on_summon.fx >= 0) enqueue(side_of_row(row), id, &m->cfg.on_summon);
+    const int facedown = (row_flags(row) & 0x1000u) != 0;
+    ev("summon", id, row, facedown ? 2 : playing_side());
+    if (!is_monster_row(row)) return;
+    if (facedown) { s_facedown[row] = id; return; }      /* set face-down: the summon effect is forfeited */
+    if (m && m->cfg.on_summon.fx >= 0) enqueue(side_of_row(row), id, &m->cfg.on_summon);
 }
 
 static int battle_kind(int id) { const Mfx *m = mfx(id); return (m && m->cfg.battle > 0) ? m->cfg.battle : 0; }

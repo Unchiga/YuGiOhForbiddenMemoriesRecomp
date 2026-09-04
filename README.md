@@ -236,13 +236,17 @@ same `card.ini` (and the manager's right-hand column):
 battle    = indestructible      never destroyed in battle (its owner still takes the damage)
             mutual              destroys itself and whatever it battles
             slayer              destroys whatever it battles
-on_summon = damage 1000         cast a magic effect when it lands
+on_summon = damage 1000         cast a magic effect when it lands face-up (set face-down, it is lost)
+on_flip   = raigeki             ... when it is turned face-up: attacked, flipped, revealed
 on_death  = raigeki             ... when it is destroyed (battle, trap or magic)
 on_attack = heal 500            ... when it declares an attack
 each_turn = damage 200          ... at the start of its owner's turn, while on the field
 bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field
 immune    = traps, magic        traps never fire on it; destruction magic passes it by
 ```
+
+A face-down monster has no effect: its bonus and each-turn effect start
+when it is turned over.
 
 The cast effects are the same list a Magic card can be given (`heal`,
 `damage`, `destroy_type Dragon`, `destroy_atk 1500`, `raigeki`, `dark_hole`,
