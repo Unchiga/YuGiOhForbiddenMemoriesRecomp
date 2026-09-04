@@ -6,7 +6,12 @@ letters, the CARD DROPS "New!" label, and the game's own text font. They are
 derived from the disc exactly the way generated/ is derived from the EXE, so
 they are build output, not source, and nothing here is committed or shipped.
 
-    disc_assets.py <disc.bin> <out_dir> [--check]
+    disc_assets.py <disc.cue|disc.bin|disc.iso> <out_dir> [--check]
+
+The disc argument is whatever the setup wizard recorded: a .cue (resolved to
+the .bin its data track names), a raw .bin, or a cooked .iso. disc_image.py
+owns that resolution and the sector layout, so this tool only ever sees a
+user-data stream.
 
 WHY THIS EXISTS RATHER THAN sprite_extract.py / font_extract.py
 ---------------------------------------------------------------
@@ -29,8 +34,8 @@ WHERE the bytes come from, never when they are read.
 
 THE MANIFEST
 ------------
-Offsets are into the disc's reassembled user-data stream (the image is raw
-2352-byte Mode 2 sectors; only 2048 bytes of each carry data). Every texture
+Offsets are into the disc's reassembled user-data stream (2048 bytes of user
+data per sector, whatever the dump's sector size is). Every texture
 blob on this disc uploads as a 64-word-wide rect, so a region's rows sit 128
 bytes apart; single-row regions are contiguous. Each entry was located by
 searching for the snapshot's own bytes and confirmed by requiring EVERY row of
@@ -47,8 +52,9 @@ import json
 import os
 import sys
 
+from disc_image import open_disc
+
 VRAM_W, VRAM_H = 1024, 512
-SEC, UD_OFF, UD_LEN = 2352, 24, 2048
 STRIDE = 128          # 64-word-wide upload rect
 
 # name -> x, y (VRAM 16-bit words), w (words), h (rows), disc stream offset
@@ -158,22 +164,6 @@ NEWTAG = dict(x=232 + 704 * 4, y=104, w=24, h=8, bpp=4, clut=(656, 250))
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def read_stream(f, off, n):
-    """Read n bytes at an offset into the reassembled user-data stream."""
-    out = bytearray()
-    sec, pos = divmod(off, UD_LEN)
-    while len(out) < n:
-        f.seek(sec * SEC + UD_OFF + pos)
-        take = min(UD_LEN - pos, n - len(out))
-        chunk = f.read(take)
-        if not chunk:
-            raise SystemExit('disc ended early at stream offset %d' % off)
-        out += chunk
-        sec += 1
-        pos = 0
-    return bytes(out)
-
-
 def build_vram(disc_path):
     """Reassemble every manifest region into a synthetic VRAM page.
 
@@ -182,14 +172,15 @@ def build_vram(disc_path):
     which both the icons and the digits read and which is one blob on disc.
     """
     vram = bytearray(VRAM_W * VRAM_H * 2)
-    with open(disc_path, 'rb') as f:
+    with open_disc(disc_path) as disc:
+        print('disc_assets: reading %s (%s)' % (disc.path, disc.layout))
         for name, r in MANIFEST.items():
             nbytes = r['w'] * 2
             # Most blobs upload as a 64-word-wide rect, so their rows sit
             # STRIDE (128) bytes apart. A wider upload sets its own.
             stride = r.get('stride', STRIDE)
             for row in range(r['h']):
-                src = read_stream(f, r['off'] + row * stride, nbytes)
+                src = disc.read(r['off'] + row * stride, nbytes)
                 dst = ((r['y'] + row) * VRAM_W + r['x']) * 2
                 vram[dst:dst + nbytes] = src
     return bytes(vram)

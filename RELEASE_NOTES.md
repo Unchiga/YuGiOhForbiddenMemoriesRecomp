@@ -1,5 +1,66 @@
 # Release notes
 
+## 0.5.3
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
+
+### Fixed: build failed with "disc ended early at stream offset 32518144"
+
+If you picked the **.cue** file at first setup, the build stopped with two
+lines reading `disc ended early at stream offset 32518144` and then
+`Build failed. Fix the errors above, then rebuild manually.` Picking the .bin
+instead worked, which is why that advice went around.
+
+The setup accepts either file and the game itself prefers the .cue, but the
+two steps that bake the rank sprites, the game font and the drop tables from
+your disc read whatever was recorded as a raw image -- and a .cue is a
+97-byte text file. They now resolve a .cue to the .bin it names (also when
+the .bin was renamed or the dump is multi-track), and read a cooked .iso
+correctly too. Either pick builds the same game, byte for byte.
+
+A file that is not a disc at all is refused up front with a message naming
+the file and what to pick instead, rather than a read that runs off its end.
+
+### Fixed: "psxrecomp generate failed (exit 1)" after picking a renamed .cue
+
+A .cue names its .bin inside the file. Rename both files and the .cue still
+names the old .bin, so picking it stopped first-run setup at generate with
+nothing more than "exit 1". The game itself already tolerated that by
+mounting the .bin beside the .cue; setup now does the same, and so does the
+step that checks your disc before generate. If the .bin really is missing,
+the dialog now says which file the .cue is looking for instead of "exit 1".
+
+The setup dialog now repeats the reason the generate step gave for any
+failure, not just this one.
+
+### New: Reset-Setup.bat
+
+Double-click it inside the game folder to put an install back to "freshly
+extracted": it removes the generated game code, the built game, the
+remembered disc and BIOS picks, and optionally the downloaded build tools,
+then the first-run setup runs again. Your disc image and your saves are
+never touched. For anyone whose install is stuck no matter what they try.
+
+### Changed: first-run setup no longer asks for a BIOS
+
+This game ships with OpenBIOS built in and has only ever been tested with
+it. The setup wizard used to offer an optional retail BIOS step anyway, and
+would quietly adopt a SCPH1001 dump it found near the install. Both are
+gone: setup asks for your disc and nothing else, the launcher has no BIOS
+row, and a retail dump is never used even if one is present.
+
+### Fixed: Steam Deck build stopped at "Could NOT find OpenGL"
+
+On SteamOS the first-run build failed at the configure step with
+`Could NOT find OpenGL (missing: OPENGL_INCLUDE_DIR)`. SteamOS ships the
+OpenGL libraries but strips the headers, and CMake's OpenGL finder treats
+the header directory as required even though nothing in this game reads
+it -- the renderer and the launcher use SDL's own GL headers and load
+everything newer than GL 1.1 at run time. The build now notices a host
+with libraries but no headers and links the library directly. Nothing
+changes on a machine that has the headers.
+
 ## 0.5.1
 
 Extract this over your existing install as usual. Your saves, save states and
