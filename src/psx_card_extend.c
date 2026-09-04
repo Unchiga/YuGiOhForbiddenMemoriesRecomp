@@ -461,6 +461,16 @@ static void card_extend_tick(void)
     s_active = 1;
 }
 
+uint32_t psx_card_extend_stats_base(void)
+{
+    return s_active ? STATS_NEW : STATS_STOCK;
+}
+
+uint32_t psx_card_extend_aux_base(void)
+{
+    return s_active ? AUX_NEW : AUX_STOCK;
+}
+
 uint32_t psx_card_extend_count(void)
 {
     return s_active ? (uint32_t)EXT_COUNT : STOCK_COUNT;

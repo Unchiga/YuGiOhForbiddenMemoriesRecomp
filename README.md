@@ -151,6 +151,44 @@ just long enough for the capture to finish, then **reverts itself**: the
 moment the last portrait is stored, the flags it set are cleared again and
 your save is bit-for-bit what your campaign earned.
 
+### 🎨 Card Manager — `VIEW → CARD MANAGER`
+
+Change any of the 722 cards: **name, description, face art, duel thumbnail,
+ATK, DEF, both Guardian Stars, type, level, attribute, price and password**.
+The change shows up **everywhere the card is drawn** — the Library page, the
+chest's TRIANGLE viewer, the deck-edit list, the password screen and the duel
+itself — because it is applied where the game reads, not where it draws.
+
+An edited card is a folder in your player-data:
+
+```
+cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
+                        description = Text with|a line break   (| = new line; no | = wrapped at 20)
+                        attack = 4500        defense = 3800
+                        star1 = Sun          star2 = Mars
+                        type = Dragon        level = 12      attribute = Light
+                        price = 999999       password = 12345678
+cards/<id>/art.png      any size — becomes the 102x96 / 256-colour card face
+cards/<id>/thumb.png    optional; the 40x32 / 64-colour duel card, made from art.png when absent
+cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
+```
+
+Every key is optional and a missing one keeps the stock value, so a card that
+only changes its art keeps its numbers. **Folders are watched**: edit a file,
+or drop a new folder in, and the game picks it up within seconds — the next
+screen that draws the card shows the change. Nothing on your disc image or in
+your save is touched; the mod serves replacement disc sectors and table
+entries to the running game, and removing the folder restores stock.
+
+The **Card Manager** window is the front end for that: pick a card, see the
+face and thumbnail exactly as the game will stream them, type new values
+(green = your edit, `x` = back to stock), step through stars, types and
+attributes, `Pick art…` to install a PNG, `Open folder` to get at the files,
+`Save` to write `card.ini` and apply it, `Restore stock` to undo the card.
+Titles are rasterised in the game's own style (Times New Roman Bold, 12 px,
+squeezed for long names) when a `timesbd.ttf` sits in `cards/`; without one,
+a plain bitmap font is used.
+
 ### 🛒 Card shop — `MODS → CARD SHOP`
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)

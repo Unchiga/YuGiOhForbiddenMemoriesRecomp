@@ -15,6 +15,14 @@ void psx_card_extend_init(void);
  * new ids get into the trunk. */
 uint32_t psx_card_extend_count(void);
 
+/* The per-card tables the game is reading RIGHT NOW: the stock EXE tables,
+ * or the relocated copies once the extension has repointed the readers. A
+ * mod that edits a card's stats word or level/attribute byte writes through
+ * these so the edit lands where the game looks. stats: u32 at base+(id-1)*4;
+ * aux: u8 at base+id (the game indexes this one by id, not id-1). */
+uint32_t psx_card_extend_stats_base(void);
+uint32_t psx_card_extend_aux_base(void);
+
 /* First and last id this mod adds (inclusive). Ids below FIRST are stock.
  *
  * PSX_CARD_EXT_LAST is THE count parameter for the whole extension: the card

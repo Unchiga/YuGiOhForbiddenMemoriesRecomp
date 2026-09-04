@@ -86,8 +86,6 @@ static int s_ts = 2;
 /* --- canvas -------------------------------------------------------------- */
 
 static SDL_Window   *s_win;
-static SDL_Renderer *s_ren;
-static SDL_Texture  *s_tex;
 static uint32_t     *s_px;
 static int           s_w, s_h;
 static int           s_dirty = 1;
@@ -1776,19 +1774,53 @@ static int on_event(const void *evp)
 
 /* --- window lifecycle ---------------------------------------------------- */
 
+static SDL_Renderer *s_ren;
+static SDL_Texture  *s_tex;
+/* The game's own GL window/context, captured when the tool window opens (the
+ * emulation thread owns it, and that is the thread we run on). Every SDL
+ * renderer call on the tool window can make ITS context current, and the
+ * game's next GL call would then run against the wrong one: black game
+ * window, then a driver fault at present. So after any renderer work the
+ * game's context is put back. This SDL3/Wayland build has no plain window
+ * framebuffer, so a renderer is the only way to show pixels at all. */
+static SDL_Window   *s_gl_win;
+static SDL_GLContext s_gl_ctx;
+
+static void gl_capture(void)
+{
+    s_gl_win = SDL_GL_GetCurrentWindow();
+    s_gl_ctx = SDL_GL_GetCurrentContext();
+}
+static void gl_restore(void)
+{
+    if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx)
+        SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
+}
+
 static int ensure_canvas(int w, int h)
 {
     if (w == s_w && h == s_h && s_px && s_tex) return 1;
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     free(s_px);
     s_px = (uint32_t *)malloc((size_t)w * (size_t)h * 4u);
-    if (!s_px) { s_w = s_h = 0; return 0; }
-    s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888,
-                              SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!s_px) { s_w = s_h = 0; gl_restore(); return 0; }
+    s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+    gl_restore();
     if (!s_tex) { free(s_px); s_px = NULL; s_w = s_h = 0; return 0; }
     s_w = w; s_h = h;
     s_dirty = 1;
     return 1;
+}
+
+/* Upload + present, then give the GL context back to the game. */
+static void present_canvas(void)
+{
+    if (!s_ren || !s_tex) return;
+    SDL_UpdateTexture(s_tex, NULL, s_px, s_w * 4);
+    SDL_RenderClear(s_ren);
+    SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
+    SDL_RenderPresent(s_ren);
+    gl_restore();
 }
 
 void psx_drop_viewer_open(void)
@@ -1798,8 +1830,10 @@ void psx_drop_viewer_open(void)
                              SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                              WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
     if (!s_win) { host_osd_push("Drop viewer: no window", 2000); return; }
+    gl_capture();
     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
     if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
+    gl_restore();
     if (!s_ren) {
         SDL_DestroyWindow(s_win); s_win = NULL;
         host_osd_push("Drop viewer: no renderer", 2000);
@@ -1815,6 +1849,7 @@ void psx_drop_viewer_close(void)
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
     if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    gl_restore();
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
     s_hover_pane = s_hover_row = -1;
@@ -1894,12 +1929,9 @@ static void tick(void)
     }
     if (s_dirty) {
         draw();
-        SDL_UpdateTexture(s_tex, NULL, s_px, s_w * 4);
         s_dirty = 0;
+        present_canvas();
     }
-    SDL_RenderClear(s_ren);
-    SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
-    SDL_RenderPresent(s_ren);
 }
 
 /* --- the row ------------------------------------------------------------- */

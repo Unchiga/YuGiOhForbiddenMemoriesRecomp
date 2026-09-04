@@ -31,6 +31,8 @@
 #include "psx_duelist_icon_cache.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
+#include "psx_card_manager.h"
+#include "psx_card_packs.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -285,6 +287,90 @@ static void handle_drop_missing_state(int id, const char *json)
         send_err(id, "state unavailable"); return;
     }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* card_packs — which cards are replaced and how. */
+static void handle_card_packs(int id, const char *json)
+{
+    (void)json;
+    char buf[8192];
+    if (!psx_card_packs_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* card_packs_reload — re-read one pack (card) or all (no card). */
+static void handle_card_packs_reload(int id, const char *json)
+{
+    psx_card_packs_reload(json_get_int(json, "card", 0));
+    handle_card_packs(id, json);
+}
+
+/* card_manager — the Card Manager window: state, open/select/search,
+ * synthetic clicks and typing, and a canvas dump (binary PPM). */
+static void handle_card_manager(int id, const char *json)
+{
+    (void)json;
+    char buf[4096];
+    psx_card_manager_state_json(buf, sizeof buf);
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+static void handle_card_manager_set(int id, const char *json)
+{
+    const int open = json_get_int(json, "open", -1);
+    if (open >= 0) psx_card_manager_request_open(open);
+    const int card = json_get_int(json, "card", -1);
+    if (card > 0) psx_card_manager_select(card);
+    char search[32];
+    if (json_get_str(json, "search", search, sizeof search)) psx_card_manager_search(search);
+    handle_card_manager(id, json);
+}
+static void handle_card_manager_click(int id, const char *json)
+{
+    if (!psx_card_manager_click(json_get_int(json, "x", 0), json_get_int(json, "y", 0), json_get_int(json, "button", 1))) {
+        send_err(id, "manager is closed"); return;
+    }
+    send_ok(id);
+}
+static void handle_card_manager_move(int id, const char *json)
+{
+    const int down = json_get_int(json, "down", -1);
+    int ok;
+    if (down >= 0) ok = psx_card_manager_button(json_get_int(json, "x", 0), json_get_int(json, "y", 0), json_get_int(json, "button", 1), down);
+    else ok = psx_card_manager_move(json_get_int(json, "x", 0), json_get_int(json, "y", 0));
+    if (!ok) { send_err(id, "manager is closed"); return; }
+    send_ok(id);
+}
+static void handle_card_manager_type(int id, const char *json)
+{
+    char text[64];
+    if (!json_get_str(json, "text", text, sizeof text)) { send_err(id, "missing text"); return; }
+    if (!psx_card_manager_type(text)) { send_err(id, "manager is closed"); return; }
+    send_ok(id);
+}
+static void handle_card_manager_key(int id, const char *json)
+{
+    /* key: return, escape, backspace, tab, up, down, pageup, pagedown */
+    char name[16];
+    if (!json_get_str(json, "key", name, sizeof name)) { send_err(id, "missing key"); return; }
+    int k = 0;
+    if (!strcmp(name, "return")) k = 13;
+    else if (!strcmp(name, "escape")) k = 27;
+    else if (!strcmp(name, "backspace")) k = 8;
+    else if (!strcmp(name, "tab")) k = 9;
+    else if (!strcmp(name, "up")) k = 0x40000052;
+    else if (!strcmp(name, "down")) k = 0x40000051;
+    else if (!strcmp(name, "pageup")) k = 0x4000004B;
+    else if (!strcmp(name, "pagedown")) k = 0x4000004E;
+    if (!k) { send_err(id, "unknown key"); return; }
+    if (!psx_card_manager_key(k)) { send_err(id, "manager is closed"); return; }
+    send_ok(id);
+}
+static void handle_card_manager_shot(int id, const char *json)
+{
+    char path[1024];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "missing path"); return; }
+    if (!psx_card_manager_shot(path)) { send_err(id, "manager is closed"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
 /* drop_viewer — what the second window is showing. The window is a host
@@ -672,6 +758,15 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);
+    (void)psx_debug_add_command("card_packs",         handle_card_packs);
+    (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
+    (void)psx_debug_add_command("card_manager",       handle_card_manager);
+    (void)psx_debug_add_command("card_manager_set",   handle_card_manager_set);
+    (void)psx_debug_add_command("card_manager_click", handle_card_manager_click);
+    (void)psx_debug_add_command("card_manager_type",  handle_card_manager_type);
+    (void)psx_debug_add_command("card_manager_move",  handle_card_manager_move);
+    (void)psx_debug_add_command("card_manager_key",   handle_card_manager_key);
+    (void)psx_debug_add_command("card_manager_shot",  handle_card_manager_shot);
     (void)psx_debug_add_command("drop_viewer_press", handle_drop_viewer_press);
     (void)psx_debug_add_command("drop_viewer_release",
                                 handle_drop_viewer_release);
