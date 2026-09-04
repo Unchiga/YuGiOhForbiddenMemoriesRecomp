@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.5.3 (unreleased)
+## 0.5.3
 
 Extract this over your existing install as usual. Your saves, save states and
 settings all carry over.
