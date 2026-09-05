@@ -255,13 +255,13 @@ static const char *const STAR_NAMES[11] = {
 static const char *const FX_NAMES[PSX_CARD_FX_COUNT] = {
     "none", "heal", "damage", "destroy_type", "destroy_atk", "raigeki", "dark_hole", "dragon_jar",
     "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual",
-    "destroy_strongest", "lose_lp", "coin_lp", "gamble"
+    "destroy_strongest", "lose_lp", "coin_lp", "gamble", "destroy_own"
 };
 static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
     "No effect", "Heal LP", "Damage LP", "Destroy a type", "Destroy by ATK", "Destroy all monsters (Raigeki)",
     "Destroy everything (Dark Hole)", "Destroy Dragons", "Stop Defense", "Flip face-down monsters",
     "Weaken opponent's monsters", "Swords of Revealing Light", "Cursebreaker", "Destroy magic/trap zone (Harpie)",
-    "Change the field", "Ritual summon", "Destroy the strongest monster", "Lose LP yourself", "Coin flip: tails, lose half your LP", "Coin flip (Time Wizard)"
+    "Change the field", "Ritual summon", "Destroy the strongest monster", "Lose LP yourself", "Coin flip: tails, lose half your LP", "Coin flip (Time Wizard)", "Destroy your own monsters"
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
 static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
@@ -325,6 +325,58 @@ int psx_card_packs_parse_spec(const char *v, PsxCardFxSpec *out, char *err, unsi
     }
     return 1;
 }
+int psx_card_packs_parse_trigger(const char *v, PsxCardTrigger *out, char *err, unsigned errcap)
+{
+    PsxCardTrigger t; memset(&t, 0, sizeof t);
+    char buf[512]; snprintf(buf, sizeof buf, "%s", v);
+    char *p = buf;
+    while (*p && t.n < PSX_CARD_BRANCHES) {
+        char *semi = strchr(p, ';');
+        if (semi) *semi = 0;
+        while (*p == ' ') p++;
+        char *rest = p;
+        PsxCardFxBranch *b = &t.b[t.n];
+        b->chance = 100; b->is_else = 0;
+        if (!strncmp(rest, "else", 4)) { b->is_else = 1; rest += 4; }
+        else if (*rest >= '0' && *rest <= '9') {
+            char *q = rest; const int c = (int)strtol(rest, &q, 10);
+            if (*q == '%') { q++; if (c >= 1 && c <= 100) b->chance = c; rest = q; }
+        }
+        while (*rest == ' ') rest++;
+        if (*rest == ':') rest++;
+        while (*rest == ' ') rest++;
+        if (*rest) {
+            PsxCardFxSpec sp;
+            if (!strcmp(rest, "none") || !strcmp(rest, "nothing")) { /* an explicit empty branch */ }
+            else {
+                if (!psx_card_packs_parse_spec(rest, &sp, err, errcap)) return 0;
+                b->fx = sp.fx; b->amount = sp.amount; b->target = sp.target; b->terrain = sp.terrain;
+                if (t.n == 0) b->is_else = 0;
+                t.n++;
+            }
+        }
+        if (!semi) break;
+        p = semi + 1;
+    }
+    *out = t;
+    return 1;
+}
+
+void psx_card_packs_format_trigger(const PsxCardTrigger *t, char *out, unsigned cap)
+{
+    unsigned n = 0; out[0] = 0;
+    if (!t || t->n <= 0) { snprintf(out, cap, "none"); return; }
+    for (int i = 0; i < t->n && n + 4 < cap; i++) {
+        const PsxCardFxBranch *b = &t->b[i];
+        PsxCardFxSpec sp = { b->fx, b->amount, b->target, b->terrain };
+        char e[128]; psx_card_packs_format_spec(&sp, e, sizeof e);
+        if (i) n += (unsigned)snprintf(out + n, cap - n, "; ");
+        if (b->is_else) n += (unsigned)snprintf(out + n, cap - n, "else: ");
+        else if (b->chance < 100) n += (unsigned)snprintf(out + n, cap - n, "%d%%: ", b->chance);
+        n += (unsigned)snprintf(out + n, cap - n, "%s", e);
+    }
+}
+
 void psx_card_packs_format_spec(const PsxCardFxSpec *f, char *out, unsigned cap)
 {
     if (!f || f->fx < 0) { snprintf(out, cap, "none"); return; }
@@ -404,7 +456,7 @@ void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap)
 }
 int psx_card_packs_has_monster_effect(const PsxCardPack *c)
 {
-    return c->battle > 0 || c->on_summon.fx >= 0 || c->on_death.fx >= 0 || c->on_attack.fx >= 0 || c->each_turn.fx >= 0 || c->on_flip.fx >= 0 ||
+    return c->battle > 0 || c->on_summon.n > 0 || c->on_death.n > 0 || c->on_attack.n > 0 || c->each_turn.n > 0 || c->on_flip.n > 0 ||
            c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET ||
            c->immune > 0;
 }
@@ -841,10 +893,9 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
     c->battle = -1;
-    c->on_summon.fx = c->on_death.fx = c->on_attack.fx = c->each_turn.fx = c->on_flip.fx = -1;
-    c->on_summon.amount = c->on_death.amount = c->on_attack.amount = c->each_turn.amount = c->on_flip.amount = -1;
-    c->on_summon.target = c->on_death.target = c->on_attack.target = c->each_turn.target = c->on_flip.target = -1;
-    c->on_summon.terrain = c->on_death.terrain = c->on_attack.terrain = c->each_turn.terrain = c->on_flip.terrain = -1;
+    memset(&c->on_summon, 0, sizeof c->on_summon); memset(&c->on_flip, 0, sizeof c->on_flip);
+    memset(&c->on_death, 0, sizeof c->on_death);   memset(&c->on_attack, 0, sizeof c->on_attack);
+    memset(&c->each_turn, 0, sizeof c->each_turn);
     c->bonus_flat = c->bonus_ally = c->bonus_enemy = PSX_CARD_PACK_BOOST_UNSET;
     c->bonus_ally_filter = c->bonus_enemy_filter = 0;
     c->immune = -1;
@@ -1050,15 +1101,15 @@ static int read_ini(int id, PsxCardPack *c)
         } else if (!strcmp(key, "battle")) {
             c->battle = psx_card_packs_parse_battle(val);
         } else if (!strcmp(key, "on_summon") || !strcmp(key, "summon")) {
-            (void)psx_card_packs_parse_spec(val, &c->on_summon, NULL, 0);
+            (void)psx_card_packs_parse_trigger(val, &c->on_summon, NULL, 0);
         } else if (!strcmp(key, "on_death") || !strcmp(key, "death") || !strcmp(key, "on_destroy")) {
-            (void)psx_card_packs_parse_spec(val, &c->on_death, NULL, 0);
+            (void)psx_card_packs_parse_trigger(val, &c->on_death, NULL, 0);
         } else if (!strcmp(key, "on_attack") || !strcmp(key, "attack_effect")) {
-            (void)psx_card_packs_parse_spec(val, &c->on_attack, NULL, 0);
+            (void)psx_card_packs_parse_trigger(val, &c->on_attack, NULL, 0);
         } else if (!strcmp(key, "each_turn") || !strcmp(key, "turn")) {
-            (void)psx_card_packs_parse_spec(val, &c->each_turn, NULL, 0);
+            (void)psx_card_packs_parse_trigger(val, &c->each_turn, NULL, 0);
         } else if (!strcmp(key, "on_flip") || !strcmp(key, "flip")) {
-            (void)psx_card_packs_parse_spec(val, &c->on_flip, NULL, 0);
+            (void)psx_card_packs_parse_trigger(val, &c->on_flip, NULL, 0);
         } else if (!strcmp(key, "bonus") || !strcmp(key, "field_bonus")) {
             (void)psx_card_packs_parse_bonus(val, c, NULL, 0);
         } else if (!strcmp(key, "immune") || !strcmp(key, "immunity")) {
@@ -1435,12 +1486,12 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);
     if (c->battle >= 0)    fprintf(f, "battle = %s\n", psx_card_packs_battle_name(c->battle));
-    { char b[128];
-      if (c->on_summon.fx >= 0) { psx_card_packs_format_spec(&c->on_summon, b, sizeof b); fprintf(f, "on_summon = %s\n", b); }
-      if (c->on_death.fx >= 0)  { psx_card_packs_format_spec(&c->on_death, b, sizeof b);  fprintf(f, "on_death = %s\n", b); }
-      if (c->on_attack.fx >= 0) { psx_card_packs_format_spec(&c->on_attack, b, sizeof b); fprintf(f, "on_attack = %s\n", b); }
-      if (c->each_turn.fx >= 0) { psx_card_packs_format_spec(&c->each_turn, b, sizeof b); fprintf(f, "each_turn = %s\n", b); }
-      if (c->on_flip.fx >= 0)   { psx_card_packs_format_spec(&c->on_flip, b, sizeof b);   fprintf(f, "on_flip = %s\n", b); }
+    { char b[512];
+      if (c->on_summon.n) { psx_card_packs_format_trigger(&c->on_summon, b, sizeof b); fprintf(f, "on_summon = %s\n", b); }
+      if (c->on_flip.n)   { psx_card_packs_format_trigger(&c->on_flip, b, sizeof b);   fprintf(f, "on_flip = %s\n", b); }
+      if (c->on_death.n)  { psx_card_packs_format_trigger(&c->on_death, b, sizeof b);  fprintf(f, "on_death = %s\n", b); }
+      if (c->on_attack.n) { psx_card_packs_format_trigger(&c->on_attack, b, sizeof b); fprintf(f, "on_attack = %s\n", b); }
+      if (c->each_turn.n) { psx_card_packs_format_trigger(&c->each_turn, b, sizeof b); fprintf(f, "each_turn = %s\n", b); }
       if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) { psx_card_packs_format_bonus(c, b, sizeof b); fprintf(f, "bonus = %s\n", b); }
     }
     if (c->immune >= 0)    fprintf(f, "immune = %s\n", psx_card_packs_immune_name(c->immune));

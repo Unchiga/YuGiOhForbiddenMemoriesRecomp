@@ -724,6 +724,7 @@ static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *ou
     case PSX_CARD_FX_DESTROY_STRONGEST: snprintf(t, sizeof t, "Destroys the opponent's strongest monster."); break;
     case PSX_CARD_FX_LOSE_LP: snprintf(t, sizeof t, "You lose %d LP.", amt >= 0 ? amt : 500); break;
     case PSX_CARD_FX_GAMBLE_LP: snprintf(t, sizeof t, "Flip a coin. Tails: you lose half your LP."); break;
+    case PSX_CARD_FX_DESTROY_OWN: snprintf(t, sizeof t, "Destroys all your own monsters."); break;
     default: break;
     }
     if (t[0]) wrap_append(out, cap, t);
@@ -768,19 +769,27 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
     }
     /* monster effects */
     {
-        static const char *const when[5] = { "When summoned face-up", "When destroyed", "When it attacks", "Each turn", "When flipped face-up" };
-        const PsxCardFxSpec *specs[5] = { &c->on_summon, &c->on_death, &c->on_attack, &c->each_turn, &c->on_flip };
+        static const char *const when[5] = { "When summoned face-up", "When flipped face-up", "When destroyed", "When it attacks", "Each turn" };
+        const PsxCardTrigger *trigs[5] = { &c->on_summon, &c->on_flip, &c->on_death, &c->on_attack, &c->each_turn };
         for (int i = 0; i < 5; i++) {
-            if (specs[i]->fx < 0) continue;
-            PsxCardPack tmp; memset(&tmp, 0, sizeof tmp);
-            tmp.effect = specs[i]->fx; tmp.amount = specs[i]->amount; tmp.target = specs[i]->target; tmp.terrain = specs[i]->terrain;
-            tmp.equip_bonus = -1; tmp.trap_atk_max = -1;
-            char inner[FXCAP]; inner[0] = 0;
-            psx_card_effects_describe_effect_only(&tmp, inner, sizeof inner);
-            /* lower-case the first letter of the effect sentence and prefix the trigger */
-            for (char *q = inner; *q; q++) if (*q == '|') *q = ' ';
-            if (inner[0] >= 'A' && inner[0] <= 'Z') inner[0] = (char)(inner[0] + 32);
-            char e[FXCAP]; snprintf(e, sizeof e, "%s: %s", when[i], inner);
+            if (trigs[i]->n <= 0) continue;
+            char e[FXCAP * 2]; unsigned n = (unsigned)snprintf(e, sizeof e, "%s", when[i]);
+            for (int k = 0; k < trigs[i]->n; k++) {
+                const PsxCardFxBranch *b = &trigs[i]->b[k];
+                PsxCardPack tmp; memset(&tmp, 0, sizeof tmp);
+                tmp.effect = b->fx; tmp.amount = b->amount; tmp.target = b->target; tmp.terrain = b->terrain;
+                tmp.equip_bonus = -1; tmp.trap_atk_max = -1;
+                char inner[FXCAP]; inner[0] = 0;
+                psx_card_effects_describe_effect_only(&tmp, inner, sizeof inner);
+                for (char *q = inner; *q; q++) if (*q == '|') *q = ' ';
+                if (inner[0] >= 'A' && inner[0] <= 'Z') inner[0] = (char)(inner[0] + 32);
+                { size_t l = strlen(inner); while (l && (inner[l - 1] == '.' || inner[l - 1] == ' ')) inner[--l] = 0; }
+                const char *lead = b->is_else ? "; otherwise" : (b->chance < 100 ? (k ? "; also" : "") : (k ? "; also" : ""));
+                if (b->is_else) n += (unsigned)snprintf(e + n, sizeof e - n, "%s: %s", lead, inner);
+                else if (b->chance < 100) n += (unsigned)snprintf(e + n, sizeof e - n, "%s, %d%% of the time: %s", lead, b->chance, inner);
+                else n += (unsigned)snprintf(e + n, sizeof e - n, "%s: %s", lead, inner);
+            }
+            if (n + 1 < sizeof e) { e[n++] = '.'; e[n] = 0; }
             wrap_append(out, cap, e);
         }
         switch (c->battle) {

@@ -26,8 +26,11 @@ def field(): return [(r[0], r[1], r[4]) for r in board() if 5 <= r[0] < 10]
 def opp(): return [(r[0], r[1], r[4]) for r in board() if 20 <= r[0] < 25]
 def goto(slot):
     for _ in range(slot): p.press('right', 6, 0.8)
-def summon(slot):
-    goto(slot); p.press('cross', 6, 1.5); p.press('cross', 6, 3.0); p.press('cross', 6, 3.0); p.press('cross', 6, 5.0)
+def summon(slot, face_up=True):
+    # X raises the card; LEFT/RIGHT turns it face up (user tip 2026-09-04); X, slot, X, guardian star, X
+    goto(slot); p.press('cross', 6, 1.5)
+    if face_up: p.press('right', 6, 1.0)
+    p.press('cross', 6, 3.0); p.press('cross', 6, 3.0); p.press('cross', 6, 5.0)
 def set_magic(slot):
     goto(slot); p.press('cross', 6, 1.5); p.press('cross', 6, 2.0); p.press('down', 6, 1.0); p.press('cross', 6, 10.0)
 def end_turn():

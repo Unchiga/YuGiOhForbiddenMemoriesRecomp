@@ -161,15 +161,31 @@ static void gamble(int side, int card)
     ev("coin_tails", card, side, total);
 }
 
-static void enqueue(int side, int card, const PsxCardFxSpec *sp)
+static void enqueue_fx(int side, int card, int fx, int amount, int target, int terrain)
 {
-    if (!sp || sp->fx < 0 || sp->fx == PSX_CARD_FX_RITUAL || sp->fx == PSX_CARD_FX_NONE) return;
-    if (sp->fx == PSX_CARD_FX_GAMBLE) { gamble(side, card); return; }
-    if (((s_qt + 1) % 24) == s_qh) return;
-    Cast *c = &s_q[s_qt]; s_qt = (s_qt + 1) % 24;
-    c->side = side; c->card = card; c->fx = sp->fx; c->amount = sp->amount; c->target = sp->target; c->terrain = sp->terrain;
-    ev("queue", card, sp->fx, side);
+    if (fx < 0 || fx == PSX_CARD_FX_RITUAL || fx == PSX_CARD_FX_NONE) return;
+    if (fx == PSX_CARD_FX_GAMBLE) { gamble(side, card); return; }
+    if (fx == PSX_CARD_FX_DESTROY_OWN) { enqueue_raw(side ^ 1, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); return; }
+    enqueue_raw(side, card, fx, amount, target, terrain);
 }
+
+/* A trigger's branches in order: every plain branch rolls its own chance,
+ * an "else" branch fires only when the branch before it did not. */
+static void enqueue(int side, int card, const PsxCardTrigger *t)
+{
+    if (!t || t->n <= 0) return;
+    int prev_failed = 0;
+    for (int k = 0; k < t->n && k < PSX_CARD_BRANCHES; k++) {
+        const PsxCardFxBranch *b = &t->b[k];
+        int fire;
+        if (b->is_else) fire = prev_failed;
+        else { const int roll = (int)(((unsigned)rand() ^ s_frame) % 100u); fire = roll < b->chance; }
+        ev("branch", card, k, fire);
+        if (fire) enqueue_fx(side, card, b->fx, b->amount, b->target, b->terrain);
+        prev_failed = !fire;
+    }
+}
+
 
 static void rebuild(void)
 {
@@ -285,7 +301,7 @@ static void bonus_tick(void)
         /* turned face-up (flipped by the player, attacked, revealed): the flip trigger */
         if (s_facedown[row] == id && !(fl & 0x1000u)) {
             s_facedown[row] = 0;
-            if (m && m->cfg.on_flip.fx >= 0) { ev("flip", id, row, side_of_row(row)); enqueue(side_of_row(row), id, &m->cfg.on_flip); }
+            if (m && m->cfg.on_flip.n > 0) { ev("flip", id, row, side_of_row(row)); enqueue(side_of_row(row), id, &m->cfg.on_flip); }
         }
         int want = 0;
         if (m && !(fl & 0x1000u)) {
@@ -317,7 +333,7 @@ static void turn_tick(void)
             const unsigned fl = row_flags(row);
             if (!(fl & 0x8000u) || (fl & 0x1000u)) continue;     /* on the field and face-up */
             const Mfx *m = mfx(row_id(row));
-            if (m && m->cfg.each_turn.fx >= 0) enqueue(s, row_id(row), &m->cfg.each_turn);
+            if (m && m->cfg.each_turn.n > 0) enqueue(s, row_id(row), &m->cfg.each_turn);
         }
     }
 }
@@ -362,7 +378,7 @@ static void hook_summon(struct CPUState *cpu, uint32_t address)
     ev("summon", id, row, facedown ? 2 : playing_side());
     if (!is_monster_row(row)) return;
     if (facedown) { s_facedown[row] = id; return; }      /* set face-down: the summon effect is forfeited */
-    if (m && m->cfg.on_summon.fx >= 0) enqueue(side_of_row(row), id, &m->cfg.on_summon);
+    if (m && m->cfg.on_summon.n > 0) enqueue(side_of_row(row), id, &m->cfg.on_summon);
 }
 
 static int battle_kind(int id) { const Mfx *m = mfx(id); return (m && m->cfg.battle > 0) ? m->cfg.battle : 0; }
@@ -382,7 +398,7 @@ static void hook_attack(struct CPUState *cpu, uint32_t address)
         s_bat.did = s_bat.drow >= 0 ? row_id(s_bat.drow) : 0;
         ev("attack", s_bat.aid, s_bat.did, playing_side());
         const Mfx *m = mfx(s_bat.aid);
-        if (m && m->cfg.on_attack.fx >= 0) enqueue(playing_side(), s_bat.aid, &m->cfg.on_attack);
+        if (m && m->cfg.on_attack.n > 0) enqueue(playing_side(), s_bat.aid, &m->cfg.on_attack);
         return;
     }
     if (s_bat.decided) return;
@@ -393,7 +409,7 @@ static void hook_attack(struct CPUState *cpu, uint32_t address)
         if (trap && trap != 690) {
             s_bat.decided = 1; s_bat.a_dead = 1;
             const Mfx *m = mfx(s_bat.aid);
-            if (m && m->cfg.on_death.fx >= 0) enqueue(playing_side(), s_bat.aid, &m->cfg.on_death);
+            if (m && m->cfg.on_death.n > 0) enqueue(playing_side(), s_bat.aid, &m->cfg.on_death);
             ev("trapped", s_bat.aid, trap, 0);
         }
         return;
@@ -419,8 +435,8 @@ static void hook_attack(struct CPUState *cpu, uint32_t address)
     ev("battle", a_out * 10 + (a_dead ? 1 : 0), d_out * 10 + (d_dead ? 1 : 0), s_bat.pathA);
     const int side = playing_side();
     const Mfx *ma = mfx(s_bat.aid), *md = s_bat.drow >= 0 ? mfx(s_bat.did) : NULL;
-    if (a_dead && ma && ma->cfg.on_death.fx >= 0) enqueue(side, s_bat.aid, &ma->cfg.on_death);
-    if (d_dead && md && md->cfg.on_death.fx >= 0) enqueue(side ^ 1, s_bat.did, &md->cfg.on_death);
+    if (a_dead && ma && ma->cfg.on_death.n > 0) enqueue(side, s_bat.aid, &ma->cfg.on_death);
+    if (d_dead && md && md->cfg.on_death.n > 0) enqueue(side ^ 1, s_bat.did, &md->cfg.on_death);
 }
 
 static void hook_action11(struct CPUState *cpu, uint32_t address)
@@ -467,7 +483,7 @@ static void hook_destroy(struct CPUState *cpu, uint32_t address)
         ev("magic_immune", id, row, 0);
         return;
     }
-    if ((fl & 0x8000u) && m->cfg.on_death.fx >= 0) enqueue(side_of_row(row), id, &m->cfg.on_death);
+    if ((fl & 0x8000u) && m->cfg.on_death.n > 0) enqueue(side_of_row(row), id, &m->cfg.on_death);
 }
 
 /* The frame an effect finishes, the driver returns 0 and the action machine

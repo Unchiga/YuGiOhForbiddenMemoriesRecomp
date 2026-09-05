@@ -32,6 +32,13 @@ const char *psx_card_packs_filter_name(int filter, int enemy);
 /* One triggered effect: a magic effect class and its number. */
 typedef struct { int fx, amount, target, terrain; } PsxCardFxSpec;
 
+/* A trigger holds up to four branches, tried in order: each rolls its own
+ * chance (100 = always), and an "else" branch fires only when the branch
+ * before it did not. "50%: raigeki; else: destroy_own" is Time Wizard. */
+#define PSX_CARD_BRANCHES 4
+typedef struct { int chance; int is_else; int fx, amount, target, terrain; } PsxCardFxBranch;
+typedef struct { int n; PsxCardFxBranch b[PSX_CARD_BRANCHES]; } PsxCardTrigger;
+
 /* Everything a pack can set. A field left at its "unset" value (-1, or an
  * empty name) keeps the stock value; that is how a pack that only changes
  * the art leaves the numbers alone. */
@@ -70,7 +77,7 @@ typedef struct {
 
     /* ---- monster effects (see psx_monster_effects.c) ---------------------- */
     int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
-    PsxCardFxSpec on_summon, on_death, on_attack, each_turn, on_flip;   /* fx = -1 = none */
+    PsxCardTrigger on_summon, on_flip, on_death, on_attack, each_turn;  /* n = 0 = none */
     int  bonus_flat, bonus_ally, bonus_enemy;   /* ATK/DEF while on the field; PSX_CARD_PACK_BOOST_UNSET */
     int  bonus_ally_filter, bonus_enemy_filter; /* which monsters count: 0 any, 1..722 that card, PSX_CARD_PACK_FILTER_TYPE+t that type */
     int  immune;                          /* -1 unset; bit 1 traps, bit 2 magic destruction */
@@ -84,6 +91,9 @@ int  psx_card_packs_parse_battle(const char *v);
 /* "damage 1000", "destroy_type Dragon", "field Yami", "raigeki", "none" */
 int  psx_card_packs_parse_spec(const char *v, PsxCardFxSpec *out, char *err, unsigned errcap);
 void psx_card_packs_format_spec(const PsxCardFxSpec *f, char *out, unsigned cap);
+/* "50%: raigeki; else: destroy_own; 25%: damage 500" */
+int  psx_card_packs_parse_trigger(const char *v, PsxCardTrigger *out, char *err, unsigned errcap);
+void psx_card_packs_format_trigger(const PsxCardTrigger *t, char *out, unsigned cap);
 /* "500, 200 per ally, 100 per enemy" */
 int  psx_card_packs_parse_bonus(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap);
@@ -132,6 +142,7 @@ enum {
     PSX_CARD_FX_GAMBLE_LP,        /* Jirai Gumo's coin: tails, the owner loses half their LP */
     PSX_CARD_FX_GAMBLE,           /* Time Wizard's coin: heads destroys the opponent's monsters, tails your own
                                      and their total ATK comes off your LP (monster triggers only) */
+    PSX_CARD_FX_DESTROY_OWN,      /* destroy all of the owner's own monsters (monster triggers only) */
     PSX_CARD_FX_COUNT
 };
 const char *psx_card_packs_effect_name(int fx);      /* ini spelling */
