@@ -364,6 +364,13 @@ static void handle_dialogue(int id, const char *json)
     if (!psx_dialogue_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
+static void handle_dialogue_export_raw(int id, const char *json)
+{
+    char path[1024], msg[512];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    const int ok = psx_dialogue_export_raw(path, msg, sizeof msg);
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+}
 static void handle_dialogue_export(int id, const char *json)
 {
     char path[1024], msg[512];
@@ -915,6 +922,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_texts_export", handle_card_texts_export);
     (void)psx_debug_add_command("card_texts_import", handle_card_texts_import);
     (void)psx_debug_add_command("dialogue",          handle_dialogue);
+    (void)psx_debug_add_command("dialogue_export_raw", handle_dialogue_export_raw);
     (void)psx_debug_add_command("dialogue_export",   handle_dialogue_export);
     (void)psx_debug_add_command("dialogue_import",   handle_dialogue_import);
     (void)psx_debug_add_command("dialogue_clear",    handle_dialogue_clear);

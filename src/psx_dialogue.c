@@ -178,6 +178,7 @@ typedef struct {
     int      ptr_pos[MAX_PTRS]; uint16_t ptr_val[MAX_PTRS];
     int      locked;                  /* holds runtime-written bytes: never relocated */
     char    *cur_text;
+    char    *plain_stock, *plain_cur; /* the readable forms, see "plain text" below */
     uint32_t reloc;                   /* guest address of the copy */
 } Run;
 
@@ -504,6 +505,175 @@ static int encode_text(const char *text, uint8_t *enc, int cap, Mark *marks, int
     return n;
 }
 
+/* ---- plain text: what translators see ---------------------------------------------
+ * The raw form above is byte-exact but unreadable. The plain form hides the
+ * control codes behind small numbered markers: "{1}", "{2}"... in the order
+ * they occur in the ORIGINAL text ("{name}" for the player's name), a page
+ * break is a blank line and a line break a line break. Importing maps the
+ * markers back to the original codes, then wraps what does not fit the box:
+ * a line past PSX_DIALOGUE_COLS breaks at a space, a page past
+ * PSX_DIALOGUE_LINES lines is split into more pages. */
+#define NAME_INSERT "{FC @125A}"
+
+static int run_is_story(const Run *r)
+{
+    if (r->nids == 0) return 1;                       /* reached by jumps from story texts */
+    for (int k = 0; k < r->nids; k++) if (r->ids[k] >= 0x400) return 1;
+    return 0;
+}
+
+/* the "{...}" groups of a raw text, page breaks left out */
+static int raw_codes(const char *raw, char ***out)
+{
+    int n = 0, cap = 0;
+    char **codes = NULL;
+    for (const char *p = raw; *p;) {
+        if (*p != '{') { p++; continue; }
+        const char *e = strchr(p, '}');
+        if (!e) break;
+        const size_t l = (size_t)(e - p) + 1;
+        if (!(l == 4 && !strncmp(p, "{FA}", 4))) {
+            if (n == cap) { cap = cap ? cap * 2 : 16; codes = (char **)realloc(codes, sizeof(char *) * (size_t)cap); }
+            codes[n] = (char *)malloc(l + 1); memcpy(codes[n], p, l); codes[n][l] = 0; n++;
+        }
+        p = e + 1;
+    }
+    *out = codes;
+    return n;
+}
+static void free_codes(char **codes, int n) { for (int i = 0; i < n; i++) free(codes[i]); free(codes); }
+
+static char *plain_from_raw(const char *raw)
+{
+    size_t cap = strlen(raw) + 64, len = 0;
+    char *out = (char *)malloc(cap);
+    out[0] = 0;
+    int k = 0;
+    char tmp[16];
+    for (const char *p = raw; *p;) {
+        if (*p == '{') {
+            const char *e = strchr(p, '}');
+            if (!e) { cat(&out, &len, &cap, p); break; }
+            const size_t l = (size_t)(e - p) + 1;
+            if (l == 4 && !strncmp(p, "{FA}", 4)) cat(&out, &len, &cap, "\n\n");
+            else {
+                k++;
+                if (l == strlen(NAME_INSERT) && !strncmp(p, NAME_INSERT, l)) cat(&out, &len, &cap, "{name}");
+                else { snprintf(tmp, sizeof tmp, "{%d}", k); cat(&out, &len, &cap, tmp); }
+            }
+            p = e + 1;
+            continue;
+        }
+        const char one[2] = { *p, 0 };
+        cat(&out, &len, &cap, one);
+        p++;
+    }
+    return out;
+}
+
+/* one visible character or one "{marker}" of a plain line */
+static size_t plain_token(const char *p, int *width)
+{
+    if (*p == '{') { const char *e = strchr(p, '}'); *width = 0; return e ? (size_t)(e - p) + 1 : 1; }
+    int cl = 0;
+    const int code = psx_dialogue_encode_char(p, &cl);
+    *width = 1;
+    if (code >= 0 && cl > 0) return (size_t)cl;
+    /* an unknown character: step over the whole UTF-8 sequence, encode_text will name it */
+    size_t l = 1; while ((p[l] & 0xC0) == 0x80) l++;
+    return l;
+}
+
+/* Wrap one line into `lines` (each a malloc'd string); returns how many. */
+static int wrap_line(const char *line, char **lines, int max)
+{
+    int n = 0;
+    const char *p = line;
+    while (*p && n < max) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *q = p, *last_space = NULL; int w = 0;
+        while (*q) {
+            int tw = 0; const size_t tl = plain_token(q, &tw);
+            if (w + tw > PSX_DIALOGUE_COLS) break;
+            if (*q == ' ') last_space = q;
+            w += tw; q += tl;
+        }
+        const char *end = q;
+        if (*q) {
+            /* the line runs on: break at the last space that fits, else mid-word */
+            if (last_space && last_space > p) end = last_space;
+            /* markers right after the break stay with the text before it */
+            while (*end == '{') { const char *e = strchr(end, '}'); if (!e) break; end = e + 1; }
+        } else end = q;
+        size_t l = (size_t)(end - p);
+        while (l && p[l - 1] == ' ') l--;
+        lines[n] = (char *)malloc(l + 1); memcpy(lines[n], p, l); lines[n][l] = 0; n++;
+        p = end;
+    }
+    if (!n) { lines[0] = strdup(""); n = 1; }
+    return n;
+}
+
+/* plain -> raw for one run; NULL with the reason in err */
+static char *raw_from_plain(const Run *r, const char *plain, char *err, unsigned errcap)
+{
+    char **codes = NULL;
+    const int ncodes = raw_codes(r->stock_text, &codes);
+    /* pages of lines */
+    enum { MAXL = 256 };
+    char *lines[MAXL]; int page_of[MAXL]; int nl = 0, page = 0, blank = 1;
+    for (const char *p = plain; *p;) {
+        const char *e = strchr(p, '\n');
+        size_t l = e ? (size_t)(e - p) : strlen(p);
+        char buf[1024];
+        if (l >= sizeof buf) l = sizeof buf - 1;
+        memcpy(buf, p, l); buf[l] = 0;
+        if (l && buf[l - 1] == '\r') buf[--l] = 0;
+        p += (e ? (size_t)(e - p) + 1 : strlen(p));
+        if (!l) { if (!blank) { page++; blank = 1; } continue; }
+        blank = 0;
+        char *w[16];
+        const int k = wrap_line(buf, w, 16);
+        for (int i = 0; i < k; i++) { if (nl < MAXL) { lines[nl] = w[i]; page_of[nl] = page; nl++; } else free(w[i]); }
+    }
+    /* pages that do not fit are split */
+    size_t cap = strlen(plain) * 2 + 256, len = 0;
+    char *out = (char *)malloc(cap); out[0] = 0;
+    int cur_page = -1, in_page = 0, mark = 0;
+    for (int i = 0; i < nl; i++) {
+        if (page_of[i] != cur_page || in_page >= PSX_DIALOGUE_LINES) {
+            if (cur_page >= 0) cat(&out, &len, &cap, "{FA}");
+            cur_page = page_of[i]; in_page = 0;
+        } else cat(&out, &len, &cap, "\n");
+        in_page++;
+        /* markers back to codes */
+        for (const char *q = lines[i]; *q;) {
+            if (*q == '{') {
+                const char *e = strchr(q, '}');
+                if (!e) { snprintf(err, errcap, "'{' without a closing '}'"); goto fail; }
+                if (!strncmp(q, "{name}", 6)) { cat(&out, &len, &cap, NAME_INSERT); q = e + 1; continue; }
+                char *z = NULL; const long v = strtol(q + 1, &z, 10);
+                if (z != e || v < 1 || v > ncodes) { char m[96]; snprintf(m, sizeof m, "unknown marker %.*s (this text has {1}..{%d})", (int)(e - q + 1), q, ncodes); snprintf(err, errcap, "%s", m); goto fail; }
+                cat(&out, &len, &cap, codes[v - 1]);
+                q = e + 1; mark++;
+                continue;
+            }
+            const char one[2] = { *q, 0 };
+            cat(&out, &len, &cap, one);
+            q++;
+        }
+    }
+    for (int i = 0; i < nl; i++) free(lines[i]);
+    free_codes(codes, ncodes);
+    return out;
+fail:
+    for (int i = 0; i < nl; i++) free(lines[i]);
+    free_codes(codes, ncodes);
+    free(out);
+    return NULL;
+}
+
 /* ---- guest memory: arena, map, trampolines, hooks ---------------------------------- */
 static int guest_alloc(void)
 {
@@ -530,6 +700,25 @@ static void upload_guest(void)
 /* Lay every translated run into the arena, fill the map, then give every
  * pointer operand whose target is mapped a trampoline. Returns 0 when the
  * trampolines do not fit (the import reports it). */
+/* The offsets of every page break (FA) in a text and of the byte after
+ * it: the game itself jumps to a later page of a text it has shown before
+ * (the shop's greeting opens on its last page), reading the stock stream
+ * to find it, so those spots are mapped to the translation's pages too. */
+static int page_marks(const uint8_t *b, int n, int bank_off, int *out, int max)
+{
+    int k = 0, choices = 2;
+    for (int p = 0; p < n && k + 1 < max;) {
+        const uint8_t c = b[p];
+        if (c == 0xFF) break;
+        if (c < 0xF0 || c == 0xFE) { p++; continue; }
+        if (c == 0xFA) { out[k++] = p; out[k++] = p + 1; p++; continue; }
+        int ptr_at[16], np = 0;
+        const int l = ctl_len(b, p, n, &choices, ptr_at, &np, bank_off);
+        p += l < 1 ? 1 : l;
+    }
+    return k;
+}
+
 static int relayout(void)
 {
     int any = 0;
@@ -552,6 +741,17 @@ static int relayout(void)
         s_map[r->start & 0xFFFFu] = r->reloc;
         for (int k = 0; k < r->nanch; k++)
             if (r->enc_pos[k] >= 0) s_map[r->anch[k].off & 0xFFFFu] = r->reloc + (uint32_t)r->enc_pos[k];
+        {
+            /* page k of the stock text -> page k of the translation (its last page when it has fewer) */
+            int sp[512], tp[512];
+            const int ns = page_marks(s_bank + r->start, (int)(r->end - r->start), (int)r->start, sp, 512);
+            const int nt = page_marks(r->enc, r->enc_len, (int)r->start, tp, 512);
+            for (int k = 0; k < ns && nt > 0; k++) {
+                const int j = k < nt ? k : nt - 2 + (k & 1);
+                const uint32_t off = (r->start + (uint32_t)sp[k]) & 0xFFFFu;
+                if (!s_map[off]) s_map[off] = r->reloc + (uint32_t)tp[j];
+            }
+        }
         at += (uint32_t)r->enc_len;
     }
     s_arena_len = at;
@@ -653,6 +853,7 @@ static void run_clear(Run *r)
 {
     free(r->enc); r->enc = NULL; r->enc_len = 0;
     free(r->cur_text); r->cur_text = NULL;
+    free(r->plain_cur); r->plain_cur = NULL;
     r->reloc = 0;
 }
 
@@ -681,6 +882,7 @@ static int run_set_text(Run *r, const char *text, char *err, unsigned errcap, in
     /* keep them sorted by position for the decoder */
     for (int a = 1; a < np; a++) for (int b2 = a; b2 > 0 && placed[b2 - 1].pos > placed[b2].pos; b2--) { Mark t = placed[b2]; placed[b2] = placed[b2 - 1]; placed[b2 - 1] = t; }
     r->cur_text = decode_bytes(r->enc, r->enc_len, placed, np, (int)r->start);
+    r->plain_cur = plain_from_raw(r->cur_text);
     return 1;
 }
 
@@ -718,7 +920,48 @@ static void write_header(FILE *f, const char *what)
         stamp, what, PSX_DIALOGUE_LINES, PSX_DIALOGUE_COLS, PSX_DIALOGUE_COLS);
 }
 
+/* The translator's file: the story texts in plain form. */
 int psx_dialogue_export(const char *path, char *err, unsigned errcap)
+{
+    if (!s_ready) { snprintf(err, errcap, "The game's text is not loaded yet"); return 0; }
+    FILE *f = fopen(path, "wb");
+    if (!f) { snprintf(err, errcap, "Cannot write %s", path); return 0; }
+    char stamp[64];
+    time_t t = time(NULL);
+    strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M", localtime(&t));
+    int tr = 0, n = 0;
+    for (int i = 0; i < s_nruns; i++) if (run_is_story(&s_runs[i])) { n++; tr += s_runs[i].enc != NULL; }
+    fprintf(f,
+        "; Yu-Gi-Oh! Forbidden Memories -- the campaign's dialogue, for translating\n"
+        "; exported %s%s\n"
+        ";\n"
+        "; Every text starts with a line like \"[1885]\" (its place in the game: leave those lines as they are)\n"
+        "; and is followed by the words. Write your translation in place of the words:\n"
+        ";  - a line break in the file is a line break in the game's box, and a blank line starts a new\n"
+        ";    page (the game waits for X). You do not have to count: a story box shows %d lines of %d\n"
+        ";    characters, and anything longer is wrapped and paged for you when the file is imported.\n"
+        ";  - {1}, {2}, ... are the game's own codes (a picture, a sound, a choice, a jump to another text).\n"
+        ";    Keep each one, in its order, next to the same words; the text around them is yours to change.\n"
+        ";    {name} is where the player's name goes.\n"
+        ";  - The font has A-Z a-z 0-9 and . , ! ? ' \" - & / # $ %% * + : ( ) < > \xC2\xAB \xC2\xBB \xC2\xB7 "
+        "\xE2\x99\x80 \xE2\x99\x82 \xE2\x8A\x82 \xE2\x8A\x83 \xCE\xB1 \xE2\x86\x90 \xE2\x86\x92; no accents.\n"
+        ";  - Lines starting with ; are notes. Save as UTF-8, then VIEW > Dialogue manager > Import in the game.\n"
+        ";\n", stamp, tr ? " (with your translations)" : " (the original text)", PSX_DIALOGUE_LINES, PSX_DIALOGUE_COLS);
+    for (int i = 0; i < s_nruns; i++) {
+        const Run *r = &s_runs[i];
+        if (!run_is_story(r)) continue;
+        fprintf(f, "[%04X]\n", r->start);
+        if (r->locked) fprintf(f, "; the player's name is typed into this text by the game: leave it as it is\n");
+        fputs(r->plain_cur ? r->plain_cur : r->plain_stock, f);
+        fputs("\n\n", f);
+    }
+    fclose(f);
+    snprintf(err, errcap, "Exported %d texts%s to %s", n, tr ? " (with your translations)" : "", path);
+    return 1;
+}
+
+/* Every text, control codes and all: the byte-exact form (debug). */
+int psx_dialogue_export_raw(const char *path, char *err, unsigned errcap)
 {
     if (!s_ready) { snprintf(err, errcap, "The game's text is not loaded yet"); return 0; }
     FILE *f = fopen(path, "wb");
@@ -785,11 +1028,11 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
     if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3;
 
     /* pass 1: collect blocks (key, text) -- the text keeps its line breaks */
-    typedef struct { uint32_t key; char *text; int line; } Block;
+    typedef struct { uint32_t key; char *text; int line; int plain; } Block;
     Block *blocks = (Block *)calloc(MAX_RUNS + 8, sizeof(Block));
     int nb = 0, line = 0, blocks_seen = 0;
     char *text = NULL; size_t tn = 0, tcap = 0;
-    uint32_t key = 0; int key_line = 0, have = 0;
+    uint32_t key = 0; int key_line = 0, have = 0, plain = 0;
     char warn[2048]; unsigned wn = 0; warn[0] = 0;
     int unknown = 0;
 #define WARN(...) do { if (wn < sizeof warn - 1) wn += (unsigned)snprintf(warn + wn, sizeof warn - wn, __VA_ARGS__); } while (0)
@@ -801,14 +1044,15 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
         size_t l = ll;
         if (l && ln[l - 1] == '\r') l--;
         ln[l] = 0;
-        if (ln[0] == '[' && ln[1] == '@') {
+        if (ln[0] == '[' && (ln[1] == '@' || hexval(ln[1]) >= 0)) {
             if (have) {
                 while (tn && text[tn - 1] == '\n') text[--tn] = 0;
-                if (nb < MAX_RUNS + 8) { blocks[nb].key = key; blocks[nb].text = text ? text : strdup(""); blocks[nb].line = key_line; nb++; }
+                if (nb < MAX_RUNS + 8) { blocks[nb].key = key; blocks[nb].text = text ? text : strdup(""); blocks[nb].line = key_line; blocks[nb].plain = plain; nb++; }
                 else free(text);
                 text = NULL; tn = tcap = 0;
             }
-            uint32_t v = 0; int d = 0; const char *q = ln + 2;
+            plain = ln[1] != '@';
+            uint32_t v = 0; int d = 0; const char *q = ln + (plain ? 1 : 2);
             while (hexval(*q) >= 0) { v = v * 16u + (uint32_t)hexval(*q); q++; d++; }
             if (d < 1 || d > 4 || *q != ']') { WARN("line %d: bad block header; ", line); have = 0; continue; }
             key = v; key_line = line; have = 1; blocks_seen++;
@@ -821,12 +1065,12 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
     }
     if (have) {
         while (tn && text[tn - 1] == '\n') text[--tn] = 0;
-        if (nb < MAX_RUNS + 8) { blocks[nb].key = key; blocks[nb].text = text ? text : strdup(""); blocks[nb].line = key_line; nb++; }
+        if (nb < MAX_RUNS + 8) { blocks[nb].key = key; blocks[nb].text = text ? text : strdup(""); blocks[nb].line = key_line; blocks[nb].plain = plain; nb++; }
         else free(text);
     }
     if (!blocks_seen) {
         free(blocks); free(data);
-        snprintf(err, errcap, "%s holds no \"[@XXXX]\" text blocks; is it a dialogue export?", path);
+        snprintf(err, errcap, "%s holds no \"[XXXX]\" text blocks; is it a dialogue export?", path);
         return 0;
     }
 
@@ -841,7 +1085,15 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
         Run *r = run_by_key(blocks[b].key);
         if (!r) { unknown++; if (unknown <= 3) WARN("line %d: no text at [@%04X]; ", blocks[b].line, blocks[b].key); continue; }
         char why[160]; int longest = 0, missing = 0;
-        const int rc = run_set_text(r, blocks[b].text, why, sizeof why, &longest, &missing);
+        char *raw = NULL;
+        if (blocks[b].plain) {
+            /* untouched plain text is the original, byte for byte */
+            if (!strcmp(blocks[b].text, r->plain_stock)) { run_clear(r); stock++; continue; }
+            raw = raw_from_plain(r, blocks[b].text, why, sizeof why);
+            if (!raw) { errors++; if (errors <= 4) WARN("[%04X] %s (block at line %d); ", r->start, why, blocks[b].line); continue; }
+        }
+        const int rc = run_set_text(r, raw ? raw : blocks[b].text, why, sizeof why, &longest, &missing);
+        free(raw);
         if (rc < 0) { errors++; if (errors <= 4) WARN("[@%04X] %s (block at line %d); ", r->start, why, blocks[b].line); continue; }
         if (rc == 0) { stock++; continue; }
         translated++;
@@ -922,6 +1174,7 @@ static void read_bank(void)
     for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
         r->stock_text = decode_stock_run(r);
+        r->plain_stock = plain_from_raw(r->stock_text);
         /* the codec must give the stock bytes back */
         static uint8_t enc[BANK_SIZE];
             Mark marks[MAX_ANCH + MAX_PTRS]; int nm = 0; char why[128]; int lg = 0;
@@ -956,6 +1209,9 @@ int psx_dialogue_run(int index, PsxDialogueRun *out)
     out->ids = r->ids;
     out->stock = r->stock_text;
     out->current = r->cur_text ? r->cur_text : r->stock_text;
+    out->plain_stock = r->plain_stock;
+    out->plain_current = r->plain_cur ? r->plain_cur : r->plain_stock;
+    out->story = run_is_story(r);
     out->translated = r->enc != NULL;
     out->bytes = r->enc ? r->enc_len : (int)(r->end - r->start);
     return 1;

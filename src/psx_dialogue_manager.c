@@ -156,10 +156,10 @@ static void rebuild_order(void)
     s_order_n = 0;
     for (int i = 0; i < n; i++) {
         PsxDialogueRun r;
-        if (!psx_dialogue_run(i, &r)) continue;
+        if (!psx_dialogue_run(i, &r) || !r.story) continue;
         if (s_search[0]) {
-            char key[16]; snprintf(key, sizeof key, "@%04X", r.key);
-            int hit = ci_contains(key, s_search) || ci_contains(r.stock, s_search) || ci_contains(r.current, s_search);
+            char key[16]; snprintf(key, sizeof key, "%04X", r.key);
+            int hit = ci_contains(key, s_search) || ci_contains(r.plain_stock, s_search) || ci_contains(r.plain_current, s_search);
             for (int k = 0; !hit && k < r.nids; k++) { char id[16]; snprintf(id, sizeof id, "%d", r.ids[k]); hit = !strcmp(id, s_search); }
             if (!hit) continue;
         }
@@ -258,7 +258,11 @@ static void draw_bar(void)
     const Layout *L = &s_L;
     psx_ui_fill(&s_cv, L->bar.x, L->bar.y, L->bar.w, L->bar.h, COL_BAR);
     char title[128];
-    if (psx_dialogue_ready()) snprintf(title, sizeof title, "Dialogue Manager   %d texts, %d translated", psx_dialogue_count(), psx_dialogue_translated_count());
+    if (psx_dialogue_ready()) {
+        int n = 0, tr = 0;
+        for (int i = 0; i < psx_dialogue_count(); i++) { PsxDialogueRun r; if (psx_dialogue_run(i, &r) && r.story) { n++; tr += r.translated; } }
+        snprintf(title, sizeof title, "Dialogue Manager   %d texts, %d translated", n, tr);
+    }
     else snprintf(title, sizeof title, "Dialogue Manager");
     psx_ui_text(&s_cv, px(U_PAD), psx_ui_baseline_in(L->bar.y, L->bar.h, face_title()), title, COL_TEXT, face_title());
     /* search box */
@@ -300,8 +304,8 @@ static void draw_list(void)
         else if (row == s_hover_row) psx_ui_round_rect(&s_cv, L->rows.x, y, L->rows.w, L->row_h, U_R_BOX * s_u, COL_HOVER);
         snprintf(key, sizeof key, "@%04X", r.key);
         ids_text(&r, ids, sizeof ids);
-        flatten(r.stock, flat, sizeof flat);
-        flatten(r.current, flat2, sizeof flat2);
+        flatten(r.plain_stock, flat, sizeof flat);
+        flatten(r.plain_current, flat2, sizeof flat2);
         const uint32_t col = r.translated ? COL_EDITED : COL_TEXT;
         Rect c1 = { L->c_key, y, L->c_ids - L->c_key - px(4.0f), L->row_h };  text_in(&c1, 0, key, COL_DIM, face_body());
         Rect c2 = { L->c_ids, y, L->c_orig - L->c_ids - px(4.0f), L->row_h }; text_in(&c2, 0, ids, COL_DIM, face_body());
@@ -332,14 +336,14 @@ static void draw_detail(void)
     const int half = L->detail.w / 2;
     char head[160], ids[128];
     ids_text(&r, ids, sizeof ids);
-    snprintf(head, sizeof head, "Original   @%04X   ids %s   %d bytes", r.key, ids, r.bytes);
+    snprintf(head, sizeof head, "Original   [%04X]   ids %s   %d bytes", r.key, ids, r.bytes);
     Rect h1 = { L->detail.x, L->detail.y, half, px(U_HDR_H) };
     Rect h2 = { L->detail.x + half, L->detail.y, half, px(U_HDR_H) };
     text_in(&h1, px(6.0f), head, COL_DIM, face_small());
     text_in(&h2, px(6.0f), r.translated ? "Current (translated)" : "Current (the original)", r.translated ? COL_EDITED : COL_DIM, face_small());
     const int lh = psx_ui_font_line_height(face_body());
     const int top = L->detail.y + px(U_HDR_H), bottom = L->detail.y + L->detail.h - px(3.0f);
-    const char *cols[2] = { r.stock, r.current };
+    const char *cols[2] = { r.plain_stock, r.plain_current };
     for (int c = 0; c < 2; c++) {
         int y = top, line = 0;
         const int x = L->detail.x + c * half + px(6.0f), w = half - px(12.0f);
@@ -667,8 +671,8 @@ static void row_activate(void) { psx_dialogue_manager_open(); }
 
 void psx_dialogue_manager_register_menu(void)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_MODS, "Dialogue manager",
-        "Export the game's dialogue and menu text for translation, and import it back",
+    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Dialogue manager",
+        "Export the campaign's dialogue as plain text for translation, and import it back",
         row_activate);
 }
 

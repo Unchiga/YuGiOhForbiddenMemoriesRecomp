@@ -230,7 +230,7 @@ int psx_card_texts_import(const char *path, char *err, unsigned errcap)
     if (have) apply_block(&t, id, name, desc, block_line);
     free(data);
     if (!t.blocks) { snprintf(err, errcap, "%s holds no \"[id] Name\" blocks; is it a description export?", path); return 0; }
-    snprintf(err, errcap, "Applied %d card%s (%d unchanged%s)%s%s", t.applied, t.applied == 1 ? "" : "s", t.unchanged,
+    snprintf(err, errcap, "%d cards read: %d changed, %d already as the file says%s%s%s", t.applied + t.unchanged + t.skipped, t.applied, t.unchanged,
              t.skipped ? ", some skipped" : "", t.wn ? ": " : "", t.warn);
     return t.applied > 0 || (!t.skipped && t.unchanged > 0);
 }

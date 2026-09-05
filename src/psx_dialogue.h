@@ -29,6 +29,9 @@ typedef struct {
     const int  *ids;
     const char *stock;        /* decoded stock text, UTF-8, "\n" per line, "{..}" control codes */
     const char *current;      /* the text the game shows now: stock, or the imported one */
+    const char *plain_stock;  /* the readable forms: codes as {1}.., blank line = page break */
+    const char *plain_current;
+    int         story;        /* a campaign text (ids 0x400.., or reached only by jumps): what the file holds */
     int         translated;   /* 1 = current differs from stock */
     int         bytes;        /* encoded size of the current text incl. the terminator */
 } PsxDialogueRun;
@@ -44,7 +47,8 @@ unsigned psx_dialogue_generation(void);
 
 /* Write every run's CURRENT text to path. Returns 1 and a summary in err
  * (which doubles as the message line), 0 with the reason on failure. */
-int  psx_dialogue_export(const char *path, char *err, unsigned errcap);
+int  psx_dialogue_export(const char *path, char *err, unsigned errcap);      /* the story texts, plain form */
+int  psx_dialogue_export_raw(const char *path, char *err, unsigned errcap);  /* every text with its codes (debug) */
 /* Read a file in the export format, validate it, apply it live and keep a
  * copy as <player-data>/dialogue/dialogue.txt. Returns 1 when applied (err
  * then holds the summary and any warnings), 0 when nothing was applied. */

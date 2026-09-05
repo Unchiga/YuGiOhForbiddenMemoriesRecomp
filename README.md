@@ -333,27 +333,43 @@ blows.
 ```
 
 Edit it in any editor (a card shows six lines of twenty characters; the
-header repeats the rules) and `Import Descriptions` reads it back: only the
-cards whose text changed are written, into that set's `card.ini` files with
-every other key kept, and a text put back to stock drops the key again. It
-shows live.
+header repeats the rules) and `Import Descriptions` reads the whole file back: every card is compared
+with what the game shows, the ones that differ are written into that set's
+`card.ini` files with every other key kept, and a text put back to stock
+drops the key again. It shows live.
 
-### 💬 Dialogue Manager — `MODS → DIALOGUE MANAGER`
+### 💬 Dialogue Manager — `VIEW → DIALOGUE MANAGER`
 
-For translations: every campaign dialogue (the story boxes, the duelists'
-lines, the shop, the name entry — 218 texts) exports to one text file and a
-translated file imports back, at runtime, without touching the disc. The
+For translations: the campaign's dialogue (the story boxes, the duelists'
+lines, the shop and so on: 150 texts) exports to one plain text file and a
+translated file imports back at runtime, without touching the disc. The
 window lists the texts with a search box, shows the original beside the
-current text, and has `Export…` / `Import…`. The file keeps the game's
-control codes in braces (`{FA}` is a page break, `{FE}` a line break;
-`{@XXXX}` marks a spot a jump lands on and must stay in front of the same
-sentence), a story box shows three lines of 36 characters, and an imported
-file lives on as `dialogue/dialogue.txt` in the player-data folder so it is
-back after a restart. Import replaces the whole set: texts missing from the
-file return to stock, and a file that fails to parse changes nothing.
-Translated texts live in a spare memory arena and the game's own text
-routines are redirected to them by hooks; nothing in the game's code is
-patched.
+current text, and has `Export…` / `Import…`. The file is just words:
+
+```
+[1923]
+Hmmm...
+T'would seem I've won.
+
+Many days have passed since
+I taught you the game...
+But you've still much to learn.
+
+Now, please...
+Return to the palace!
+```
+
+A blank line is a page break, a line break a line break, and nobody has
+to count characters: a story box shows three lines of 36, and on import
+longer lines are wrapped at a space and longer pages split into more
+pages. The game's own codes (a portrait, a sound, a choice, a jump) show
+as `{1}`, `{2}`… and only need to stay in order next to the same words;
+`{name}` is the player's name. An imported file lives on as
+`dialogue/dialogue.txt` in the player-data folder so it is back after a
+restart; import replaces the whole set, texts left as they were stay
+stock, and a file that fails to parse changes nothing. Translated texts
+live in a spare memory arena and the game's text routines are redirected
+to them by hooks; nothing in the game's code is patched.
 
 ### 🛒 Card shop — `MODS → CARD SHOP`
 
