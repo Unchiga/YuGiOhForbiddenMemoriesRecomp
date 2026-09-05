@@ -31,6 +31,7 @@ int  psx_card_manager_button(int x, int y, int button, int down);
 int  psx_card_manager_move(int x, int y);
 int  psx_card_manager_type(const char *text);
 int  psx_card_manager_key(int sdl_key);
+int  psx_card_manager_key_mod(int sdl_key, int mods);   /* mods: 1 shift, 2 ctrl */
 void psx_card_manager_search(const char *text);
 /* Show the import preview for a file, as the Import button would. */
 void psx_card_manager_import_preview(const char *path);

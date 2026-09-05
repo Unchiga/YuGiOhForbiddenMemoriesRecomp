@@ -417,8 +417,17 @@ static void handle_card_manager_key(int id, const char *json)
     else if (!strcmp(name, "down")) k = 0x40000051;
     else if (!strcmp(name, "pageup")) k = 0x4000004B;
     else if (!strcmp(name, "pagedown")) k = 0x4000004E;
+    else if (!strcmp(name, "left")) k = 0x40000050;
+    else if (!strcmp(name, "right")) k = 0x4000004F;
+    else if (!strcmp(name, "home")) k = 0x4000004A;
+    else if (!strcmp(name, "end")) k = 0x4000004D;
+    else if (!strcmp(name, "delete")) k = 0x7F;
+    else if (name[0] && !name[1]) k = (unsigned char)name[0];     /* a letter, for ctrl+a/c/x/v */
     if (!k) { send_err(id, "unknown key"); return; }
-    if (!psx_card_manager_key(k)) { send_err(id, "manager is closed"); return; }
+    int mods = 0;
+    if (json_get_int(json, "shift", 0)) mods |= 1;
+    if (json_get_int(json, "ctrl", 0)) mods |= 2;
+    if (!psx_card_manager_key_mod(k, mods)) { send_err(id, "manager is closed"); return; }
     send_ok(id);
 }
 static void handle_card_manager_shot(int id, const char *json)

@@ -125,9 +125,11 @@ enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, 
        F_BONUS_FLAT = F_TRIG_END, F_BONUS_ALLY, F_BONUS_ALLY_PER, F_BONUS_ENEMY, F_BONUS_ENEMY_PER, F_IMMUNE, F_COUNT };
 #define F_FX_FIRST F_EFFECT
 #define F_COL2_FIRST F_BATTLE          /* monster effects sit in a second column */
-enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT, B_EXPORT, B_IMPORT, B_DEV, B_COUNT };
+enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT,
+       B_EXPORT_TEXTS, B_IMPORT_TEXTS, B_EXPORT, B_IMPORT, B_DEV, B_COUNT };   /* B_EXPORT_TEXTS.. sit in the top bar */
+#define B_BAR_FIRST B_EXPORT_TEXTS
 static const char *const BTN_LABEL[B_COUNT] = { "Save", "Restore stock", "Open folder", "Pick art\xE2\x80\xA6", "Pick thumbnail\xE2\x80\xA6", "Pick title\xE2\x80\xA6",
-                                                "Effect text \xE2\x86\x92 description", "Export\xE2\x80\xA6", "Import\xE2\x80\xA6", "Dev Card Effects: OFF" };
+                                                "Effect text \xE2\x86\x92 description", "Export Descriptions", "Import Descriptions", "Export Config", "Import Config", "Dev Card Effects: OFF" };
 static char s_dev_label[32];
 #define FTEXT 2048                    /* the longest field text (an equip list) */
 
@@ -167,7 +169,8 @@ typedef struct {
     Rect bar, search, list, list_rows, sb, ed;
     int  row_h, rows;
     Rect value[F_COUNT], step_l[F_COUNT], step_r[F_COUNT], clear[F_COUNT], label[F_COUNT];
-    Rect btn[B_COUNT];                /* btn[B_DEV] sits in the top bar */
+    Rect btn[B_COUNT];                /* btn[B_BAR_FIRST..] sit in the top bar, right-aligned */
+    int  bar_free;                    /* room left in the bar after the search box */
     Rect art, thumb;
     int  info_x, info_y;
     int  status_y;
@@ -586,13 +589,19 @@ static void layout_compute(void)
         const PsxUiFace *fb = face_bold();
         int bx = ex, bh = px(U_BTN_H);
         snprintf(s_dev_label, sizeof s_dev_label, "Dev Card Effects: %s", psx_card_packs_is_dev() ? "ON" : "OFF");
-        for (int b = 0; b < B_COUNT; b++) {
-            if (b == B_DEV) {
-                /* top right of the bar, beside the search */
-                const int bw = psx_ui_font_text_w(fb, s_dev_label) + px(18.0f);
-                L->btn[b] = (Rect){ s_w - bw - px(8.0f), (L->bar.h - bh) / 2, bw, bh };
-                continue;
+        /* the bar's buttons, right to left, in the small face so five fit */
+        {
+            const PsxUiFace *fs = face_small();
+            int rx = s_w - px(8.0f);
+            for (int b = B_COUNT - 1; b >= B_BAR_FIRST; b--) {
+                const int bw = psx_ui_font_text_w(fs, b == B_DEV ? s_dev_label : BTN_LABEL[b]) + px(14.0f);
+                rx -= bw;
+                L->btn[b] = (Rect){ rx, (L->bar.h - bh) / 2, bw, bh };
+                rx -= px(4.0f);
             }
+            L->bar_free = rx - (L->search.x + L->search.w);
+        }
+        for (int b = 0; b < B_BAR_FIRST; b++) {
             const int bw = psx_ui_font_text_w(fb, BTN_LABEL[b]) + px(18.0f);
             if (bx + bw > right && bx > ex) { bx = ex; y += bh + px(5.0f); }
             L->btn[b] = (Rect){ bx, y, bw, bh };
@@ -913,11 +922,266 @@ static int field_placeholder(int f)
     return 0;
 }
 
+/* --- text editing: caret, selection, clipboard --------------------------------
+ * s_buf is the text being edited; s_car is the caret (a byte index), s_anchor
+ * the other end of the selection or -1. The description box wraps like the
+ * game does ("|" is a hard line break), other boxes are one line that scrolls
+ * to keep the caret in view. */
+static int s_car, s_anchor = -1, s_drag_text;
+#if defined(PSX_SDL3)
+#define KEY_MOD(ev) ((ev)->key.mod)
+#else
+#define KEY_MOD(ev) ((ev)->key.keysym.mod)
+#endif
+static size_t field_cap(int f)
+{
+    return f == F_NAME ? PSX_CARD_PACK_NAME_MAX : f == F_DESC ? PSX_CARD_PACK_DESC_MAX :
+           f == F_PASSWORD ? 8 : f == F_EQUIPS ? FTEXT - 8 : f == F_BOOST ? 500 : f == F_RITUAL ? 40 : 6;
+}
+static int buf_len(void) { return (int)strlen(s_buf); }
+static int sel_lo(void) { return s_anchor < 0 ? s_car : (s_anchor < s_car ? s_anchor : s_car); }
+static int sel_hi(void) { return s_anchor < 0 ? s_car : (s_anchor > s_car ? s_anchor : s_car); }
+static int has_sel(void) { return s_anchor >= 0 && s_anchor != s_car; }
+static void caret_clamp(void) { const int n = buf_len(); if (s_car < 0) s_car = 0; if (s_car > n) s_car = n; if (s_anchor > n) s_anchor = n; }
+static void sel_delete(void)
+{
+    if (!has_sel()) { s_anchor = -1; return; }
+    const int lo = sel_lo(), hi = sel_hi();
+    memmove(s_buf + lo, s_buf + hi, strlen(s_buf + hi) + 1);
+    s_car = lo; s_anchor = -1;
+}
+/* insert printable text at the caret (a selection is replaced); newlines
+ * become the game's "|" in the description and are dropped elsewhere */
+static void text_insert(const char *s)
+{
+    if (s_focus < 0) return;
+    sel_delete();
+    const size_t cap = field_cap(s_focus);
+    for (const char *p = s; *p; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch == '\r') continue;
+        if (ch == '\n') { if (s_focus != F_DESC) continue; ch = '|'; }
+        if (ch < 32u || ch >= 127u) continue;
+        const size_t n = strlen(s_buf);
+        if (n >= cap) break;
+        memmove(s_buf + s_car + 1, s_buf + s_car, n - (size_t)s_car + 1);
+        s_buf[s_car++] = (char)ch;
+    }
+    s_dirty = 1;
+}
+static void clip_copy(int cut)
+{
+    if (!has_sel()) return;
+    char tmp[FTEXT];
+    const int lo = sel_lo(), hi = sel_hi();
+    memcpy(tmp, s_buf + lo, (size_t)(hi - lo)); tmp[hi - lo] = 0;
+    SDL_SetClipboardText(tmp);
+    if (cut) { sel_delete(); s_dirty = 1; }
+}
+static void clip_paste(void)
+{
+    char *t = SDL_GetClipboardText();
+    if (!t) return;
+    text_insert(t);
+    SDL_free(t);
+}
+static void select_all(void) { s_anchor = 0; s_car = buf_len(); s_dirty = 1; }
+static void select_word(void)
+{
+    const int n = buf_len();
+    int a = s_car, b = s_car;
+    while (a > 0 && s_buf[a - 1] != ' ' && s_buf[a - 1] != '|') a--;
+    while (b < n && s_buf[b] != ' ' && s_buf[b] != '|') b++;
+    s_anchor = a; s_car = b; s_dirty = 1;
+}
+
+/* Visual lines of the text being edited: byte ranges [a,b) of s_buf. */
+typedef struct { int a, b; } Span;
+#define SPAN_MAX 24
+static int text_spans(const PsxUiFace *f, const char *s, int max_w, int hard_bar, Span *sp, int max)
+{
+    int n = 0;
+    const int len = (int)strlen(s);
+    int p = 0;
+    for (;;) {
+        if (n >= max) break;
+        int q = p, last_space = -1, hard = 0;
+        while (q < len) {
+            if (hard_bar && s[q] == '|') { hard = 1; break; }
+            if (psx_ui_font_text_w_n(f, s + p, q - p + 1) > max_w) break;
+            if (s[q] == ' ') last_space = q;
+            q++;
+        }
+        if (q < len && !hard) {
+            /* wrap: after the last space when there is one, else mid-word */
+            if (last_space >= 0 && last_space + 1 > p) q = last_space + 1;
+            if (q == p) q = p + 1;
+        }
+        sp[n].a = p; sp[n].b = q; n++;
+        if (q >= len) break;
+        p = hard ? q + 1 : q;
+        if (hard && p >= len && n < max) { sp[n].a = p; sp[n].b = p; n++; break; }   /* a trailing break: an empty last line */
+    }
+    if (!n) { sp[0].a = sp[0].b = 0; n = 1; }
+    return n;
+}
+static int span_of(const Span *sp, int n, int i)
+{
+    for (int k = 0; k < n; k++) {
+        if (i < sp[k].b) return k;
+        if (i == sp[k].b) { if (k + 1 < n && sp[k + 1].a == sp[k].b) continue; return k; }   /* a soft wrap: the next line */
+    }
+    return n - 1;
+}
+/* the layout of the focused box: spans, the first visible line and the
+ * horizontal skip of a one-line box */
+static int focus_layout(Span *sp, int *first, int *skip)
+{
+    const PsxUiFace *fb = face_body();
+    const Rect *v = &s_L.value[s_focus];
+    const int inner = v->w - px(12.0f);
+    *first = 0; *skip = 0;
+    if (s_focus == F_DESC) {
+        const int n = text_spans(fb, s_buf, inner, 1, sp, SPAN_MAX);
+        const int lh = psx_ui_font_line_height(fb);
+        const int fitl = (v->h - px(4.0f)) / lh;
+        const int cl = span_of(sp, n, s_car);
+        if (cl >= fitl) *first = cl - fitl + 1;
+        return n;
+    }
+    sp[0].a = 0; sp[0].b = buf_len();
+    /* one line: skip leading characters until the caret fits */
+    int st = 0;
+    while (st < s_car && psx_ui_font_text_w_n(fb, s_buf + st, s_car - st) > inner) st++;
+    *skip = st;
+    return 1;
+}
+/* the byte index under a point inside the focused box */
+static int text_index_at(int x, int y)
+{
+    const PsxUiFace *fb = face_body();
+    const Rect *v = &s_L.value[s_focus];
+    Span sp[SPAN_MAX]; int first, skip;
+    const int n = focus_layout(sp, &first, &skip);
+    int line = 0;
+    if (s_focus == F_DESC) {
+        const int lh = psx_ui_font_line_height(fb);
+        line = first + (y - v->y - px(2.0f)) / lh;
+        if (line < 0) line = 0;
+        if (line >= n) line = n - 1;
+    }
+    const int a = (s_focus == F_DESC) ? sp[line].a : skip, b = sp[line].b;
+    const int rx = x - (v->x + px(6.0f));
+    int i = a;
+    while (i < b) {
+        const int w0 = psx_ui_font_text_w_n(fb, s_buf + a, i - a), w1 = psx_ui_font_text_w_n(fb, s_buf + a, i - a + 1);
+        if (rx < (w0 + w1) / 2) break;
+        i++;
+    }
+    /* clicking past a soft wrap's trailing space lands before it */
+    if (i == b && b > a && s_buf[b - 1] == ' ' && line + 1 < n && sp[line + 1].a == b) i = b - 1;
+    return i;
+}
+static void caret_move(int to, int extend)
+{
+    if (extend) { if (s_anchor < 0) s_anchor = s_car; }
+    else s_anchor = -1;
+    s_car = to; caret_clamp();
+    s_dirty = 1;
+}
+/* up/down in the description: the same x on the neighbouring line */
+static void caret_line(int dir, int extend)
+{
+    const PsxUiFace *fb = face_body();
+    Span sp[SPAN_MAX]; int first, skip;
+    const int n = focus_layout(sp, &first, &skip);
+    const int cl = span_of(sp, n, s_car);
+    const int nl = cl + dir;
+    if (nl < 0 || nl >= n) { caret_move(dir < 0 ? 0 : buf_len(), extend); return; }
+    const int cx = psx_ui_font_text_w_n(fb, s_buf + sp[cl].a, s_car - sp[cl].a);
+    int i = sp[nl].a;
+    while (i < sp[nl].b) {
+        const int w0 = psx_ui_font_text_w_n(fb, s_buf + sp[nl].a, i - sp[nl].a), w1 = psx_ui_font_text_w_n(fb, s_buf + sp[nl].a, i - sp[nl].a + 1);
+        if (cx < (w0 + w1) / 2) break;
+        i++;
+    }
+    if (i == sp[nl].b && sp[nl].b > sp[nl].a && nl + 1 < n && sp[nl + 1].a == sp[nl].b) i--;
+    caret_move(i, extend);
+}
+/* the focused box: selection, text and caret */
+static void draw_focused_text(int f)
+{
+    const PsxUiFace *fb = face_body();
+    const Rect *v = &s_L.value[f];
+    Span sp[SPAN_MAX]; int first, skip;
+    const int n = focus_layout(sp, &first, &skip);
+    const int lh = psx_ui_font_line_height(fb);
+    const int fitl = (f == F_DESC) ? (v->h - px(4.0f)) / lh : 1;
+    const int x0 = v->x + px(6.0f), inner = v->w - px(12.0f);
+    const int lo = sel_lo(), hi = sel_hi();
+    for (int k = first; k < n && k - first < fitl; k++) {
+        const int a = (f == F_DESC) ? sp[k].a : skip, b = sp[k].b;
+        const int ly = (f == F_DESC) ? v->y + px(2.0f) + (k - first) * lh : v->y + (v->h - lh) / 2;
+        const int base = ly + psx_ui_font_ascent(fb);
+        if (has_sel() && hi > a && lo < b) {
+            const int sa = lo > a ? lo : a, sb = hi < b ? hi : b;
+            const int xa = psx_ui_font_text_w_n(fb, s_buf + a, sa - a), xb = psx_ui_font_text_w_n(fb, s_buf + a, sb - a);
+            int w = xb - xa; if (w < px(2.0f)) w = px(2.0f);
+            if (xa < inner) psx_ui_fill(&s_cv, x0 + xa, ly, (xa + w > inner ? inner - xa : w), lh, COL_SEL_BG);
+        }
+        char line[FTEXT];
+        int len = b - a; if (len > (int)sizeof line - 1) len = (int)sizeof line - 1;
+        memcpy(line, s_buf + a, (size_t)len); line[len] = 0;
+        psx_ui_text_clip(&s_cv, x0, base, line, COL_TEXT, fb, inner + px(4.0f));
+        if (s_caret_on && span_of(sp, n, s_car) == k && s_car >= a) {
+            const int cx = x0 + psx_ui_font_text_w_n(fb, s_buf + a, s_car - a);
+            if (cx <= x0 + inner + 1) psx_ui_fill(&s_cv, cx, ly, 1, lh, COL_TEXT);
+        }
+    }
+}
+/* a key while a box has focus; returns 1 when handled */
+static int text_key(int key, int mod)
+{
+    const int shift = (mod & KMOD_SHIFT) != 0, ctrl = (mod & (KMOD_CTRL | KMOD_GUI)) != 0;
+    caret_clamp();
+    if (ctrl) {
+        if (key == 'a') { select_all(); return 1; }
+        if (key == 'c') { clip_copy(0); return 1; }
+        if (key == 'x') { clip_copy(1); return 1; }
+        if (key == 'v') { clip_paste(); return 1; }
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+            /* by word */
+            int i = s_car;
+            if (key == SDLK_LEFT) { while (i > 0 && (s_buf[i - 1] == ' ' || s_buf[i - 1] == '|')) i--; while (i > 0 && s_buf[i - 1] != ' ' && s_buf[i - 1] != '|') i--; }
+            else { const int n = buf_len(); while (i < n && s_buf[i] != ' ' && s_buf[i] != '|') i++; while (i < n && (s_buf[i] == ' ' || s_buf[i] == '|')) i++; }
+            caret_move(i, shift); return 1;
+        }
+    }
+    switch (key) {
+    case SDLK_LEFT:  if (has_sel() && !shift) caret_move(sel_lo(), 0); else caret_move(s_car - 1, shift); return 1;
+    case SDLK_RIGHT: if (has_sel() && !shift) caret_move(sel_hi(), 0); else caret_move(s_car + 1, shift); return 1;
+    case SDLK_HOME:  caret_move(0, shift); return 1;
+    case SDLK_END:   caret_move(buf_len(), shift); return 1;
+    case SDLK_UP:    if (s_focus == F_DESC) { caret_line(-1, shift); return 1; } return 0;
+    case SDLK_DOWN:  if (s_focus == F_DESC) { caret_line(+1, shift); return 1; } return 0;
+    case SDLK_BACKSPACE:
+        if (has_sel()) sel_delete();
+        else if (s_car > 0) { memmove(s_buf + s_car - 1, s_buf + s_car, strlen(s_buf + s_car) + 1); s_car--; }
+        s_anchor = -1; s_dirty = 1; return 1;
+    case SDLK_DELETE:
+        if (has_sel()) sel_delete();
+        else if (s_car < buf_len()) memmove(s_buf + s_car, s_buf + s_car + 1, strlen(s_buf + s_car + 1) + 1);
+        s_anchor = -1; s_dirty = 1; return 1;
+    default: return 0;
+    }
+}
+
 static void focus_begin(int f)
 {
     s_focus = f;
     if (field_placeholder(f)) s_buf[0] = 0;
     else field_text(f, 0, s_buf, sizeof s_buf);
+    s_car = buf_len(); s_anchor = -1; s_drag_text = 0;
     s_dirty = 1;
 }
 
@@ -1193,12 +1457,13 @@ static void draw_cross(const Rect *r, uint32_t col)
     psx_ui_line(&s_cv, cx - s, cy + s, cx + s, cy - s, w, col);
 }
 
-static void draw_button(const Rect *r, const char *label, int primary, int hover)
+static void draw_button_face(const Rect *r, const char *label, int primary, int hover, const PsxUiFace *face)
 {
     psx_ui_round_rect(&s_cv, r->x, r->y, r->w, r->h, r->h * 0.5f, primary ? COL_BTN_ON : COL_BTN);
     if (hover) psx_ui_round_rect(&s_cv, r->x, r->y, r->w, r->h, r->h * 0.5f, COL_HOVER);
-    text_centered(r, label, COL_TEXT, face_bold());
+    text_centered(r, label, COL_TEXT, face);
 }
+static void draw_button(const Rect *r, const char *label, int primary, int hover) { draw_button_face(r, label, primary, hover, face_bold()); }
 
 static void draw_bar(void)
 {
@@ -1212,9 +1477,11 @@ static void draw_bar(void)
     snprintf(sb, sizeof sb, "%s%s", s_search, (s_focus < 0 && s_caret_on) ? "|" : "");
     if (s_search[0]) text_in(&L->search, px(8.0f), sb, COL_TEXT, face_body());
     else text_in(&L->search, px(8.0f), "Type to search\xE2\x80\xA6", COL_DIM, face_body());
-    char n[48]; snprintf(n, sizeof n, "%d cards", s_order_n);
-    Rect c = { L->search.x + L->search.w + px(10.0f), 0, px(80.0f), L->bar.h };
-    text_in(&c, 0, n, COL_DIM, face_small());
+    if (L->bar_free > px(70.0f)) {
+        char n[48]; snprintf(n, sizeof n, "%d cards", s_order_n);
+        Rect c = { L->search.x + L->search.w + px(10.0f), 0, L->bar_free - px(14.0f), L->bar.h };
+        text_in(&c, 0, n, COL_DIM, face_small());
+    }
 }
 
 static void draw_list(void)
@@ -1303,21 +1570,7 @@ static void draw_editor(void)
         if (s_focus == f) psx_ui_round_rect_line(&s_cv, v->x, v->y, v->w, v->h, (float)px(U_R_BOX), COL_ACCENT, 1.0f);
         char t[PSX_CARD_PACK_DESC_MAX + 8];
         if (s_focus == f) {
-            char tb[PSX_CARD_PACK_DESC_MAX + 8];
-            snprintf(tb, sizeof tb, "%s%s", s_buf, s_caret_on ? "|" : "");
-            if (f == F_DESC) {
-                char lines[16][256];
-                const int lh = psx_ui_font_line_height(fb);
-                const int fitl = (v->h - px(4.0f)) / lh;
-                const int n = wrap_text(fb, tb, v->w - px(12.0f), lines, 16);
-                const int first = n > fitl ? n - fitl : 0;
-                for (int i = first; i < n; i++)
-                    psx_ui_text(&s_cv, v->x + px(6.0f), v->y + px(2.0f) + (i - first) * lh + psx_ui_font_ascent(fb), lines[i], COL_TEXT, fb);
-            } else {
-                const char *tail = tb;
-                while (*tail && psx_ui_font_text_w(fb, tail) > v->w - px(12.0f)) tail++;
-                psx_ui_text(&s_cv, v->x + px(6.0f), psx_ui_baseline_in(v->y, v->h, fb), tail, COL_TEXT, fb);
-            }
+            draw_focused_text(f);
         } else {
             field_text(f, 0, t, sizeof t);
             if (f == F_DESC) {
@@ -1397,7 +1650,8 @@ static void draw_editor(void)
         psx_ui_text_clip(&s_cv, L->fx_note_x, L->fx_note_y + psx_ui_font_ascent(fs), note, COL_ACCENT, fs, right - L->fx_note_x);
     }
     for (int b = 0; b < B_COUNT; b++)
-        draw_button(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b);
+        draw_button_face(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b,
+                         b >= B_BAR_FIRST ? face_small() : face_bold());
     /* status + help, wrapped to the panel */
     {
         int y = L->status_y;
@@ -1520,7 +1774,7 @@ static void set_scroll_from_thumb(int y)
     s_dirty = 1;
 }
 
-static void click(int x, int y, int button)
+static void click(int x, int y, int button, int clicks)
 {
     layout_compute();
     const Layout *L = &s_L;
@@ -1537,6 +1791,16 @@ static void click(int x, int y, int button)
             if (i >= 0 && i < enum_count(s_drop)) enum_set(s_drop, i);
         }
         s_drop = -1; s_dirty = 1;
+        return;
+    }
+    if (s_focus >= 0 && in_rect(&L->value[s_focus], x, y)) {
+        /* a click in the box being edited moves the caret; shift extends, double-click takes the word, triple all */
+        const int i = text_index_at(x, y);
+        const int shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+        caret_move(i, shift);
+        if (clicks >= 3) select_all();
+        else if (clicks == 2) select_word();
+        else s_drag_text = 1;
         return;
     }
     if (s_focus >= 0) focus_commit();
@@ -1562,7 +1826,7 @@ static void click(int x, int y, int button)
             if (field_is_enum(f)) {
                 if (button == 3) field_step(f, -1);
                 else { s_drop = f; s_drop_hover = -1; const int c = enum_current_index(f); s_drop_scroll = c > DROP_ROWS / 2 ? c - DROP_ROWS / 2 : 0; const int mx = enum_count(f) - DROP_ROWS; if (s_drop_scroll > mx) s_drop_scroll = mx < 0 ? 0 : mx; s_dirty = 1; }
-            } else focus_begin(f);
+            } else { focus_begin(f); s_car = text_index_at(x, y); s_anchor = -1; s_drag_text = 1; }
             return;
         }
         if (field_is_enum(f) && !no_steppers(f)) {
@@ -1618,16 +1882,24 @@ static int on_event(const void *evp)
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN:
         if (ev->button.windowID != id) return 0;
-        { int cx, cy; to_canvas((float)ev->button.x, (float)ev->button.y, &cx, &cy); click(cx, cy, ev->button.button); }
+        { int cx, cy; to_canvas((float)ev->button.x, (float)ev->button.y, &cx, &cy); click(cx, cy, ev->button.button, (int)ev->button.clicks); }
         return 1;
     case SDL_MOUSEBUTTONUP:
         if (ev->button.windowID != id) return 0;
         if (s_sb_drag) { s_sb_drag = 0; s_dirty = 1; }
+        s_drag_text = 0;
         return 1;
     case SDL_MOUSEMOTION: {
         if (ev->motion.windowID != id) return 0;
         int x, y; to_canvas((float)ev->motion.x, (float)ev->motion.y, &x, &y);
         if (s_sb_drag) { set_scroll_from_thumb(y); return 1; }
+        if (s_drag_text && s_focus >= 0) {
+            /* dragging selects */
+            const int i = text_index_at(x, y);
+            if (s_anchor < 0) s_anchor = s_car;
+            if (i != s_car) { s_car = i; s_dirty = 1; }
+            return 1;
+        }
         int row = -1, btn = -1;
         if (s_drop >= 0) {
             const Rect r = drop_rect();
@@ -1690,7 +1962,7 @@ static int on_event(const void *evp)
         if (s_focus >= 0) {
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER) focus_commit();
             else if (key == SDLK_ESCAPE) { s_focus = -1; s_dirty = 1; }
-            else if (key == SDLK_BACKSPACE) { const size_t n = strlen(s_buf); if (n) s_buf[n - 1] = 0; s_dirty = 1; }
+            else if (text_key(key, (int)KEY_MOD(ev))) {}
             else if (key == SDLK_TAB) { const int f = s_focus; focus_commit(); int nf = f + 1; while (nf < F_COUNT && (field_is_enum(nf) || !field_applies(nf))) nf++; if (nf < F_COUNT) focus_begin(nf); }
             return 1;
         }
@@ -1722,11 +1994,8 @@ static int on_event(const void *evp)
             const unsigned char ch = (unsigned char)*p;
             if (ch < 32u || ch >= 127u) continue;
             if (s_focus >= 0) {
-                const size_t n = strlen(s_buf);
-                const size_t cap = s_focus == F_NAME ? PSX_CARD_PACK_NAME_MAX : s_focus == F_DESC ? PSX_CARD_PACK_DESC_MAX :
-                                   s_focus == F_PASSWORD ? 8 : s_focus == F_EQUIPS ? FTEXT - 8 : s_focus == F_BOOST ? 500 : s_focus == F_RITUAL ? 40 :
-                                   6;
-                if (n < cap) { s_buf[n] = (char)ch; s_buf[n + 1] = 0; }
+                const char one[2] = { (char)ch, 0 };
+                text_insert(one);
             } else {
                 const size_t n = strlen(s_search);
                 if (n + 1 < sizeof s_search) { s_search[n] = (char)ch; s_search[n + 1] = 0; s_scroll = 0; rebuild_order(); }
@@ -1946,8 +2215,8 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         for (int i = 0; i < 5; i++) psx_card_packs_format_trigger(trig_at(i), tr[i], sizeof tr[i]);
         psx_card_packs_format_bonus(&s_edit, bo, sizeof bo);
         if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "\"monster\":{\"battle\":\"%s\",\"on_summon\":\"%s\",\"on_flip\":\"%s\",\"on_death\":\"%s\",\"on_attack\":\"%s\",\"each_turn\":\"%s\",\"bonus\":\"%s\",\"immune\":\"%s\"},"
-                                             "\"drop\":%d,\"pick\":%d,\"trig_first\":%d,\"branches\":%d,\"bonus_first\":%d",
-                                             t[F_BATTLE], tr[0], tr[1], tr[2], tr[3], tr[4], bo, t[F_IMMUNE], s_drop, s_pick, F_TRIG_FIRST, PSX_CARD_BRANCHES, F_BONUS_FLAT);
+                                             "\"drop\":%d,\"pick\":%d,\"trig_first\":%d,\"branches\":%d,\"bonus_first\":%d,\"caret\":%d,\"anchor\":%d",
+                                             t[F_BATTLE], tr[0], tr[1], tr[2], tr[3], tr[4], bo, t[F_IMMUNE], s_drop, s_pick, F_TRIG_FIRST, PSX_CARD_BRANCHES, F_BONUS_FLAT, s_car, s_anchor);
     }
     if (s_win && n < cap) {
         n += (unsigned)snprintf(out + n, cap - n, ",\"rows\":[%d,%d,%d,%d],\"row_h\":%d,\"visible\":%d,\"sb\":[%d,%d,%d,%d],\"value\":[",
@@ -2043,22 +2312,26 @@ int psx_card_manager_type(const char *text)
     return SDL_PushEvent(&ev) == 1;
 }
 
-int psx_card_manager_key(int sdl_key)
+int psx_card_manager_key_mod(int sdl_key, int mods)
 {
     if (!s_win) return 0;
     SDL_Event ev;
     SDL_zero(ev);
     ev.type = SDL_KEYDOWN;
     ev.key.windowID = SDL_GetWindowID(s_win);
+    const int m = ((mods & 1) ? KMOD_LSHIFT : 0) | ((mods & 2) ? KMOD_LCTRL : 0);
 #if defined(PSX_SDL3)
     ev.key.key = (SDL_Keycode)sdl_key;
     ev.key.down = true;
+    ev.key.mod = (SDL_Keymod)m;
 #else
     ev.key.keysym.sym = (SDL_Keycode)sdl_key;
+    ev.key.keysym.mod = (Uint16)m;
     ev.key.state = SDL_PRESSED;
 #endif
     return SDL_PushEvent(&ev) == 1;
 }
+int psx_card_manager_key(int sdl_key) { return psx_card_manager_key_mod(sdl_key, 0); }
 
 void psx_card_manager_import_preview(const char *path)
 {
