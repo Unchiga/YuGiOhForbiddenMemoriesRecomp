@@ -1,8 +1,9 @@
 #!/bin/sh
 # Yu-Gi-Oh! Forbidden Memories - Recompiled  (Linux launcher)
 #
-#   ./Play.sh          release build  (build/)
-#   ./Play.sh -dbg     debug build    (build-dbg/, TCP debug server on 127.0.0.1:4370)
+#   ./Play.sh          debug build when it exists (build-dbg/, TCP debug server on 127.0.0.1:4370), else release
+#   ./Play.sh -dbg     debug build
+#   ./Play.sh -rel     release build  (build/)
 #
 # Extra arguments are passed to the runtime (e.g. --disc <path>).
 # Runs from the build dir so saves/settings/bios resolve beside the executable.
@@ -12,7 +13,9 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 DIR="$HERE/build"
+if [ -x "$HERE/build-dbg/Yu_Gi_Oh_Forbidden_Memories_Recompiled" ]; then DIR="$HERE/build-dbg"; fi
 if [ "$1" = "-dbg" ]; then DIR="$HERE/build-dbg"; shift; fi
+if [ "$1" = "-rel" ] || [ "$1" = "--release" ]; then DIR="$HERE/build"; shift; fi
 EXE="$DIR/Yu_Gi_Oh_Forbidden_Memories_Recompiled"
 if [ ! -x "$EXE" ]; then
     echo "ERROR: build not found: $EXE" >&2
