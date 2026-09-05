@@ -253,8 +253,7 @@ static int ctl_len(const uint8_t *b, int i, int n, int *choices, int *ptr_at, in
                 if (v > here && (minfwd < 0 || v < minfwd)) minfwd = v;
             }
             len = j - i;
-        } else if (sub == 0x0D) { len = SZ[sub]; PTR(6); }      /* the duel: its intro line's bank offset */
-        else if (sub < 0x20) len = SZ[sub];
+        } else if (sub < 0x20) len = SZ[sub];    /* F8 0D's halfword is a name-table index (0x7000 + n), not an address */
         else len = 2;
     } else if (c == 0xF9) {
         const int v = i + 2 < n ? (b[i + 1] | (b[i + 2] << 8)) : 0;
@@ -795,40 +794,38 @@ static void write_bank(void)
         if (s_table_new[i] != s_table[i]) psx_mod_write_half(TABLE_ADDR + (uint32_t)i * 2u, s_table_new[i]);
 }
 
-/* Per frame: the rebuilt bank must be in RAM (a savestate puts the stock
- * bytes back), and two duel-intro defaults the code carries as plain
- * numbers (0x71D0 / 0x7270, see func_80030F40) follow their texts. */
-#define INTRO_DEFAULT_A 0x71D0u
-#define INTRO_DEFAULT_B 0x7270u
-#define INTRO_VAR       0x8009B36Au
+/* Per frame: RAM must hold the bank we want. A savestate brings back
+ * whatever bank it was saved with (stock, or an older rebuild), so 64
+ * words spread over the story region and a few table entries are compared
+ * every frame and the whole thing is written again on any difference. */
+static void restore_bank(void);
+static const uint8_t *bank_wanted(void) { return s_active ? s_image : s_bank; }
+static const uint16_t *table_wanted(void) { return s_active ? s_table_new : s_table; }
 static void assert_bank(void)
 {
-    if (!s_active) { s_patched = 0; return; }
-    const uint32_t probe = s_rebuilt_lo & ~3u;
-    const uint32_t want = (uint32_t)s_image[probe] | ((uint32_t)s_image[probe + 1] << 8) | ((uint32_t)s_image[probe + 2] << 16) | ((uint32_t)s_image[probe + 3] << 24);
-    const uint32_t tail = (s_rebuilt_hi - 4u) & ~3u;
-    const uint32_t want2 = (uint32_t)s_image[tail] | ((uint32_t)s_image[tail + 1] << 8) | ((uint32_t)s_image[tail + 2] << 16) | ((uint32_t)s_image[tail + 3] << 24);
-    int fresh = psx_mod_read_word(BANK_BASE + probe) != want || psx_mod_read_word(BANK_BASE + tail) != want2;
-    if (!fresh) {
-        for (int i = 0x400; i < TABLE_N; i += 37)
-            if (psx_mod_read_half(TABLE_ADDR + (uint32_t)i * 2u) != s_table_new[i]) { fresh = 1; break; }
+    const uint8_t *img = bank_wanted();
+    const uint16_t *tab = table_wanted();
+    const uint32_t lo = story_first() & ~3u, hi = TRAMP_END;
+    int fresh = 0;
+    for (int k = 0; k < 64 && !fresh; k++) {
+        const uint32_t o = (lo + ((hi - lo) / 64u) * (uint32_t)k) & ~3u;
+        const uint32_t want = (uint32_t)img[o] | ((uint32_t)img[o + 1] << 8) | ((uint32_t)img[o + 2] << 16) | ((uint32_t)img[o + 3] << 24);
+        if (psx_mod_read_word(BANK_BASE + o) != want) fresh = 1;
     }
-    if (fresh) write_bank();
-    s_patched = 1;
-    const uint16_t v = psx_mod_read_half(INTRO_VAR);
-    if ((v == INTRO_DEFAULT_A || v == INTRO_DEFAULT_B) && s_newoff[v] && s_newoff[v] != v) psx_mod_write_half(INTRO_VAR, s_newoff[v]);
+    for (int i = 0x400; i < TABLE_N && !fresh; i += 37)
+        if (psx_mod_read_half(TABLE_ADDR + (uint32_t)i * 2u) != tab[i]) fresh = 1;
+    if (fresh) { if (s_active) write_bank(); else restore_bank(); }
+    s_patched = s_active;
 }
 
 /* the stock bytes back (a cleared translation) */
 static void restore_bank(void)
 {
-    for (uint32_t o = s_rebuilt_lo & ~3u; o < TRAMP_END; o += 4) {
+    for (uint32_t o = story_first() & ~3u; o < TRAMP_END; o += 4) {
         const uint32_t w = (uint32_t)s_bank[o] | ((uint32_t)s_bank[o + 1] << 8) | ((uint32_t)s_bank[o + 2] << 16) | ((uint32_t)s_bank[o + 3] << 24);
         psx_mod_write_word(BANK_BASE + o, w);
     }
     for (int i = 0; i < TABLE_N; i++) psx_mod_write_half(TABLE_ADDR + (uint32_t)i * 2u, s_table[i]);
-    const uint16_t v = psx_mod_read_half(INTRO_VAR);
-    for (uint32_t o = 0; o < 0x10000u; o++) if (s_newoff[o] == v && o != v && (o == INTRO_DEFAULT_A || o == INTRO_DEFAULT_B)) { psx_mod_write_half(INTRO_VAR, (uint16_t)o); break; }
 }
 
 /* ---- apply a parsed block --------------------------------------------------------- */
