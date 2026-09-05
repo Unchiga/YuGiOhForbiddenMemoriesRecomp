@@ -82,6 +82,7 @@
  * otherwise. Glyphs are the game's 92 characters as UTF-8. Encoding a
  * decoded stock run gives the stock bytes back exactly (checked at boot). */
 
+#include "psx_textfile.h"
 #include "psx_dialogue.h"
 
 #include <stdio.h>
@@ -924,7 +925,7 @@ static void write_header(FILE *f, const char *what)
 int psx_dialogue_export(const char *path, char *err, unsigned errcap)
 {
     if (!s_ready) { snprintf(err, errcap, "The game's text is not loaded yet"); return 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) { snprintf(err, errcap, "Cannot write %s", path); return 0; }
     char stamp[64];
     time_t t = time(NULL);
@@ -964,7 +965,7 @@ int psx_dialogue_export(const char *path, char *err, unsigned errcap)
 int psx_dialogue_export_raw(const char *path, char *err, unsigned errcap)
 {
     if (!s_ready) { snprintf(err, errcap, "The game's text is not loaded yet"); return 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) { snprintf(err, errcap, "Cannot write %s", path); return 0; }
     int tr = psx_dialogue_translated_count();
     char what[96];
@@ -1003,8 +1004,8 @@ static Run *run_by_key(uint32_t key)
 static int copy_file(const char *from, const char *to)
 {
     if (!strcmp(from, to)) return 1;
-    FILE *a = fopen(from, "rb"); if (!a) return 0;
-    FILE *b = fopen(to, "wb");   if (!b) { fclose(a); return 0; }
+    FILE *a = psx_fopen_utf8(from, "rb"); if (!a) return 0;
+    FILE *b = psx_fopen_utf8(to, "wb");   if (!b) { fclose(a); return 0; }
     char buf[8192]; size_t n;
     while ((n = fread(buf, 1, sizeof buf, a)) > 0) fwrite(buf, 1, n, b);
     fclose(a); fclose(b);
@@ -1015,17 +1016,11 @@ static int copy_file(const char *from, const char *to)
 static int import_file(const char *path, int persist, char *err, unsigned errcap)
 {
     if (!s_ready) { snprintf(err, errcap, "The game's text is not loaded yet"); return 0; }
-    FILE *f = fopen(path, "rb");
-    if (!f) { snprintf(err, errcap, "Cannot open %s", path); return 0; }
-    fseek(f, 0, SEEK_END); const long sz = ftell(f); fseek(f, 0, SEEK_SET);
-    if (sz <= 0 || sz > 16 * 1024 * 1024) { fclose(f); snprintf(err, errcap, "%s is empty or too large", path); return 0; }
-    char *data = (char *)malloc((size_t)sz + 1);
-    const size_t got = fread(data, 1, (size_t)sz, f);
-    fclose(f);
-    data[got] = 0;
-    /* skip a UTF-8 BOM */
+    size_t got = 0;
+    char *data = psx_read_text_utf8(path, &got, 16 * 1024 * 1024);
+    if (!data) { snprintf(err, errcap, "Cannot read %s (missing, or over 16 MB)", path); return 0; }
+    if (!got) { free(data); snprintf(err, errcap, "%s is empty", path); return 0; }
     char *p = data;
-    if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3;
 
     /* pass 1: collect blocks (key, text) -- the text keeps its line breaks */
     typedef struct { uint32_t key; char *text; int line; int plain; } Block;

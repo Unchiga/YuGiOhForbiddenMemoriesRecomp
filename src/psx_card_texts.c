@@ -23,6 +23,7 @@
  * active set and lets psx_card_packs apply them, so the manager, the share
  * file and the hot reload all see the same edit. */
 
+#include "psx_textfile.h"
 #include "psx_card_texts.h"
 
 #include <stdio.h>
@@ -52,7 +53,7 @@ static void effective(int id, const PsxCardStock *st, char *name, unsigned ncap,
 int psx_card_texts_export(const char *path, char *err, unsigned errcap)
 {
     if (!psx_card_db_ready()) { snprintf(err, errcap, "The game's card table is not loaded yet"); return 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) { snprintf(err, errcap, "Cannot write %s", path); return 0; }
     char stamp[64];
     time_t t = time(NULL);
@@ -189,14 +190,10 @@ static void apply_block(Tally *t, int id, const char *name, char *desc, int bloc
 int psx_card_texts_import(const char *path, char *err, unsigned errcap)
 {
     if (!psx_card_db_ready()) { snprintf(err, errcap, "The game's card table is not loaded yet"); return 0; }
-    FILE *f = fopen(path, "rb");
-    if (!f) { snprintf(err, errcap, "Cannot open %s", path); return 0; }
-    fseek(f, 0, SEEK_END); const long sz = ftell(f); fseek(f, 0, SEEK_SET);
-    if (sz <= 0 || sz > 4 * 1024 * 1024) { fclose(f); snprintf(err, errcap, "%s is empty or too large", path); return 0; }
-    char *data = (char *)malloc((size_t)sz + 1);
-    const size_t got = fread(data, 1, (size_t)sz, f);
-    fclose(f);
-    data[got] = 0;
+    size_t got = 0;
+    char *data = psx_read_text_utf8(path, &got, 4 * 1024 * 1024);
+    if (!data) { snprintf(err, errcap, "Cannot read %s (missing, or over 4 MB)", path); return 0; }
+    if (!got) { free(data); snprintf(err, errcap, "%s is empty", path); return 0; }
     char *p = data;
     if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) p += 3;
 

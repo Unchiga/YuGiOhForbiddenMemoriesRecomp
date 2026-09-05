@@ -20,6 +20,7 @@
  * each renderer call; without that the game window goes black and the
  * driver faults at present. */
 
+#include "psx_textfile.h"
 #include "psx_card_manager.h"
 
 #include <stdio.h>
@@ -1448,7 +1449,7 @@ static int install_pick(const char *src, int kind)
     card_folder(dst, sizeof dst, 1);
     const size_t n = strlen(dst);
     snprintf(dst + n, sizeof dst - n, "/%s", names[kind]);
-    FILE *in = fopen(src, "rb");
+    FILE *in = psx_fopen_utf8(src, "rb");
     if (!in) return 0;
     FILE *out = fopen(dst, "wb");
     if (!out) { fclose(in); return 0; }

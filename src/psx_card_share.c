@@ -6,6 +6,7 @@
  * files>, manifest.ini, drop_table_edits.ini), sizes are bounded, and
  * nothing outside the player's cards/ folder is ever written. */
 
+#include "psx_textfile.h"
 #include "psx_card_share.h"
 
 #include <stdio.h>
@@ -56,7 +57,7 @@ static uint32_t crc32_buf(const uint8_t *p, size_t n)
 /* ---- small file helpers ---------------------------------------------------- */
 static unsigned char *read_file(const char *path, long *size)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = psx_fopen_utf8(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     const long n = ftell(f);
@@ -73,7 +74,7 @@ static unsigned char *read_file(const char *path, long *size)
 
 static int write_file(const char *path, const void *data, size_t n)
 {
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return 0;
     const int ok = fwrite(data, 1, n, f) == n;
     fclose(f);
@@ -156,7 +157,7 @@ int psx_card_share_export(const char *path, char *msg, unsigned cap)
 {
     char dir[1024]; cards_dir(dir, sizeof dir);
     Zip z; memset(&z, 0, sizeof z);
-    z.f = fopen(path, "wb");
+    z.f = psx_fopen_utf8(path, "wb");
     if (!z.f) { if (msg) snprintf(msg, cap, "Could not create %s", path); return 0; }
     {
         const time_t t = time(NULL);

@@ -12,6 +12,7 @@
  * accelerated one elsewhere with the game's GL context put back after every
  * renderer call (PSX_TOOL_RENDERER overrides). */
 
+#include "psx_textfile.h"
 #include "psx_dialogue_manager.h"
 
 #include <stdio.h>
@@ -749,7 +750,7 @@ int psx_dialogue_manager_shot(const char *path)
 {
     if (!s_win || !s_px || !path) return 0;
     if (s_dirty) { draw(); s_dirty = 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return 0;
     fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
     for (int i = 0; i < s_w * s_h; i++) {
