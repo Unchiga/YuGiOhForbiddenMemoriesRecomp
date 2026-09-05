@@ -197,24 +197,20 @@ static char      s_dir[1024], s_file[1200];
 static int       s_dir_ok;
 
 /* guest side */
-static uint32_t  s_arena;             /* guest address, 0 until the first translation */
-static uint8_t  *s_arena_img;         /* host copy of what the arena should hold */
-static uint32_t  s_arena_len;
 static uint32_t  s_map[0x10000];      /* low 16 bits of a bank address -> guest address of its copy, 0 = none */
-/* A jump trampoline: a space glyph inside the jumping copy's own 64 KB
- * segment whose following address `at` is mapped to the real target. The
- * game resolves a jump operand inside the CURRENT stream's segment, so a
- * copy at 0x9F0xxxxx can never jump straight into the bank or another
- * segment. */
-typedef struct { uint32_t at, to; } Jump;
-static Jump      s_jumps[MAX_JUMPS];
-static int       s_njumps;
-static uint32_t  s_base;              /* the arena's first 64 KB-aligned address */
-static uint32_t  s_alloc;             /* what psx_mod_alloc_guest_memory gave (s_base rounds it up) */
-static int       s_active;            /* the redirect is wanted */
-static int       s_patched;           /* trampolines seen in place */
+/* The bank as it should be while translations are live: the same model
+ * TEA's editor uses, everything stays inside the game's own 64 KB text
+ * bank and every pointer is shifted when a text grows. The menu texts and
+ * the player-name slot before the first story text keep their places; the
+ * story texts are laid out again from there. */
+static uint8_t   s_image[BANK_SIZE];
+static uint16_t  s_table_new[TABLE_N];
+static uint16_t  s_newoff[0x10000];   /* stock bank offset of a run start / anchor -> where it is now (0 = none) */
+static uint32_t  s_rebuilt_lo, s_rebuilt_hi;   /* the rewritten range of the bank */
+static uint32_t  s_used, s_room;      /* bytes the story texts take, and the most they may */
+static int       s_active;            /* a rebuilt bank is wanted */
+static int       s_patched;           /* it is in RAM */
 static uint32_t  s_width_rec, s_width_val; /* the record whose advance width is held at 0, and its value */
-static unsigned  s_dbg_steps, s_dbg_remaps, s_dbg_tramp_hits, s_dbg_last_ptr, s_dbg_last_to, s_dbg_last_rec, s_dbg_depth;
 
 static void bump(void) { s_generation++; }
 
@@ -257,7 +253,8 @@ static int ctl_len(const uint8_t *b, int i, int n, int *choices, int *ptr_at, in
                 if (v > here && (minfwd < 0 || v < minfwd)) minfwd = v;
             }
             len = j - i;
-        } else if (sub < 0x20) len = SZ[sub];
+        } else if (sub == 0x0D) { len = SZ[sub]; PTR(6); }      /* the duel: its intro line's bank offset */
+        else if (sub < 0x20) len = SZ[sub];
         else len = 2;
     } else if (c == 0xF9) {
         const int v = i + 2 < n ? (b[i + 1] | (b[i + 2] << 8)) : 0;
@@ -702,197 +699,136 @@ fail:
     return NULL;
 }
 
-/* ---- guest memory: arena, map, trampolines, hooks ---------------------------------- */
-static int guest_alloc(void)
+/* ---- the rebuilt bank ----------------------------------------------------------------- */
+/* Rewrite the pointer operands of one run's bytes (already at `dst`) through s_newoff. */
+static void fix_pointers(uint8_t *dst, int n, int bank_off)
 {
-    if (s_arena) return 1;
-    s_alloc = psx_mod_alloc_guest_memory(ARENA_BYTES + SEG_BYTES, 16);
-    if (!s_alloc) return 0;
-    s_base = (s_alloc + SEG_BYTES - 1u) & ~(SEG_BYTES - 1u);
-    s_arena = s_base;
-    s_arena_img = (uint8_t *)calloc(ARENA_BYTES, 1);
-    return 1;
-}
-static const Jump *jump_at(uint32_t addr)
-{
-    for (int i = 0; i < s_njumps; i++) if (s_jumps[i].at == addr) return &s_jumps[i];
-    return NULL;
-}
-
-/* Put the host image into guest memory (the arena is rebuilt as a whole on
- * every import, and re-sent when a savestate dropped it). */
-static void upload_guest(void)
-{
-    if (!s_arena) return;
-    for (uint32_t i = 0; i < ARENA_BYTES; i += 4) {
-        const uint32_t w = (uint32_t)s_arena_img[i] | ((uint32_t)s_arena_img[i + 1] << 8)
-                         | ((uint32_t)s_arena_img[i + 2] << 16) | ((uint32_t)s_arena_img[i + 3] << 24);
-        if (i >= s_arena_len + 4u && !w) continue;      /* the tail is already zero */
-        psx_mod_write_word(s_arena + i, w);
-    }
-}
-
-/* Lay every translated run into the arena, fill the map, then give every
- * pointer operand whose target is mapped a trampoline. Returns 0 when the
- * trampolines do not fit (the import reports it). */
-/* The offsets of every page break (FA) in a text and of the byte after
- * it: the game itself jumps to a later page of a text it has shown before
- * (the shop's greeting opens on its last page), reading the stock stream
- * to find it, so those spots are mapped to the translation's pages too. */
-static int page_marks(const uint8_t *b, int n, int bank_off, int *out, int max)
-{
-    int k = 0, choices = 2;
-    for (int p = 0; p < n && k + 1 < max;) {
-        const uint8_t c = b[p];
+    int choices = 2;
+    for (int p = 0; p < n;) {
+        const uint8_t c = dst[p];
         if (c == 0xFF) break;
-        if (c < 0xF0 || c == 0xFE) { p++; continue; }
-        if (c == 0xFA) { out[k++] = p; out[k++] = p + 1; p++; continue; }
+        if (c < 0xF0 || c == 0xFE || c == 0xFA) { p++; continue; }
         int ptr_at[16], np = 0;
-        const int l = ctl_len(b, p, n, &choices, ptr_at, &np, bank_off);
+        const int l = ctl_len(dst, p, n, &choices, ptr_at, &np, bank_off + p);
+        for (int q = 0; q < np; q++) {
+            const int at = p + ptr_at[q];
+            if (at + 1 >= n) continue;
+            const uint16_t old = (uint16_t)(dst[at] | (dst[at + 1] << 8));
+            const uint16_t now = s_newoff[old];
+            if (now) { dst[at] = (uint8_t)(now & 0xFF); dst[at + 1] = (uint8_t)(now >> 8); }
+        }
         p += l < 1 ? 1 : l;
     }
-    return k;
 }
 
-static int relayout(void)
+/* Lay the story texts out again in the bank, translations in place of
+ * their originals, and shift the string table and every pointer. Returns 1,
+ * or 0 with the reason (the texts do not fit). */
+static int rebuild_bank(char *err, unsigned errcap)
 {
     int any = 0;
     for (int i = 0; i < s_nruns; i++) if (s_runs[i].enc) { any = 1; break; }
-    memset(s_map, 0, sizeof s_map);
-    s_njumps = 0;
+    memcpy(s_image, s_bank, BANK_SIZE);
+    memcpy(s_table_new, s_table, sizeof s_table_new);
+    memset(s_newoff, 0, sizeof s_newoff);
+    const uint32_t first = story_first();
+    s_rebuilt_lo = first; s_rebuilt_hi = first;
+    s_room = TRAMP_END - first;
+    s_used = 0;
     if (!any) { s_active = 0; return 1; }
-    if (!guest_alloc()) { s_active = 0; return 0; }
-    memset(s_arena_img, 0, ARENA_BYTES);
-    s_arena_img[0] = (uint8_t)ARENA_MAGIC; s_arena_img[1] = (uint8_t)(ARENA_MAGIC >> 8);
-    s_arena_img[2] = (uint8_t)(ARENA_MAGIC >> 16); s_arena_img[3] = (uint8_t)(ARENA_MAGIC >> 24);
-    /* copies never straddle a segment, and leave each segment's top for trampolines */
-    uint32_t at = ARENA_HEAD;
-    int ok = 1;
+    /* pass 1: where everything goes */
+    uint32_t cursor = first;
     for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
-        if (!r->enc) continue;
-        const uint32_t len = (uint32_t)r->enc_len;
-        if ((at & (SEG_BYTES - 1u)) + len > SEG_BYTES - SEG_TRAMP) at = (at & ~(SEG_BYTES - 1u)) + SEG_BYTES;
-        if (at + len > ARENA_BYTES - SEG_TRAMP) { r->reloc = 0; ok = 0; continue; }
-        memcpy(s_arena_img + at, r->enc, (size_t)len);
-        r->reloc = s_arena + at;
-        s_map[r->start & 0xFFFFu] = r->reloc;
-        for (int k = 0; k < r->nanch; k++)
-            if (r->enc_pos[k] >= 0) s_map[r->anch[k].off & 0xFFFFu] = r->reloc + (uint32_t)r->enc_pos[k];
-        {
-            /* page k of the stock text -> page k of the translation (its last page when it has fewer) */
-            int sp[512], tp[512];
-            const int ns = page_marks(s_bank + r->start, (int)(r->end - r->start), (int)r->start, sp, 512);
-            const int nt = page_marks(r->enc, r->enc_len, (int)r->start, tp, 512);
-            for (int k = 0; k < ns && nt > 0; k++) {
-                const int j = k < nt ? k : nt - 2 + (k & 1);
-                const uint32_t off = (r->start + (uint32_t)sp[k]) & 0xFFFFu;
-                if (!s_map[off]) s_map[off] = r->reloc + (uint32_t)tp[j];
-            }
+        if (r->start < first) {
+            s_newoff[r->start] = (uint16_t)r->start;
+            for (int k = 0; k < r->nanch; k++) s_newoff[r->anch[k].off] = r->anch[k].off;
+            continue;
         }
-        at += len;
+        const uint32_t len = r->enc ? (uint32_t)r->enc_len : r->end - r->start;
+        r->reloc = cursor;
+        s_newoff[r->start] = (uint16_t)cursor;
+        for (int k = 0; k < r->nanch; k++) {
+            if (r->enc) s_newoff[r->anch[k].off] = (uint16_t)(r->enc_pos[k] >= 0 ? cursor + (uint32_t)r->enc_pos[k] : cursor);
+            else s_newoff[r->anch[k].off] = (uint16_t)(cursor + (r->anch[k].off - r->start));
+        }
+        cursor += len;
     }
-    s_arena_len = at;
-    /* pointer operands: the target's own low 16 bits when it lives in the
-     * jumping copy's segment, else a trampoline there */
-    uint32_t tramp_next[ARENA_BYTES / SEG_BYTES];
-    for (unsigned g = 0; g < ARENA_BYTES / SEG_BYTES; g++) tramp_next[g] = s_arena + g * SEG_BYTES + SEG_BYTES - 1u;
-    for (int i = 0; i < s_nruns && ok; i++) {
+    s_used = cursor - first;
+    if (cursor > TRAMP_END) {
+        snprintf(err, errcap, "the texts are %u bytes too long for the game's text bank (it holds %u bytes of story text; shorten some texts)", cursor - TRAMP_END, s_room);
+        s_active = 0;
+        return 0;
+    }
+    /* pass 2: the bytes, pointers shifted */
+    uint8_t *tmp = (uint8_t *)calloc(BANK_SIZE, 1);
+    for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
-        if (!r->enc || !r->reloc) continue;
-        const uint32_t seg = r->reloc & ~(SEG_BYTES - 1u);
-        const unsigned g = (r->reloc - s_arena) / SEG_BYTES;
-        for (int k = 0; k < r->nptr; k++) {
-            const uint16_t x = r->ptr_val[k];
-            const uint32_t tgt = s_map[x] ? s_map[x] : (BANK_BASE | x);
-            uint32_t operand;
-            if ((tgt & ~(SEG_BYTES - 1u)) == seg) operand = tgt & 0xFFFFu;
-            else {
-                /* one trampoline per (segment, target) */
-                uint32_t t = 0;
-                for (int j = 0; j < s_njumps; j++)
-                    if (s_jumps[j].to == tgt && ((s_jumps[j].at - 1u) & ~(SEG_BYTES - 1u)) == seg) { t = s_jumps[j].at - 1u; break; }
-                if (!t) {
-                    if (s_njumps >= MAX_JUMPS || tramp_next[g] < seg + SEG_BYTES - SEG_TRAMP) { ok = 0; break; }
-                    t = tramp_next[g]--;
-                    s_arena_img[t - s_arena] = 0;              /* a space: the emitter hook hides it */
-                    s_jumps[s_njumps].at = t + 1u; s_jumps[s_njumps].to = tgt; s_njumps++;
-                }
-                operand = t & 0xFFFFu;
-            }
-            const uint32_t off = r->reloc - s_arena + (uint32_t)r->ptr_pos[k];
-            s_arena_img[off] = (uint8_t)(operand & 0xFF);
-            s_arena_img[off + 1] = (uint8_t)(operand >> 8);
+        if (r->start < first) {
+            fix_pointers(s_image + r->start, (int)(r->end - r->start), (int)r->start);
+            continue;
         }
+        const uint32_t len = r->enc ? (uint32_t)r->enc_len : r->end - r->start;
+        memcpy(tmp + r->reloc, r->enc ? r->enc : s_bank + r->start, (size_t)len);
+        fix_pointers(tmp + r->reloc, (int)len, (int)r->reloc);
     }
-    upload_guest();
-    s_active = ok;
-    return ok;
+    memcpy(s_image + first, tmp + first, (size_t)(TRAMP_END - first));   /* the tail beyond the texts is zero, as stock */
+    free(tmp);
+    s_rebuilt_hi = cursor;
+    /* the string table */
+    for (int i = 0; i < TABLE_N; i++) {
+        if (i >= DESC_FIRST && i <= DESC_LAST) continue;
+        const uint16_t v = s_table[i];
+        if (v >= first && s_newoff[v]) s_table_new[i] = s_newoff[v];
+    }
+    s_active = 1;
+    return 1;
 }
 
-static uint32_t rec_slot(uint32_t rec)
+static void write_bank(void)
 {
-    const int depth = (int8_t)psx_mod_read_byte(rec + 0x58u);
-    if (depth < 0 || depth > 7) return 0;
-    return rec + (uint32_t)depth * 4u;
+    for (uint32_t o = s_rebuilt_lo & ~3u; o < TRAMP_END; o += 4) {
+        const uint32_t w = (uint32_t)s_image[o] | ((uint32_t)s_image[o + 1] << 8) | ((uint32_t)s_image[o + 2] << 16) | ((uint32_t)s_image[o + 3] << 24);
+        psx_mod_write_word(BANK_BASE + o, w);
+    }
+    for (int i = 0; i < TABLE_N; i++)
+        if (s_table_new[i] != s_table[i]) psx_mod_write_half(TABLE_ADDR + (uint32_t)i * 2u, s_table_new[i]);
 }
 
-/* BuildStep's entry: a0 = the textbox record. Restore the advance width a
- * trampoline glyph zeroed, then move the stream pointer to the translated
- * copy when the map has it. */
-static void hook_buildstep(struct CPUState *cpu, uint32_t address)
-{
-    (void)address;
-    if (!cpu) return;
-    const uint32_t rec = cpu->gpr[4];
-    if (s_width_rec && rec == s_width_rec) {
-        psx_mod_write_byte(rec + 0x5Au, (uint8_t)s_width_val);
-        s_width_rec = 0;
-    }
-    if (!s_active || rec < 0x80000000u || rec >= 0x80200000u) return;
-    const uint32_t slot = rec_slot(rec);
-    if (!slot) return;
-    const uint32_t ptr = psx_mod_read_word(slot);
-    s_dbg_steps++; s_dbg_last_ptr = ptr; s_dbg_last_rec = rec; s_dbg_depth = (unsigned)(int8_t)psx_mod_read_byte(rec + 0x58u);
-    if ((ptr & 0xFFFF0000u) == BANK_BASE) {
-        const uint32_t to = s_map[ptr & 0xFFFFu];
-        if (to) { psx_mod_write_word(slot, to); s_dbg_remaps++; s_dbg_last_to = to; }
-        return;
-    }
-    if (s_arena && ptr >= s_arena && ptr < s_arena + ARENA_BYTES) {
-        const Jump *j = jump_at(ptr);              /* just past a trampoline's space */
-        if (j) { psx_mod_write_word(slot, j->to); s_dbg_remaps++; s_dbg_last_to = j->to; }
-    }
-}
-
-/* The glyph emitter's entry: a0 = record, the glyph just read is at
- * pointer-1. For a trampoline's space, hold the advance width at 0 until
- * the next BuildStep entry and un-count the glyph. */
-static void hook_emitter(struct CPUState *cpu, uint32_t address)
-{
-    (void)address;
-    if (!s_active || !cpu) return;
-    const uint32_t rec = cpu->gpr[4];
-    if (rec < 0x80000000u || rec >= 0x80200000u) return;
-    const uint32_t slot = rec_slot(rec);
-    if (!slot) return;
-    const uint32_t ptr = psx_mod_read_word(slot);
-    if (!s_arena || ptr < s_arena || ptr >= s_arena + ARENA_BYTES) return;
-    if (!jump_at(ptr)) return;                     /* the glyph just read was a trampoline's space */
-    s_dbg_tramp_hits++;
-    if (!s_width_rec) { s_width_rec = rec; s_width_val = psx_mod_read_byte(rec + 0x5Au); }
-    psx_mod_write_byte(rec + 0x5Au, 0);
-    psx_mod_write_byte(rec + 0x60u, (uint8_t)(psx_mod_read_byte(rec + 0x60u) - 1u));
-}
-
-/* Per frame: the trampoline bytes must be in place while a translation is
- * live (savestates put the zeros back), and the arena must still hold the
- * texts. */
-static void assert_guest(void)
+/* Per frame: the rebuilt bank must be in RAM (a savestate puts the stock
+ * bytes back), and two duel-intro defaults the code carries as plain
+ * numbers (0x71D0 / 0x7270, see func_80030F40) follow their texts. */
+#define INTRO_DEFAULT_A 0x71D0u
+#define INTRO_DEFAULT_B 0x7270u
+#define INTRO_VAR       0x8009B36Au
+static void assert_bank(void)
 {
     if (!s_active) { s_patched = 0; return; }
+    const uint32_t probe = s_rebuilt_lo & ~3u;
+    const uint32_t want = (uint32_t)s_image[probe] | ((uint32_t)s_image[probe + 1] << 8) | ((uint32_t)s_image[probe + 2] << 16) | ((uint32_t)s_image[probe + 3] << 24);
+    const uint32_t tail = (s_rebuilt_hi - 4u) & ~3u;
+    const uint32_t want2 = (uint32_t)s_image[tail] | ((uint32_t)s_image[tail + 1] << 8) | ((uint32_t)s_image[tail + 2] << 16) | ((uint32_t)s_image[tail + 3] << 24);
+    int fresh = psx_mod_read_word(BANK_BASE + probe) != want || psx_mod_read_word(BANK_BASE + tail) != want2;
+    if (!fresh) {
+        for (int i = 0x400; i < TABLE_N; i += 37)
+            if (psx_mod_read_half(TABLE_ADDR + (uint32_t)i * 2u) != s_table_new[i]) { fresh = 1; break; }
+    }
+    if (fresh) write_bank();
     s_patched = 1;
-    if (psx_mod_read_word(s_arena) != ARENA_MAGIC) upload_guest();
+    const uint16_t v = psx_mod_read_half(INTRO_VAR);
+    if ((v == INTRO_DEFAULT_A || v == INTRO_DEFAULT_B) && s_newoff[v] && s_newoff[v] != v) psx_mod_write_half(INTRO_VAR, s_newoff[v]);
+}
+
+/* the stock bytes back (a cleared translation) */
+static void restore_bank(void)
+{
+    for (uint32_t o = s_rebuilt_lo & ~3u; o < TRAMP_END; o += 4) {
+        const uint32_t w = (uint32_t)s_bank[o] | ((uint32_t)s_bank[o + 1] << 8) | ((uint32_t)s_bank[o + 2] << 16) | ((uint32_t)s_bank[o + 3] << 24);
+        psx_mod_write_word(BANK_BASE + o, w);
+    }
+    for (int i = 0; i < TABLE_N; i++) psx_mod_write_half(TABLE_ADDR + (uint32_t)i * 2u, s_table[i]);
+    const uint16_t v = psx_mod_read_half(INTRO_VAR);
+    for (uint32_t o = 0; o < 0x10000u; o++) if (s_newoff[o] == v && o != v && (o == INTRO_DEFAULT_A || o == INTRO_DEFAULT_B)) { psx_mod_write_half(INTRO_VAR, (uint16_t)o); break; }
 }
 
 /* ---- apply a parsed block --------------------------------------------------------- */
@@ -1153,24 +1089,22 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
         snprintf(err, errcap, "Nothing imported: %d text%s could not be read. %s", errors, errors == 1 ? "" : "s", warn);
         return 0;
     }
-    if (total > ARENA_BYTES) {
-        for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
-        memcpy(s_runs, snap, sizeof(Run) * (size_t)s_nruns);
-        free(snap);
-        snprintf(err, errcap, "Nothing imported: the translated texts need %u bytes and the game has room for %u", total, ARENA_BYTES - ARENA_HEAD);
-        return 0;
+    (void)total;
+    {
+        char why[256];
+        if (!rebuild_bank(why, sizeof why)) {
+            /* roll back to what was live */
+            for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
+            memcpy(s_runs, snap, sizeof(Run) * (size_t)s_nruns);
+            free(snap);
+            (void)rebuild_bank(why, sizeof why);
+            snprintf(err, errcap, "Nothing imported: %s", why);
+            return 0;
+        }
     }
-    for (int i = 0; i < s_nruns; i++) { free(snap[i].enc); free(snap[i].cur_text); }
+    for (int i = 0; i < s_nruns; i++) { free(snap[i].enc); free(snap[i].cur_text); free(snap[i].plain_cur); }
     free(snap);
-    if (!relayout() || (translated && !s_active)) {
-        for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
-        relayout();
-        snprintf(err, errcap, s_arena ? "Nothing imported: the translated texts do not fit the game's text space (%u KB, six 64 KB pages)"
-                                      : "Nothing imported: no guest memory for the texts", ARENA_BYTES / 1024u);
-        bump();
-        return 0;
-    }
-    /* the frame hook installs (or removes) the patch on the emulation thread */
+    if (s_active) write_bank(); else restore_bank();
     bump();
     if (persist && s_dir_ok) {
         MKDIR(s_dir);
@@ -1190,7 +1124,8 @@ int psx_dialogue_import(const char *path, char *err, unsigned errcap) { return i
 void psx_dialogue_clear(void)
 {
     for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
-    (void)relayout();          /* nothing left: the redirect goes off */
+    { char why[64]; (void)rebuild_bank(why, sizeof why); }   /* nothing left: the stock bank comes back */
+    restore_bank();
     if (s_dir_ok) remove(s_file);
     bump();
 }
@@ -1263,9 +1198,9 @@ int psx_dialogue_state_json(char *out, unsigned cap)
 {
     unsigned n = (unsigned)snprintf(out, cap,
         "\"ready\":%d,\"runs\":%d,\"translated\":%d,\"active\":%d,\"patched\":%d,\"generation\":%u,"
-        "\"arena\":\"%08X\",\"arena_used\":%u,\"trampolines\":%u,\"file\":\"%s\",\"keys\":[",
+        "\"used\":%u,\"room\":%u,\"rebuilt\":\"%04X-%04X\",\"file\":\"%s\",\"keys\":[",
         s_ready, s_nruns, psx_dialogue_translated_count(), s_active, s_patched, s_generation,
-        s_arena, s_arena_len, (uint32_t)s_njumps, s_file);
+        s_used, s_room, s_rebuilt_lo, s_rebuilt_hi, s_file);
     int first = 1;
     for (int i = 0; i < s_nruns && n + 24 < cap; i++) {
         if (!s_runs[i].enc) continue;
@@ -1273,8 +1208,7 @@ int psx_dialogue_state_json(char *out, unsigned cap)
         first = 0;
     }
     if (n + 2 >= cap) return 0;
-    n += (unsigned)snprintf(out + n, cap - n, "],\"steps\":%u,\"remaps\":%u,\"tramp_hits\":%u,\"last_ptr\":\"%08X\",\"last_to\":\"%08X\",\"last_rec\":\"%08X\",\"depth\":%u",
-                            s_dbg_steps, s_dbg_remaps, s_dbg_tramp_hits, s_dbg_last_ptr, s_dbg_last_to, s_dbg_last_rec, s_dbg_depth);
+    n += (unsigned)snprintf(out + n, cap - n, "]");
     return n < cap;
 }
 
@@ -1302,12 +1236,10 @@ static void dialogue_tick(void)
             else fprintf(stderr, "Dialogue: kept translation not applied: %s\n", msg);
         }
     }
-    assert_guest();
+    assert_bank();
 }
 
 PSX_MOD_CONSTRUCTOR(psx_dialogue_install)
 {
-    (void)psx_mod_register_function_entry_plugin("dialogue_redirect", BUILDSTEP_ADDR, hook_buildstep);
-    (void)psx_mod_register_function_entry_plugin("dialogue_trampoline", EMITTER_ADDR, hook_emitter);
     (void)psx_game_add_frame_hook(dialogue_tick);
 }
