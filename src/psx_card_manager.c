@@ -1527,6 +1527,7 @@ static int on_event(const void *evp)
         if (ev->window.windowID != id) return 0;
         psx_card_manager_close();
         return 1;
+    case SDL_WINDOWEVENT_EXPOSED:     /* uncovered or restored: paint again */
     case SDL_WINDOWEVENT_RESIZED:
     case SDL_WINDOWEVENT_SIZE_CHANGED:
         if (ev->window.windowID != id) return 0;
@@ -1544,8 +1545,10 @@ static void gl_capture(void)
     s_gl_win = SDL_GL_GetCurrentWindow();
     s_gl_ctx = SDL_GL_GetCurrentContext();
 }
+static int s_ren_software;      /* the window draws through its own surface: no context to put back */
 static void gl_restore(void)
 {
+    if (s_ren_software) return;
     if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx)
         SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
 }
@@ -1586,9 +1589,48 @@ void psx_card_manager_open(void)
                              WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
     if (!s_win) { host_osd_push("Card manager: no window", 2000); return; }
     gl_capture();
-    s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
+    /* The software renderer first: it draws through the window's own surface
+     * and touches no GL context, which is what a second window wants beside
+     * the game's OpenGL. Wayland has no window surfaces, so there it fails
+     * and the accelerated renderer is used with the context put back after
+     * every call; on Windows a GL renderer on this window was reported to
+     * leave it blank white, and the software one avoids that. */
+    s_ren = NULL;
+    s_ren_software = 0;
+    {
+        /* Which renderer draws the tool window. Default: the software one on
+         * Windows (it paints through the window surface and touches no GL
+         * context; the GL one there was reported to leave the window blank
+         * white) and the accelerated one elsewhere (Wayland has no usable
+         * window surface: the software renderer is created and then shows a
+         * black box). PSX_TOOL_RENDERER=software|accelerated|<driver name>
+         * overrides it for trying things without a rebuild. */
+        const char *pick = getenv("PSX_TOOL_RENDERER");
+#if defined(_WIN32)
+        int want_software = 1;
+#else
+        int want_software = 0;
+#endif
+        if (pick && *pick) want_software = !strcmp(pick, "software");
+#if defined(PSX_SDL3)
+        if (pick && *pick && strcmp(pick, "software") && strcmp(pick, "accelerated")) {
+            /* a named driver (opengl, direct3d11, vulkan, ...) through the
+             * properties API, which the SDL2-shape shim does not cover */
+            const SDL_PropertiesID props = SDL_CreateProperties();
+            SDL_SetStringProperty(props, SDL_PROP_RENDERER_CREATE_NAME_STRING, pick);
+            SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, s_win);
+            s_ren = SDL_CreateRendererWithProperties(props);
+            SDL_DestroyProperties(props);
+        } else
+#endif
+        if (want_software) { s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE); s_ren_software = s_ren != NULL; }
+    }
+    if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
     if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
     gl_restore();
+#if defined(PSX_SDL3)
+    if (s_ren) fprintf(stderr, "%s: renderer %s%s\n", SDL_GetWindowTitle(s_win), SDL_GetRendererName(s_ren), s_ren_software ? " (window surface)" : "");
+#endif
     if (!s_ren) {
         SDL_DestroyWindow(s_win); s_win = NULL;
         host_osd_push("Card manager: no renderer", 2000);
@@ -1606,6 +1648,7 @@ void psx_card_manager_close(void)
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
     if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
     gl_restore();
+    s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
     s_hover_row = -1;
