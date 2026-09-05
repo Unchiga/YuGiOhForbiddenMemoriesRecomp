@@ -37,6 +37,9 @@
 #include "psx_card_share.h"
 #include "psx_card_colors.h"
 #include "psx_monster_effects.h"
+#include "psx_card_texts.h"
+#include "psx_dialogue.h"
+#include "psx_dialogue_manager.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -334,6 +337,76 @@ static void handle_card_share(int id, const char *json)
     } else send_err(id, "op is export, inspect or import");
 }
 
+/* card_texts_export / card_texts_import -- every card's name and description
+ * as one text file (psx_card_texts.h), the active card set's view. */
+static void handle_card_texts_export(int id, const char *json)
+{
+    char path[1024], msg[512];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    const int ok = psx_card_texts_export(path, msg, sizeof msg);
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+}
+static void handle_card_texts_import(int id, const char *json)
+{
+    char path[1024], msg[1400];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    const int ok = psx_card_texts_import(path, msg, sizeof msg);
+    for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+}
+
+/* dialogue -- the text bank's state; dialogue_export / dialogue_import --
+ * the translation file (psx_dialogue.h); dialogue_clear -- back to stock. */
+static void handle_dialogue(int id, const char *json)
+{
+    (void)json;
+    static char buf[8192];
+    if (!psx_dialogue_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+static void handle_dialogue_export(int id, const char *json)
+{
+    char path[1024], msg[512];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    const int ok = psx_dialogue_export(path, msg, sizeof msg);
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+}
+static void handle_dialogue_import(int id, const char *json)
+{
+    char path[1024], msg[2600];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    const int ok = psx_dialogue_import(path, msg, sizeof msg);
+    for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+}
+static void handle_dialogue_clear(int id, const char *json)
+{
+    (void)json;
+    psx_dialogue_clear();
+    handle_dialogue(id, json);
+}
+
+/* dialogue_manager -- the window: state, open/close (open:1/0), select a
+ * text (key: bank offset) or filter (search), synthetic click/key/text,
+ * and a canvas dump (shot: path, binary PPM). */
+static void handle_dialogue_manager(int id, const char *json)
+{
+    char buf[4096], s[128], path[1024];
+    const int open = json_get_int(json, "open", -1);
+    if (open >= 0) psx_dialogue_manager_request_open(open);
+    const int key = json_get_int(json, "key", -1);
+    const char *search = json_get_str(json, "search", s, sizeof s);
+    if (key >= 0 || search) psx_dialogue_manager_set(key, search);
+    const int x = json_get_int(json, "x", -1), y = json_get_int(json, "y", -1);
+    if (x >= 0 && y >= 0 && !psx_dialogue_manager_click(x, y, json_get_int(json, "button", 0))) { send_err(id, "window is closed"); return; }
+    const int k = json_get_int(json, "keycode", 0);
+    if (k && !psx_dialogue_manager_inject_key(k)) { send_err(id, "window is closed"); return; }
+    if (json_get_str(json, "text", s, sizeof s) && !psx_dialogue_manager_inject_text(s)) { send_err(id, "window is closed"); return; }
+    if (json_get_str(json, "shot", path, sizeof path) && !psx_dialogue_manager_shot(path)) { send_err(id, "window is closed"); return; }
+    if (!psx_dialogue_manager_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
 /* card_colors — frame colour slots and patch state. */
 static void handle_card_colors(int id, const char *json)
 {
@@ -364,7 +437,7 @@ static void handle_card_packs_reload(int id, const char *json)
 static void handle_card_manager(int id, const char *json)
 {
     (void)json;
-    char buf[4096];
+    static char buf[65536];
     psx_card_manager_state_json(buf, sizeof buf);
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -839,6 +912,13 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_colors",        handle_card_colors);
     (void)psx_debug_add_command("monster_effects",    handle_monster_effects);
     (void)psx_debug_add_command("card_manager",       handle_card_manager);
+    (void)psx_debug_add_command("card_texts_export", handle_card_texts_export);
+    (void)psx_debug_add_command("card_texts_import", handle_card_texts_import);
+    (void)psx_debug_add_command("dialogue",          handle_dialogue);
+    (void)psx_debug_add_command("dialogue_export",   handle_dialogue_export);
+    (void)psx_debug_add_command("dialogue_import",   handle_dialogue_import);
+    (void)psx_debug_add_command("dialogue_clear",    handle_dialogue_clear);
+    (void)psx_debug_add_command("dialogue_manager",  handle_dialogue_manager);
     (void)psx_debug_add_command("card_manager_set",   handle_card_manager_set);
     (void)psx_debug_add_command("card_manager_click", handle_card_manager_click);
     (void)psx_debug_add_command("card_manager_type",  handle_card_manager_type);

@@ -316,6 +316,45 @@ shift+arrows to select, double-click a word, Home/End, Ctrl+A/C/X/V with
 the system clipboard. Pasted line breaks become the card's `|` break in
 the description.
 
+#### Every description in one text file
+
+`Export Descriptions` (left of `Export Config`) writes the name and
+description of all 722 cards as the game currently shows them — the active
+set's edits where there are any, stock text otherwise, so a Card Effects set
+exports too — to one plain text file, one block per card:
+
+```
+[3] Hitotsu-me Giant
+A one-eyed behemoth
+with thick, powerful
+arms made for
+delivering punishing
+blows.
+```
+
+Edit it in any editor (a card shows six lines of twenty characters; the
+header repeats the rules) and `Import Descriptions` reads it back: only the
+cards whose text changed are written, into that set's `card.ini` files with
+every other key kept, and a text put back to stock drops the key again. It
+shows live.
+
+### 💬 Dialogue Manager — `MODS → DIALOGUE MANAGER`
+
+For translations: every campaign dialogue (the story boxes, the duelists'
+lines, the shop, the name entry — 218 texts) exports to one text file and a
+translated file imports back, at runtime, without touching the disc. The
+window lists the texts with a search box, shows the original beside the
+current text, and has `Export…` / `Import…`. The file keeps the game's
+control codes in braces (`{FA}` is a page break, `{FE}` a line break;
+`{@XXXX}` marks a spot a jump lands on and must stay in front of the same
+sentence), a story box shows three lines of 36 characters, and an imported
+file lives on as `dialogue/dialogue.txt` in the player-data folder so it is
+back after a restart. Import replaces the whole set: texts missing from the
+file return to stock, and a file that fails to parse changes nothing.
+Translated texts live in a spare memory arena and the game's own text
+routines are redirected to them by hooks; nothing in the game's code is
+patched.
+
 ### 🛒 Card shop — `MODS → CARD SHOP`
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)

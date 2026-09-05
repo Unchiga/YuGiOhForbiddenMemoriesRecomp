@@ -44,6 +44,7 @@
 #include "psx_card_effects.h"
 #include "psx_card_colors.h"
 #include "psx_card_share.h"
+#include "psx_card_texts.h"
 #include "psx_game_hooks.h"
 #include "psx_ui_draw.h"
 #include "psx_ui_font.h"
@@ -152,7 +153,7 @@ static int      s_art_ok, s_thumb_ok, s_art_id = -1;
 static unsigned s_art_gen;
 
 static char s_pick_path[1024];
-static int  s_pick_kind;              /* 1 art, 2 thumb, 3 title, 4 export target, 5 import source */
+static int  s_pick_kind;              /* 1 art, 2 thumb, 3 title, 4 export target, 5 import source, 6 descriptions out, 7 descriptions in */
 static unsigned s_present_count;
 
 /* the import preview (1) or the Card Effects activation question (2) */
@@ -1516,6 +1517,28 @@ static void do_export(void)
 #endif
 }
 
+/* every card's name and description as one text file, and back */
+static void do_export_texts(void)
+{
+#if defined(PSX_SDL3)
+    static const SDL_DialogFileFilter filters[] = { { "Text files", "txt" } };
+    static char def[1200];
+    snprintf(def, sizeof def, "%s/card-descriptions.txt", psx_mod_player_data_dir());
+    SDL_ShowSaveFileDialog(pick_cb, (void *)(intptr_t)6, s_win, filters, 1, def);
+#else
+    say("No file dialog in this build");
+#endif
+}
+static void do_import_texts(void)
+{
+#if defined(PSX_SDL3)
+    static const SDL_DialogFileFilter filters[] = { { "Text files", "txt" } };
+    SDL_ShowOpenFileDialog(pick_cb, (void *)(intptr_t)7, s_win, filters, 1, psx_mod_player_data_dir(), false);
+#else
+    say("No file dialog in this build");
+#endif
+}
+
 static void do_import(void)
 {
 #if defined(PSX_SDL3)
@@ -2055,6 +2078,8 @@ static void click(int x, int y, int button, int clicks)
         case B_ADD_RULE: rule_add(); break;
         case B_EXPORT: do_export(); break;
         case B_IMPORT: do_import(); break;
+        case B_EXPORT_TEXTS: do_export_texts(); break;
+        case B_IMPORT_TEXTS: do_import_texts(); break;
         case B_DEV:
             if (psx_card_packs_is_dev()) { psx_card_packs_set_dev(0); say("Switching to your own cards"); }
             else { s_modal = MODAL_ACTIVATE; s_modal_hover = -1; s_dirty = 1; }
@@ -2395,6 +2420,13 @@ static void tick(void)
         s_pick_path[0] = 0;
         if (kind == 4) begin_export(src);
         else if (kind == 5) begin_import(src);
+        else if (kind == 6 || kind == 7) {
+            if (s_focus >= 0) focus_commit();
+            char err[512];
+            const int ok = kind == 6 ? psx_card_texts_export(src, err, sizeof err) : psx_card_texts_import(src, err, sizeof err);
+            say(err[0] ? err : (ok ? "Done" : "That did not work"));
+            if (kind == 7) { rebuild_order(); load_editor(); }
+        }
         else if (install_pick(src, kind)) {
             psx_card_packs_reload(s_sel);
             say(kind == 1 ? "Face art installed" : kind == 2 ? "Duel thumbnail installed" : "Title strip installed");
