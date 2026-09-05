@@ -116,7 +116,10 @@
 #define TRAMP_END      0xFF80u           /* psx_card_shop's menu stream starts here */
 #define NAME_SLOT_OFF  0x125Au           /* the name-entry screen writes the player's name here */
 
-#define ARENA_BYTES  0x60000u            /* 384 KB for translated runs (stock text is 64 KB) */
+#define ARENA_BYTES  0x60000u            /* 384 KB for translated runs (stock text is 64 KB): six 64 KB segments */
+#define SEG_BYTES    0x10000u
+#define SEG_TRAMP    0x200u              /* the top of each segment holds its jump trampolines */
+#define MAX_JUMPS    1024
 #define ARENA_MAGIC  0x59474F44u         /* "YGOD" */
 #define ARENA_HEAD   16u
 
@@ -198,11 +201,20 @@ static uint32_t  s_arena;             /* guest address, 0 until the first transl
 static uint8_t  *s_arena_img;         /* host copy of what the arena should hold */
 static uint32_t  s_arena_len;
 static uint32_t  s_map[0x10000];      /* low 16 bits of a bank address -> guest address of its copy, 0 = none */
-static uint8_t   s_tramp[0x10000];    /* 1 = a trampoline byte lives at that bank offset */
-static uint32_t  s_tramp_lo, s_tramp_hi;   /* the used range, for the per-frame assert */
+/* A jump trampoline: a space glyph inside the jumping copy's own 64 KB
+ * segment whose following address `at` is mapped to the real target. The
+ * game resolves a jump operand inside the CURRENT stream's segment, so a
+ * copy at 0x9F0xxxxx can never jump straight into the bank or another
+ * segment. */
+typedef struct { uint32_t at, to; } Jump;
+static Jump      s_jumps[MAX_JUMPS];
+static int       s_njumps;
+static uint32_t  s_base;              /* the arena's first 64 KB-aligned address */
+static uint32_t  s_alloc;             /* what psx_mod_alloc_guest_memory gave (s_base rounds it up) */
 static int       s_active;            /* the redirect is wanted */
 static int       s_patched;           /* trampolines seen in place */
 static uint32_t  s_width_rec, s_width_val; /* the record whose advance width is held at 0, and its value */
+static unsigned  s_dbg_steps, s_dbg_remaps, s_dbg_tramp_hits, s_dbg_last_ptr, s_dbg_last_to, s_dbg_last_rec, s_dbg_depth;
 
 static void bump(void) { s_generation++; }
 
@@ -679,10 +691,17 @@ fail:
 static int guest_alloc(void)
 {
     if (s_arena) return 1;
-    s_arena = psx_mod_alloc_guest_memory(ARENA_BYTES, 16);
-    if (!s_arena) return 0;
+    s_alloc = psx_mod_alloc_guest_memory(ARENA_BYTES + SEG_BYTES, 16);
+    if (!s_alloc) return 0;
+    s_base = (s_alloc + SEG_BYTES - 1u) & ~(SEG_BYTES - 1u);
+    s_arena = s_base;
     s_arena_img = (uint8_t *)calloc(ARENA_BYTES, 1);
     return 1;
+}
+static const Jump *jump_at(uint32_t addr)
+{
+    for (int i = 0; i < s_njumps; i++) if (s_jumps[i].at == addr) return &s_jumps[i];
+    return NULL;
 }
 
 /* Put the host image into guest memory (the arena is rebuilt as a whole on
@@ -725,19 +744,22 @@ static int relayout(void)
     int any = 0;
     for (int i = 0; i < s_nruns; i++) if (s_runs[i].enc) { any = 1; break; }
     memset(s_map, 0, sizeof s_map);
-    memset(s_tramp, 0, sizeof s_tramp);
-    s_tramp_lo = s_tramp_hi = s_text_end;
+    s_njumps = 0;
     if (!any) { s_active = 0; return 1; }
     if (!guest_alloc()) { s_active = 0; return 0; }
     memset(s_arena_img, 0, ARENA_BYTES);
     s_arena_img[0] = (uint8_t)ARENA_MAGIC; s_arena_img[1] = (uint8_t)(ARENA_MAGIC >> 8);
     s_arena_img[2] = (uint8_t)(ARENA_MAGIC >> 16); s_arena_img[3] = (uint8_t)(ARENA_MAGIC >> 24);
+    /* copies never straddle a segment, and leave each segment's top for trampolines */
     uint32_t at = ARENA_HEAD;
+    int ok = 1;
     for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
         if (!r->enc) continue;
-        if (at + (uint32_t)r->enc_len > ARENA_BYTES) { r->reloc = 0; continue; }   /* checked at import; belt and braces */
-        memcpy(s_arena_img + at, r->enc, (size_t)r->enc_len);
+        const uint32_t len = (uint32_t)r->enc_len;
+        if ((at & (SEG_BYTES - 1u)) + len > SEG_BYTES - SEG_TRAMP) at = (at & ~(SEG_BYTES - 1u)) + SEG_BYTES;
+        if (at + len > ARENA_BYTES - SEG_TRAMP) { r->reloc = 0; ok = 0; continue; }
+        memcpy(s_arena_img + at, r->enc, (size_t)len);
         r->reloc = s_arena + at;
         s_map[r->start & 0xFFFFu] = r->reloc;
         for (int k = 0; k < r->nanch; k++)
@@ -753,34 +775,41 @@ static int relayout(void)
                 if (!s_map[off]) s_map[off] = r->reloc + (uint32_t)tp[j];
             }
         }
-        at += (uint32_t)r->enc_len;
+        at += len;
     }
     s_arena_len = at;
-    /* trampolines: one per distinct mapped target, allocated in the tail */
-    static uint16_t t_of[0x10000];       /* stock target -> trampoline offset, 0 = none yet */
-    memset(t_of, 0, sizeof t_of);
-    uint32_t next = s_text_end;
-    int ok = 1;
-    for (int i = 0; i < s_nruns; i++) {
+    /* pointer operands: the target's own low 16 bits when it lives in the
+     * jumping copy's segment, else a trampoline there */
+    uint32_t tramp_next[ARENA_BYTES / SEG_BYTES];
+    for (unsigned g = 0; g < ARENA_BYTES / SEG_BYTES; g++) tramp_next[g] = s_arena + g * SEG_BYTES + SEG_BYTES - 1u;
+    for (int i = 0; i < s_nruns && ok; i++) {
         Run *r = &s_runs[i];
         if (!r->enc || !r->reloc) continue;
+        const uint32_t seg = r->reloc & ~(SEG_BYTES - 1u);
+        const unsigned g = (r->reloc - s_arena) / SEG_BYTES;
         for (int k = 0; k < r->nptr; k++) {
             const uint16_t x = r->ptr_val[k];
-            if (!s_map[x]) continue;                       /* an untranslated target: the stock bytes are right */
-            if (!t_of[x]) {
-                if (next >= TRAMP_END) { ok = 0; break; }
-                t_of[x] = (uint16_t)next;
-                s_tramp[next] = 1;
-                s_map[next + 1u] = s_map[x];               /* T+1 -> the translated target */
-                next++;
+            const uint32_t tgt = s_map[x] ? s_map[x] : (BANK_BASE | x);
+            uint32_t operand;
+            if ((tgt & ~(SEG_BYTES - 1u)) == seg) operand = tgt & 0xFFFFu;
+            else {
+                /* one trampoline per (segment, target) */
+                uint32_t t = 0;
+                for (int j = 0; j < s_njumps; j++)
+                    if (s_jumps[j].to == tgt && ((s_jumps[j].at - 1u) & ~(SEG_BYTES - 1u)) == seg) { t = s_jumps[j].at - 1u; break; }
+                if (!t) {
+                    if (s_njumps >= MAX_JUMPS || tramp_next[g] < seg + SEG_BYTES - SEG_TRAMP) { ok = 0; break; }
+                    t = tramp_next[g]--;
+                    s_arena_img[t - s_arena] = 0;              /* a space: the emitter hook hides it */
+                    s_jumps[s_njumps].at = t + 1u; s_jumps[s_njumps].to = tgt; s_njumps++;
+                }
+                operand = t & 0xFFFFu;
             }
             const uint32_t off = r->reloc - s_arena + (uint32_t)r->ptr_pos[k];
-            s_arena_img[off] = (uint8_t)(t_of[x] & 0xFF);
-            s_arena_img[off + 1] = (uint8_t)(t_of[x] >> 8);
+            s_arena_img[off] = (uint8_t)(operand & 0xFF);
+            s_arena_img[off + 1] = (uint8_t)(operand >> 8);
         }
-        if (!ok) break;
     }
-    s_tramp_lo = s_text_end; s_tramp_hi = next;
     upload_guest();
     s_active = ok;
     return ok;
@@ -809,9 +838,16 @@ static void hook_buildstep(struct CPUState *cpu, uint32_t address)
     const uint32_t slot = rec_slot(rec);
     if (!slot) return;
     const uint32_t ptr = psx_mod_read_word(slot);
-    if ((ptr & 0xFFFF0000u) != BANK_BASE) return;
-    const uint32_t to = s_map[ptr & 0xFFFFu];
-    if (to) psx_mod_write_word(slot, to);
+    s_dbg_steps++; s_dbg_last_ptr = ptr; s_dbg_last_rec = rec; s_dbg_depth = (unsigned)(int8_t)psx_mod_read_byte(rec + 0x58u);
+    if ((ptr & 0xFFFF0000u) == BANK_BASE) {
+        const uint32_t to = s_map[ptr & 0xFFFFu];
+        if (to) { psx_mod_write_word(slot, to); s_dbg_remaps++; s_dbg_last_to = to; }
+        return;
+    }
+    if (s_arena && ptr >= s_arena && ptr < s_arena + ARENA_BYTES) {
+        const Jump *j = jump_at(ptr);              /* just past a trampoline's space */
+        if (j) { psx_mod_write_word(slot, j->to); s_dbg_remaps++; s_dbg_last_to = j->to; }
+    }
 }
 
 /* The glyph emitter's entry: a0 = record, the glyph just read is at
@@ -826,9 +862,9 @@ static void hook_emitter(struct CPUState *cpu, uint32_t address)
     const uint32_t slot = rec_slot(rec);
     if (!slot) return;
     const uint32_t ptr = psx_mod_read_word(slot);
-    if ((ptr & 0xFFFF0000u) != BANK_BASE) return;
-    const uint32_t off = (ptr & 0xFFFFu) - 1u;
-    if (off >= 0x10000u || !s_tramp[off]) return;
+    if (!s_arena || ptr < s_arena || ptr >= s_arena + ARENA_BYTES) return;
+    if (!jump_at(ptr)) return;                     /* the glyph just read was a trampoline's space */
+    s_dbg_tramp_hits++;
     if (!s_width_rec) { s_width_rec = rec; s_width_val = psx_mod_read_byte(rec + 0x5Au); }
     psx_mod_write_byte(rec + 0x5Au, 0);
     psx_mod_write_byte(rec + 0x60u, (uint8_t)(psx_mod_read_byte(rec + 0x60u) - 1u));
@@ -840,12 +876,7 @@ static void hook_emitter(struct CPUState *cpu, uint32_t address)
 static void assert_guest(void)
 {
     if (!s_active) { s_patched = 0; return; }
-    int all = 1;
-    for (uint32_t o = s_tramp_lo; o < s_tramp_hi; o++) {
-        if (!s_tramp[o]) continue;
-        if (psx_mod_read_byte(BANK_BASE + o) != 0) { psx_mod_write_byte(BANK_BASE + o, 0); all = 0; }
-    }
-    s_patched = 1; (void)all;
+    s_patched = 1;
     if (psx_mod_read_word(s_arena) != ARENA_MAGIC) upload_guest();
 }
 
@@ -1118,8 +1149,8 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
     if (!relayout() || (translated && !s_active)) {
         for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
         relayout();
-        snprintf(err, errcap, s_arena ? "Nothing imported: too many jump targets for the game's free text space (%u bytes)"
-                                      : "Nothing imported: no guest memory for the texts", TRAMP_END - s_text_end);
+        snprintf(err, errcap, s_arena ? "Nothing imported: the translated texts do not fit the game's text space (%u KB, six 64 KB pages)"
+                                      : "Nothing imported: no guest memory for the texts", ARENA_BYTES / 1024u);
         bump();
         return 0;
     }
@@ -1218,7 +1249,7 @@ int psx_dialogue_state_json(char *out, unsigned cap)
         "\"ready\":%d,\"runs\":%d,\"translated\":%d,\"active\":%d,\"patched\":%d,\"generation\":%u,"
         "\"arena\":\"%08X\",\"arena_used\":%u,\"trampolines\":%u,\"file\":\"%s\",\"keys\":[",
         s_ready, s_nruns, psx_dialogue_translated_count(), s_active, s_patched, s_generation,
-        s_arena, s_arena_len, s_tramp_hi - s_tramp_lo, s_file);
+        s_arena, s_arena_len, (uint32_t)s_njumps, s_file);
     int first = 1;
     for (int i = 0; i < s_nruns && n + 24 < cap; i++) {
         if (!s_runs[i].enc) continue;
@@ -1226,7 +1257,8 @@ int psx_dialogue_state_json(char *out, unsigned cap)
         first = 0;
     }
     if (n + 2 >= cap) return 0;
-    n += (unsigned)snprintf(out + n, cap - n, "]");
+    n += (unsigned)snprintf(out + n, cap - n, "],\"steps\":%u,\"remaps\":%u,\"tramp_hits\":%u,\"last_ptr\":\"%08X\",\"last_to\":\"%08X\",\"last_rec\":\"%08X\",\"depth\":%u",
+                            s_dbg_steps, s_dbg_remaps, s_dbg_tramp_hits, s_dbg_last_ptr, s_dbg_last_to, s_dbg_last_rec, s_dbg_depth);
     return n < cap;
 }
 
