@@ -239,9 +239,17 @@ static int ctl_len(const uint8_t *b, int i, int n, int *choices, int *ptr_at, in
         else if (sub == 0x10) len = 4;
         else len = 2;
     } else if (c == 0xF8) {
-        static const signed char SZ[0x20] = { 3,3,3,7,3,2,4,2, 2,2,3,3,2,9,4,2, 4,3,2,2,2,3,2,2, 2,3,2,2,2,2,2,2 };
+        /* Operand counts read from the handlers in the F8 table (0x80090EAC):
+         *   05 two bytes; 07 a u16; 0C a byte; 0D four bytes and a u16 (the
+         *   FF that always follows is kept in the group, see below); 14 ONE
+         *   BYTE: the map location the scene returns to (func_80038898
+         *   stores it to D_8009B363 and switches to the map mode), so it
+         *   is game state, never a glyph; 0F a flag byte and, when any of its
+         *   low six bits is set, a u16. */
+        static const signed char SZ[0x20] = { 3,3,3,7,3,4,4,4, 2,2,3,3,3,9,4,3, 4,3,2,2,3,3,2,2, 2,3,2,2,2,2,2,2 };
         const int sub = i + 1 < n ? b[i + 1] : 0;
         if (sub == 0x10) len = 4 + ((i + 3 < n && (b[i + 3] & 0x80)) ? 2 : 0);
+        else if (sub == 0x0F) len = 3 + ((i + 2 < n && (b[i + 2] & 0x3F)) ? 2 : 0);
         else if (sub == 0x17 || sub == 0x18) {
             int j = i + 2, minfwd = -1;
             const int here = bank_off + i;
@@ -253,7 +261,7 @@ static int ctl_len(const uint8_t *b, int i, int n, int *choices, int *ptr_at, in
                 if (v > here && (minfwd < 0 || v < minfwd)) minfwd = v;
             }
             len = j - i;
-        } else if (sub < 0x20) len = SZ[sub];    /* F8 0D's halfword is a name-table index (0x7000 + n), not an address */
+        } else if (sub < 0x20) len = SZ[sub];    /* F8 0D's halfword is a music id (0x7xxx, stored to D_8009B36A), not an address */
         else len = 2;
     } else if (c == 0xF9) {
         const int v = i + 2 < n ? (b[i + 1] | (b[i + 2] << 8)) : 0;
