@@ -182,6 +182,7 @@ static Layout s_L;
  * takes one, a number box or a type / field list beside it. */
 static PsxCardPack  s_edit;
 static PsxCardStock s_stock;
+static int magic_dispatchable(int id);
 static const int TRIG_FX[] = { -1, PSX_CARD_FX_HEAL, PSX_CARD_FX_DAMAGE, PSX_CARD_FX_DESTROY_TYPE, PSX_CARD_FX_DESTROY_ATK,
     PSX_CARD_FX_RAIGEKI, PSX_CARD_FX_DARK_HOLE, PSX_CARD_FX_DRAGON_JAR, PSX_CARD_FX_STOP_DEFENSE, PSX_CARD_FX_FLIP,
     PSX_CARD_FX_WEAKEN, PSX_CARD_FX_SWORDS, PSX_CARD_FX_CURSEBREAKER, PSX_CARD_FX_HARPIE, PSX_CARD_FX_FIELD, PSX_CARD_FX_GAMBLE };
@@ -227,7 +228,7 @@ static int enum_count(int f)
     case F_TYPE: return 24;
     case F_ATTR: return 8;
     case F_COLOR: return PSX_CARD_COLOR_COUNT;
-    case F_EFFECT: return PSX_CARD_FX_GAMBLE;          /* the coin flip is a monster trigger only */
+    case F_EFFECT: return magic_dispatchable(s_sel) ? PSX_CARD_FX_GAMBLE : TRIG_N - 2;   /* outside the game's own spell ids: no "none" / ritual, which need the card's own dispatch slot */
     case F_TARGET: return 20;
     case F_TERRAIN: return 6;
     case F_BATTLE: return PSX_CARD_BATTLE_COUNT;
@@ -242,6 +243,7 @@ static int enum_count(int f)
 static int enum_value(int f, int i)
 {
     if (f == F_STAR1 || f == F_STAR2 || f == F_TERRAIN) return i + 1;
+    if (f == F_EFFECT && !magic_dispatchable(s_sel)) return TRIG_FX[i + 1];
     if (is_trig(f)) return TRIG_FX[i];
     if (is_param(f)) return param_kind(f) == 'f' ? i + 1 : i;
     return i;
@@ -275,7 +277,7 @@ static int enum_current_value(int f)
     case F_TYPE: return s_edit.type >= 0 ? s_edit.type : s_stock.type;
     case F_ATTR: return s_edit.attribute >= 0 ? s_edit.attribute : s_stock.attribute;
     case F_COLOR: return s_edit.color >= 0 ? s_edit.color : psx_card_colors_slot(s_sel);
-    case F_EFFECT: return s_edit.effect >= 0 ? s_edit.effect : (s_stock.effect >= 0 ? s_stock.effect : 0);
+    case F_EFFECT: return s_edit.effect >= 0 ? s_edit.effect : (s_stock.effect >= 0 ? s_stock.effect : (magic_dispatchable(s_sel) ? 0 : PSX_CARD_FX_HEAL));
     case F_TARGET: return s_edit.target >= 0 ? s_edit.target : ((s_stock.effect == PSX_CARD_FX_DESTROY_TYPE && s_stock.amount >= 0) ? s_stock.amount : 3);
     case F_TERRAIN: return s_edit.terrain >= 1 ? s_edit.terrain : ((s_stock.effect == PSX_CARD_FX_FIELD && s_stock.amount >= 1) ? s_stock.amount : 1);
     case F_BATTLE: return s_edit.battle >= 0 ? s_edit.battle : 0;
@@ -331,7 +333,7 @@ static int field_applies(int f)
     const int t = effective_type();
     switch (f) {
     case F_ATK: case F_DEF: case F_STAR1: case F_STAR2: case F_LEVEL: case F_ATTR: return is_monster();
-    case F_EFFECT:  return (t == 20 || t == 22) && magic_dispatchable(s_sel);
+    case F_EFFECT:  return t == 20 || t == 22;   /* any card the game plays as a spell; the hook rewrites the id */
     case F_AMOUNT: {
         if (!field_applies(F_EFFECT)) return 0;
         const int e = eff_effect();

@@ -262,10 +262,10 @@ const char *psx_card_effects_note(int id, int type)
     if (type == 23) return "An equip: set its bonus and the monsters it fits (types, card ids, all or none).";
     if (type == 21) return (id >= 681 && id <= 686) ? "A trap that stops an attacker at or under its ATK ceiling."
                                                      : "This trap is pure code (Goblin Fan, Simochi, Reverse Trap, Fake Trap): nothing to set.";
-    if (type == 22) return "A ritual: three material ids on your field become the result.";
+    if (type == 22 && fx_index(id) >= 0) return "A ritual: three material ids on your field become the result.";
     if (id >= 330 && id <= 335) return "A field card: each monster type's boost while this field is up.";
-    if (type == 20) return (fx_index(id) >= 0) ? "A magic card: pick what it does when played and how much."
-                                               : "This card id is outside the game's magic dispatch (301-350, 651-700, 721).";
+    if (type == 20 || type == 22) return (fx_index(id) >= 0) ? "A magic card: pick what it does when played and how much."
+                                                            : "Played as a spell: pick what it does and how much (a card born a monster cannot be a ritual or do nothing).";
     if (type < 20) return "Monster effects: how it fights, what it casts when summoned, destroyed, attacking or each turn, bonuses, immunities.";
     return "";
 }
