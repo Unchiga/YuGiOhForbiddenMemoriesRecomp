@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "psx_tool_window.h"
 #include "psx_sdl.h"
 
 #include "host_osd.h"
@@ -1926,14 +1927,27 @@ static int ensure_canvas(int w, int h)
 }
 
 /* Upload + present, then give the GL context back to the game. */
+static int s_present_fail;
+/* Show the canvas. When presenting keeps failing on one backend, the
+ * window is redrawn through the other one (the choice is logged). */
 static void present_canvas(void)
 {
     if (!s_ren || !s_tex) return;
-    SDL_UpdateTexture(s_tex, NULL, s_px, s_w * 4);
-    SDL_RenderClear(s_ren);
-    SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
-    SDL_RenderPresent(s_ren);
+    const int ok = psx_tool_present(s_ren, s_tex, s_px, s_w, s_h, "Drop Table Manager");
     gl_restore();
+    if (ok) { s_present_fail = 0; return; }
+    if (++s_present_fail < 3) { s_dirty = 1; return; }
+    psx_tool_log("Drop Table Manager: switching to the %s renderer after %d failed presents", s_ren_software ? "accelerated" : "software", s_present_fail);
+    gl_capture();
+    if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
+    SDL_DestroyRenderer(s_ren);
+    s_ren = psx_tool_renderer_create(s_win, "Drop Table Manager", s_ren_software ? 1 : 0, &s_ren_software);
+    gl_restore();
+    s_present_fail = 0;
+    if (!s_ren) { psx_drop_viewer_close(); return; }
+    const int w = s_w, h = s_h; s_w = s_h = 0;
+    if (!ensure_canvas(w, h)) { psx_drop_viewer_close(); return; }
+    s_dirty = 1;
 }
 
 void psx_drop_viewer_open(void)
@@ -1950,42 +1964,9 @@ void psx_drop_viewer_open(void)
      * and the accelerated renderer is used with the context put back after
      * every call; on Windows a GL renderer on this window was reported to
      * leave it blank white, and the software one avoids that. */
-    s_ren = NULL;
-    s_ren_software = 0;
-    {
-        /* Which renderer draws the tool window. Default: the software one on
-         * Windows (it paints through the window surface and touches no GL
-         * context; the GL one there was reported to leave the window blank
-         * white) and the accelerated one elsewhere (Wayland has no usable
-         * window surface: the software renderer is created and then shows a
-         * black box). PSX_TOOL_RENDERER=software|accelerated|<driver name>
-         * overrides it for trying things without a rebuild. */
-        const char *pick = getenv("PSX_TOOL_RENDERER");
-#if defined(_WIN32)
-        int want_software = 1;
-#else
-        int want_software = 0;
-#endif
-        if (pick && *pick) want_software = !strcmp(pick, "software");
-#if defined(PSX_SDL3)
-        if (pick && *pick && strcmp(pick, "software") && strcmp(pick, "accelerated")) {
-            /* a named driver (opengl, direct3d11, vulkan, ...) through the
-             * properties API, which the SDL2-shape shim does not cover */
-            const SDL_PropertiesID props = SDL_CreateProperties();
-            SDL_SetStringProperty(props, SDL_PROP_RENDERER_CREATE_NAME_STRING, pick);
-            SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, s_win);
-            s_ren = SDL_CreateRendererWithProperties(props);
-            SDL_DestroyProperties(props);
-        } else
-#endif
-        if (want_software) { s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE); s_ren_software = s_ren != NULL; }
-    }
-    if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
-    if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
+    s_ren = psx_tool_renderer_create(s_win, "Drop Table Manager", -1, &s_ren_software);
     gl_restore();
-#if defined(PSX_SDL3)
-    if (s_ren) fprintf(stderr, "%s: renderer %s%s\n", SDL_GetWindowTitle(s_win), SDL_GetRendererName(s_ren), s_ren_software ? " (window surface)" : "");
-#endif
+    s_present_fail = 0;
     if (!s_ren) {
         SDL_DestroyWindow(s_win); s_win = NULL;
         host_osd_push("Drop table manager: no renderer", 2000);
