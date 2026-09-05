@@ -119,8 +119,9 @@
 #define NAMES_LIMIT    0x801DA000u
 /* Descriptions: offsets are relative to 0x801C0000, so the strings must sit
  * in that 64 KB. The stock texts end at 0x801CD59E; psx_card_extend's
- * relocated tables run 0x801CD5A0..~0x801CEB90 and psx_free_duel_rows
- * starts at 0x801CFE00, which leaves this gap. */
+ * relocated tables run 0x801CD5A0..~0x801CEB90 and the parked free-duel
+ * rows experiment (tools/free_duel_rows/) claimed 0x801CFE00, which leaves
+ * this gap. */
 #define DESC_TABLE     0x801C0200u        /* + id*2, entry index 0x100+id */
 #define DESC_SEGMENT   0x801C0000u
 #define DESC_BASE      0x801CEC00u
