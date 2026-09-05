@@ -109,8 +109,8 @@ rolls what you wrote.**
 
 | View | What you get |
 |---|---|
-| `BY CARD` | all 722 cards — id, name, type, ATK, DEF, how many tables drop it — sortable on any column, with every duelist that drops the selected one, the rank band needed, and the chance |
-| `BY DUELIST` | all 39 duelists, with everything they drop, the band, and the weight both raw and as a percentage |
+| `By card` | all 722 cards — id, name, type, ATK, DEF, how many tables drop it — sortable on any column, with every duelist that drops the selected one, the rank band needed, and the chance |
+| `By duelist` | all 39 duelists, with everything they drop, the band, and the weight both raw and as a percentage |
 
 Type to search by name or id, click a column heading to sort, scroll with the
 wheel or the scrollbars, click a row on the right to cross over into the other
@@ -119,21 +119,21 @@ view. Weights are out of 2048, which is what lets one read as a percentage.
 **Editing.** Click a weight and type a new one. Click the rank cell to move a
 drop between bands. Right-click anything for the rest: add a card to a
 duelist, move it, remove it. Or just **drag a card out of the left list and
-drop it on a duelist** — the `ALL CPU` toggle lists every duelist under a
+drop it on a duelist** — the `All CPU` toggle lists every duelist under a
 card, greyed where they do not drop it, so every one of them is a drop target
 without leaving the view. Every band still totals exactly 2048 — whatever you
 add or grow comes off that duelist's other drops in proportion, the same
 arithmetic the game's own roll assumes — and an edit that cannot balance is
 refused, not fudged.
 
-**Nothing is written until you press `SAVE`**, which persists your table as
+**Nothing is written until you press `Save`**, which persists your table as
 `drop_table_edits.ini` in your player-data folder (hand-editable, same format
-as the mod's file). `DEFAULTS` clears the selected duelist back to stock.
+as the mod's file). `Defaults` clears the selected duelist back to stock.
 
-**Sharing.** `LOAD → EXPORT CURRENT` writes your table as a timestamped file
-in `drop_tables/` next to your saves — send it to someone, they drop it in
-their own `drop_tables/` folder and pick it from `LOAD`. Loading replaces the
-edit layer in memory only; it too is nothing until saved.
+**Sharing.** `Load… → Export the current table` writes your table as a
+timestamped file in `drop_tables/` next to your saves — send it to someone,
+they drop it in their own `drop_tables/` folder and pick it from `Load…`.
+Loading replaces the edit layer in memory only; it too is nothing until saved.
 
 If `DROP MISSING CARDS` is on, the manager shows — and edits on top of — the
 table you will actually roll against: it runs the same transform the mod runs,
@@ -142,14 +142,11 @@ so the two cannot disagree, and your edits apply over the mod's placements.
 Card names and ATK/DEF are read out of the running game; the drop tables are
 baked from your disc when you build. Duelist portraits are the game's FREE
 DUEL art and, like every other piece of Konami art here, are **never
-shipped** — instead **your game captures them itself, from its own screen,
-the first time you browse FREE DUEL**. Scroll the opponent list once and the
-Manager fills in for good (they persist next to your saves). A duelist you
-have never met draws nothing there, so their plate stays plain — unless you
-use `CHEATS → REVEAL ALL PORTRAITS`, which temporarily marks everyone as met
-just long enough for the capture to finish, then **reverts itself**: the
-moment the last portrait is stored, the flags it set are cleared again and
-your save is bit-for-bit what your campaign earned.
+shipped** — the Manager **reads them off your own disc** the first time it
+opens, the same forty tiles the FREE DUEL screen loads, so every duelist has
+a face whether or not your campaign has met them. (If a disc image fails that
+read, the older fallback still applies: the game captures portraits from its
+own FREE DUEL screen as you browse it, and keeps them next to your saves.)
 
 ### 🎨 Card Manager — `VIEW → CARD MANAGER`
 

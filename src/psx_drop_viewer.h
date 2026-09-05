@@ -36,8 +36,14 @@ void psx_drop_viewer_close(void);
 void psx_drop_viewer_toggle(void);
 int  psx_drop_viewer_is_open(void);
 
-/* Debug-server read-back: what the window is showing right now. */
+/* Debug-server read-back: what the window is showing right now, geometry
+ * included (a "geom" object of [x,y,w,h] rects in canvas pixels). */
 int  psx_drop_viewer_state_json(char *out, unsigned cap);
+
+/* Dump the window's canvas as a binary PPM. The window is a host surface the
+ * game's screenshot commands cannot reach; this is how a script sees it.
+ * Returns 0 if the viewer is closed or the file cannot be written. */
+int  psx_drop_viewer_shot(const char *path);
 
 /* Debug-server drive: set what it is showing. -1 / NULL leaves a field alone.
  * view 0 = by card, 1 = by duelist. Returns 0 if the viewer is closed. */

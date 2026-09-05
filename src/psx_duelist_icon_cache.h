@@ -2,12 +2,14 @@
  * game from its own screen.
  *
  * The Drop Table Manager shows each duelist's FREE DUEL portrait. That art is
- * Konami's: like the sprites and the font it is never shipped, and unlike
- * them it cannot be baked from the disc — the atlas is compressed there in a
- * format nobody has unpacked, and its in-VRAM cell order does not survive a
- * scroll, so reading the atlas directly attributes faces to the wrong names.
+ * Konami's: like the sprites and the font it is never shipped. Since
+ * 2026-09-04 the Manager reads the portraits straight off the player's disc
+ * (psx_duelist_portraits.c: forty plain 48x48 tiles at WA_MRG 0xF55000, in
+ * drop-table order — the "compressed atlas" this file used to describe was
+ * a wrong guess), so this capture is now the FALLBACK for a disc whose
+ * sectors fail that module's check.
  *
- * What IS reliable is the drawn screen. On the FREE DUEL grid the game draws
+ * What the capture relies on is the drawn screen. On the FREE DUEL grid the game draws
  * the portraits at a fixed lattice, the highlighted duelist's index is
  * readable at 0x8009B32E (+41), and the cursor's border animates — so two
  * samples of the drawn frame differ exactly at the cursor cell. Anchoring on

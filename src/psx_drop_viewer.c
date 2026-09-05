@@ -30,6 +30,15 @@
  * the same function the mod calls on guest memory — rather than describing the
  * change in its own words. The two cannot disagree, and the header says which
  * table is on screen.
+ *
+ * THE LOOK
+ * --------
+ * Drawn with the F10 menu's toolkit (psx_ui_font's Inter faces, psx_ui_draw's
+ * antialiased rounded rects) in the menu's palette, the same way the Card
+ * Manager is, so the three read as one program. Every size below is a DESIGN
+ * UNIT — one 480th of the window height — so a maximized 4K window gets more
+ * detail rather than bigger blocks, and one number moves the whole layout.
+ * The 8x8 bitmap sheet this used to draw with is gone.
  */
 
 #include "psx_drop_viewer.h"
@@ -48,40 +57,57 @@
 #include "psx_drop_missing.h"
 #include "psx_duelist_icon_cache.h"
 #include "psx_duelist_icons.h"
+#include "psx_duelist_portraits.h"
 #include "psx_game_hooks.h"
+#include "psx_ui_draw.h"
+#include "psx_ui_font.h"
 #include "psx_video_menu.h"
-
-#include "psx_ui_font8.inc"
 
 /* --- look ---------------------------------------------------------------- */
 
 #define WIN_W  1480
 #define WIN_H   820
-#define GLYPH   8
 
-/* Text scale. Derived from the drawable each frame (see tick), because the
- * window ranges from a laptop corner to a maximized 4K display and a fixed
- * multiplier is unreadably small at one end or comically large at the other.
- * 740x410 is the layout's natural size at scale 1, so the scale is simply
- * "how many of those fit". Everything below is in TS units for that reason:
- * one scale value moves the whole layout together. */
-static int s_ts = 2;
-#define TS      s_ts
-#define CW      (GLYPH * TS)       /* character cell width               */
-#define ROW_H   (11 * TS)          /* table row pitch                    */
-#define PAD     (5 * TS)
-#define BTN_H   (13 * TS)          /* buttons and header strips          */
-#define TXT_DY  ((5 * TS) / 2)     /* centers a glyph in a BTN_H strip   */
+/* The F10 menu's palette, opaque where this window is opaque; the Card
+ * Manager carries the same table. */
+#define COL_BG        0xFF0F1219u
+#define COL_BAR       0xFF141826u
+#define COL_PANEL     0xFF1E2233u
+#define COL_TEXT      0xFFC9CFDDu
+#define COL_DIM       0xFF7C8598u
+#define COL_ACCENT    0xFF7FA6FFu
+#define COL_SEL_BG    0xFF2C3B60u
+#define COL_HOVER     0x14FFFFFFu
+#define COL_EDIT_BG   0xFF0E1119u
+#define COL_EDITED    0xFF8BD48Bu   /* a value the player changed */
+#define COL_BTN       0xFF2A3147u
+#define COL_BTN_ON    0xFF3D5A9Cu
+#define COL_TRACK     0x40FFFFFFu
+#define COL_THUMB     0xFF7C8598u
+#define COL_WARN      0xFFE8C36Au
 
-#define C_BG      0xFF12141Cu
-#define C_PANEL   0xFF1A1D27u
-#define C_HEADER  0xFF232735u
-#define C_LINE    0xFF2E3344u
-#define C_TEXT    0xFFDCE2F0u
-#define C_DIM     0xFF8890A6u
-#define C_ACCENT  0xFFE8B44Bu
-#define C_HOT     0xFF39405Au
-#define C_HOVER   0xFF262B3Bu      /* under the pointer; dimmer than C_HOT */
+/* Design units: window height / 480. */
+#define U_BAR_H     26.0f
+#define U_GAP        6.0f
+#define U_PAD       10.0f
+#define U_ROW_H     14.0f
+#define U_TITLE_H   18.0f
+#define U_HDR_H     16.0f
+#define U_BTN_H     17.0f
+#define U_FOOT_H    14.0f
+#define U_SB_W       4.0f
+#define U_ICON      12.0f          /* duelist portrait, square, inside a row */
+#define U_R_PANEL    9.0f
+#define U_R_BOX      5.0f
+#define U_FS_TITLE  11.0f
+#define U_FS_BODY    9.5f
+#define U_FS_SMALL   8.5f
+
+/* UTF-8 spellings of the glyphs the embedded Inter subset carries. */
+#define S_UP     "\xE2\x86\x91"     /* ↑ */
+#define S_DOWN   "\xE2\x86\x93"     /* ↓ */
+#define S_DASH   "\xE2\x80\x93"     /* – */
+#define S_ELLIP  "\xE2\x80\xA6"     /* … */
 
 /* --- canvas -------------------------------------------------------------- */
 
@@ -89,76 +115,73 @@ static SDL_Window   *s_win;
 static uint32_t     *s_px;
 static int           s_w, s_h;
 static int           s_dirty = 1;
+static PsxUiCanvas   s_cv;
+static float         s_u = 1.0f;   /* design unit in pixels */
 
-static void px_fill(int x, int y, int w, int h, uint32_t c)
+static int px(float u) { return (int)(u * s_u + 0.5f); }
+
+static const PsxUiFace *face_title(void) { return psx_ui_font_face(U_FS_TITLE * s_u, PSX_UI_FONT_SEMIBOLD); }
+static const PsxUiFace *face_body(void)  { return psx_ui_font_face(U_FS_BODY * s_u, PSX_UI_FONT_REGULAR); }
+static const PsxUiFace *face_bold(void)  { return psx_ui_font_face(U_FS_BODY * s_u, PSX_UI_FONT_SEMIBOLD); }
+static const PsxUiFace *face_small(void) { return psx_ui_font_face(U_FS_SMALL * s_u, PSX_UI_FONT_REGULAR); }
+
+/* Width of a string, 0 for a face that failed to bake — the layout then
+ * degrades to overlapping columns instead of a crash. */
+static int tw(const PsxUiFace *f, const char *s) { return f ? psx_ui_font_text_w(f, s) : 0; }
+static int imax(int a, int b) { return a > b ? a : b; }
+
+typedef struct { int x, y, w, h; } Rect;
+static int in_rect(const Rect *r, int x, int y)
 {
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > s_w) w = s_w - x;
-    if (y + h > s_h) h = s_h - y;
-    for (int j = 0; j < h; j++) {
-        uint32_t *row = s_px + (size_t)(y + j) * s_w + x;
-        for (int i = 0; i < w; i++) row[i] = c;
-    }
+    return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
 
-/* Returns the pen x after the string, so a caller can chain without
- * recomputing widths. Clips to `right` so a long card name stops at the
- * column edge instead of running into the next one. */
-static int px_text(int x, int y, int right, uint32_t c, const char *s)
+/* Text inside a band, clipped to it. */
+static void text_in(const Rect *r, int inset, const char *s, uint32_t col, const PsxUiFace *f)
 {
-    for (; *s; s++) {
-        const unsigned ch = (unsigned char)*s;
-        if (x + CW > right) break;
-        if (ch >= 32u && ch < 127u) {
-            const unsigned char *g = FONT8[ch - 32u];
-            for (int gy = 0; gy < GLYPH; gy++) {
-                const unsigned bits = g[gy];
-                if (!bits) continue;
-                for (int gx = 0; gx < GLYPH; gx++) {
-                    if (!(bits & (1u << gx))) continue;
-                    px_fill(x + gx * TS, y + gy * TS, TS, TS, c);
-                }
-            }
-        }
-        x += CW;
-    }
+    psx_ui_text_clip(&s_cv, r->x + inset, psx_ui_baseline_in(r->y, r->h, f), s, col, f, r->w - inset * 2);
+}
+
+static void text_centered(const Rect *r, const char *s, uint32_t col, const PsxUiFace *f)
+{
+    const int w = tw(f, s);
+    psx_ui_text(&s_cv, r->x + (r->w - w) / 2, psx_ui_baseline_in(r->y, r->h, f), s, col, f);
+}
+
+/* Right-aligned text; returns its left edge. */
+static int text_right(int right, int baseline, const char *s, uint32_t col, const PsxUiFace *f)
+{
+    const int x = right - tw(f, s);
+    psx_ui_text(&s_cv, x, baseline, s, col, f);
     return x;
 }
 
-static int text_w(const char *s) { return (int)strlen(s) * CW; }
-
-/* The duelist's FREE DUEL portrait, scaled to the row. Nearest-neighbour pick,
- * not an average: these are pixel icons and averaging turns their outlines to
- * mud. Falls back to a plain plate, so a duelist whose icon was never captured
- * costs one row's decoration and nothing else. */
-#define ICON_PX (10 * TS)          /* fits a ROW_H row with TS to spare */
-
-static void draw_icon(int x, int y, int duelist)
+/* The duelist's FREE DUEL portrait in a rounded well. First choice is the
+ * 48x48 tile decoded from the player's own disc (psx_duelist_portraits.c),
+ * which every player has. Failing that, the compile-time bake or the
+ * drawn-screen capture: those 38x38 icons carry transparent corners, and the
+ * toolkit's scaled blit treats its source as opaque, so they are composed
+ * over the row's own colour first. Nothing at all gets a plain plate. */
+static void draw_icon(int x, int y, int size, int duelist, uint32_t bg)
 {
-    const int dst_px = ICON_PX;
+    const uint32_t *disc = psx_duelist_portraits_get(duelist);
+    if (disc) {
+        psx_ui_blit_scaled(&s_cv, x, y, size, size, (float)px(2.5f),
+                           disc, PSX_PORTRAIT_W, PSX_PORTRAIT_W);
+        return;
+    }
     const uint32_t *src = (duelist >= 0 && duelist < PSX_DUELIST_ICON_N)
                               ? PSX_DUELIST_ICONS[duelist] : 0;
-    /* No compile-time portrait (player builds ship none): the runtime cache,
-     * captured from this player's own FREE DUEL screen. Same 38x38 layout. */
     if (!src) src = psx_duelist_icon_cache_get(duelist);
-    if (!src) { px_fill(x, y, dst_px, dst_px, C_HEADER); return; }
-    for (int j = 0; j < dst_px; j++) {
-        if (y + j < 0 || y + j >= s_h) continue;
-        uint32_t *dst = s_px + (size_t)(y + j) * s_w + x;
-        const uint32_t *row =
-            src + (size_t)(j * PSX_DUELIST_ICON_H / dst_px) * PSX_DUELIST_ICON_W;
-        for (int i = 0; i < dst_px; i++) {
-            if (x + i < 0 || x + i >= s_w) continue;
-            const uint32_t p = row[i * PSX_DUELIST_ICON_W / dst_px];
-            if (p >> 24) dst[i] = 0xFF000000u | (p & 0x00FFFFFFu);
-        }
+    if (!src) {
+        psx_ui_round_rect(&s_cv, x, y, size, size, (float)px(2.5f), COL_BTN);
+        return;
     }
-}
-
-static void px_text_right(int right, int y, uint32_t c, const char *s)
-{
-    px_text(right - text_w(s), y, right, c, s);
+    static uint32_t tmp[PSX_DUELIST_ICON_W * PSX_DUELIST_ICON_H];
+    for (int i = 0; i < PSX_DUELIST_ICON_W * PSX_DUELIST_ICON_H; i++)
+        tmp[i] = (src[i] >> 24) ? (0xFF000000u | (src[i] & 0x00FFFFFFu)) : bg;
+    psx_ui_blit_scaled(&s_cv, x, y, size, size, (float)px(2.5f),
+                       tmp, PSX_DUELIST_ICON_W, PSX_DUELIST_ICON_H);
 }
 
 /* --- the data ------------------------------------------------------------ */
@@ -242,6 +265,7 @@ static int  s_scroll_right;      /* first visible row of the right pane */
  * desktop list does. Pane 0 is the left list, 1 the right; -1 is neither. */
 static int  s_hover_pane = -1;
 static int  s_hover_row  = -1;
+static int  s_hover_btn  = -1;   /* top-bar button under the pointer */
 
 /* The search caret blinks; this is its current phase, flipped from tick. */
 static int  s_caret_on = 1;
@@ -252,9 +276,9 @@ static int  s_edit_row = -1;
 static char s_edit_buf[6];
 static int  s_edit_len;
 
-/* One-line status ("SAVED", "EDIT REFUSED: ..."), drawn in the title strip
- * until its deadline passes. */
-static char     s_msg[64];
+/* One-line status ("Saved", "Edit refused: ..."), shown in the right pane's
+ * header until its deadline passes. */
+static char     s_msg[80];
 static uint32_t s_msg_until;
 
 /* Right-click context menu (also the LOAD button's file list): a handful of
@@ -264,7 +288,7 @@ enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE,
        CM_LOAD_FILE, CM_EXPORT };
 #define CMENU_MAX 12
 static struct {
-    char label[44];
+    char label[64];
     int  action;
     int  a, b, c;                  /* action args: duelist/card/band or row */
     char s[64];                    /* CM_LOAD_FILE: the file's bare name    */
@@ -492,14 +516,166 @@ static void invalidate(void)
     s_dirty = 1;
 }
 
-/* --- editing -------------------------------------------------------------- */
+/* --- layout ---------------------------------------------------------------
+ *
+ * Everything is derived from the drawable size, because the window is the
+ * player's to resize and drag between displays. Recomputed at the top of
+ * every draw and every pointer event (it is a few dozen additions and some
+ * cached text measurements), so drawing and hit-testing read the same
+ * numbers and cannot drift apart.
+ */
 
-static int list_rows(void);        /* defined with the layout, used below */
+typedef struct {
+    Rect bar, tab_cards, tab_duel, search, btn_save, btn_load, btn_third;
+    int  mod_x;                     /* left edge of the mod indicator        */
+    Rect pane[2];                   /* the two panels                        */
+    Rect title[2];                  /* what is listed, per panel             */
+    Rect cols[2];                   /* the column names                      */
+    Rect rows[2];                   /* the rows                              */
+    Rect sb[2];                     /* scrollbar tracks                      */
+    int  row_h, nrows;
+    int  foot_y, foot_h;            /* the help / unsaved line at the bottom */
+    /* Left pane, BY CARD: each column's left and right edge. */
+    int c_id_x, c_id_r, c_name_x, c_name_r, c_type_x, c_type_r,
+        c_atk_x, c_atk_r, c_def_x, c_def_r, c_drop_x, c_drop_r;
+    /* Left pane, BY DUELIST. */
+    int d_icon_x, d_name_x, d_name_r, d_drops_x, d_drops_r;
+    /* Right pane. */
+    int r_dot_x, r_icon_x, r_id_x, r_id_r, r_name_x, r_name_r,
+        r_rank_x, r_rank_r, r_weight_x, r_weight_r, r_chance_x, r_chance_r;
+} Layout;
+static Layout s_L;
+
+static void layout_compute(void)
+{
+    Layout *L = &s_L;
+    memset(L, 0, sizeof *L);
+    const PsxUiFace *ft = face_title(), *fb = face_bold(), *fr = face_body(), *fs = face_small();
+    const int gap = px(U_GAP), pad = px(U_PAD), cg = px(12.0f);
+
+    /* Top bar: title, the two view tabs, the search box; from the right the
+     * mod indicator, then the view-dependent button, Load and Save. */
+    L->bar = (Rect){ 0, 0, s_w, px(U_BAR_H) };
+    const int bh = px(U_BTN_H), by = (L->bar.h - bh) / 2;
+    int x = px(8.0f) + tw(ft, "Drop Table Manager") + px(14.0f);
+    L->tab_cards = (Rect){ x, by, tw(fb, "By card") + px(18.0f), bh };
+    x += L->tab_cards.w + px(4.0f);
+    L->tab_duel = (Rect){ x, by, tw(fb, "By duelist") + px(18.0f), bh };
+    x += L->tab_duel.w + px(12.0f);
+    int rx = s_w - px(8.0f);
+    L->mod_x = rx - tw(fs, "Drop missing cards: off");
+    rx = L->mod_x - px(14.0f);
+    int w = tw(fb, s_view == VIEW_DUELISTS ? "Defaults" : "All CPU") + px(18.0f);
+    L->btn_third = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
+    w = tw(fb, "Load" S_ELLIP) + px(18.0f);
+    L->btn_load = (Rect){ rx - w, by, w, bh };   rx -= w + px(4.0f);
+    w = tw(fb, "Save") + px(18.0f);
+    L->btn_save = (Rect){ rx - w, by, w, bh };   rx -= w + px(10.0f);
+    w = rx - x;
+    if (w > px(170.0f)) w = px(170.0f);
+    if (w < px(50.0f))  w = px(50.0f);
+    L->search = (Rect){ x, (L->bar.h - px(16.0f)) / 2, w, px(16.0f) };
+
+    /* Two panels. The views want the space split differently: a card list
+     * needs room for long names AND four numeric columns, a duelist list is
+     * short names and one count. */
+    const int top = L->bar.h + gap;
+    L->foot_h = px(U_FOOT_H);
+    L->foot_y = s_h - gap - L->foot_h;
+    const int ph = L->foot_y - gap - top;
+    const int avail = s_w - 3 * gap;
+    int lw = avail * (s_view == VIEW_CARDS ? 60 : 38) / 100;
+    if (lw > avail - px(260.0f)) lw = avail - px(260.0f);
+    if (lw < px(200.0f)) lw = px(200.0f);
+    if (lw > avail - px(40.0f)) lw = avail - px(40.0f);
+    L->pane[0] = (Rect){ gap, top, lw, ph };
+    L->pane[1] = (Rect){ gap + lw + gap, top, avail - lw, ph };
+    L->row_h = px(U_ROW_H);
+    for (int p = 0; p < 2; p++) {
+        const Rect *P = &L->pane[p];
+        L->title[p] = (Rect){ P->x + pad, P->y + px(3.0f), P->w - 2 * pad, px(U_TITLE_H) };
+        L->cols[p]  = (Rect){ P->x + pad, L->title[p].y + L->title[p].h, P->w - 2 * pad, px(U_HDR_H) };
+        const int ry = L->cols[p].y + L->cols[p].h;
+        L->rows[p]  = (Rect){ P->x + px(4.0f), ry, P->w - px(4.0f) - px(10.0f), P->y + P->h - ry - px(4.0f) };
+    }
+    L->nrows = L->rows[0].h / L->row_h;
+    if (L->nrows < 1) L->nrows = 1;
+    for (int p = 0; p < 2; p++)
+        L->sb[p] = (Rect){ L->pane[p].x + L->pane[p].w - px(8.0f), L->rows[p].y, px(U_SB_W), L->nrows * L->row_h };
+
+    /* Left pane columns, from the right, each at its widest text; NAME takes
+     * what is left. The type column fits "Beast-Warrior", the longest name in
+     * the game's own table. */
+    {
+        const int x0 = L->rows[0].x + px(6.0f), xr = L->rows[0].x + L->rows[0].w - px(6.0f);
+        int cw;
+        L->c_id_x = x0;  L->c_id_r = x0 + tw(fr, "722");
+        cw = imax(tw(fs, "Drops " S_DOWN), tw(fr, "39"));
+        L->c_drop_r = xr;                    L->c_drop_x = L->c_drop_r - cw;
+        cw = imax(tw(fs, "DEF " S_DOWN), tw(fr, "9999"));
+        L->c_def_r = L->c_drop_x - cg;       L->c_def_x = L->c_def_r - cw;
+        cw = imax(tw(fs, "ATK " S_DOWN), tw(fr, "9999"));
+        L->c_atk_r = L->c_def_x - cg;        L->c_atk_x = L->c_atk_r - cw;
+        cw = imax(tw(fs, "Type " S_DOWN), tw(fr, "Beast-Warrior"));
+        L->c_type_r = L->c_atk_x - cg;       L->c_type_x = L->c_type_r - cw;
+        L->c_name_x = L->c_id_r + px(10.0f); L->c_name_r = L->c_type_x - cg;
+        if (L->c_name_r < L->c_name_x + px(40.0f)) L->c_name_r = L->c_name_x + px(40.0f);
+
+        L->d_icon_x = x0;
+        L->d_name_x = x0 + px(U_ICON) + px(8.0f);
+        cw = imax(tw(fs, "Drops " S_DOWN), tw(fr, "999"));
+        L->d_drops_r = xr;                   L->d_drops_x = xr - cw;
+        L->d_name_r = L->d_drops_x - cg;
+    }
+    /* Right pane: an edited dot in the gutter, then the portrait or the id,
+     * the name, and RANK / WEIGHT / CHANCE at their widest text. */
+    {
+        const int xr = L->rows[1].x + L->rows[1].w - px(6.0f);
+        L->r_dot_x = L->rows[1].x + px(7.0f);
+        const int cx = L->rows[1].x + px(14.0f);
+        int cw;
+        cw = imax(tw(fs, "Chance " S_DOWN), tw(fr, "100.00%"));
+        L->r_chance_r = xr;                  L->r_chance_x = xr - cw;
+        cw = imax(tw(fs, "Weight " S_DOWN), tw(fr, "2048"));
+        L->r_weight_r = L->r_chance_x - cg;  L->r_weight_x = L->r_weight_r - cw;
+        cw = imax(tw(fs, "Rank " S_DOWN), tw(fr, "S/A POW"));
+        L->r_rank_r = L->r_weight_x - cg;    L->r_rank_x = L->r_rank_r - cw;
+        L->r_icon_x = cx;
+        L->r_id_x = cx;  L->r_id_r = cx + tw(fr, "722");
+        L->r_name_x = (s_view == VIEW_CARDS) ? cx + px(U_ICON) + px(8.0f) : L->r_id_r + px(8.0f);
+        L->r_name_r = L->r_rank_x - cg;
+        if (L->r_name_r < L->r_name_x + px(40.0f)) L->r_name_r = L->r_name_x + px(40.0f);
+    }
+}
+
+static int list_rows(void) { return s_L.nrows > 0 ? s_L.nrows : 1; }
+
+/* Which panel the point is in, -1 for neither. */
+static int pane_at(int x, int y)
+{
+    for (int p = 0; p < 2; p++)
+        if (in_rect(&s_L.pane[p], x, y)) return p;
+    return -1;
+}
+
+/* Which visible row of panel `p` the point is on, -1 for none. Any x inside
+ * the panel counts, so a click in the margin beside a name still lands on
+ * its row — the scrollbar is tested before this, by the caller. */
+static int row_at(int p, int x, int y)
+{
+    if (p < 0) return -1;
+    const Rect *P = &s_L.pane[p], *R = &s_L.rows[p];
+    if (x < P->x || x >= P->x + P->w) return -1;
+    if (y < R->y || y >= R->y + s_L.nrows * s_L.row_h) return -1;
+    return (y - R->y) / s_L.row_h;
+}
+
+/* --- editing -------------------------------------------------------------- */
 
 static void say(const char *m)
 {
     snprintf(s_msg, sizeof s_msg, "%s", m);
-    s_msg_until = SDL_GetTicks() + 3000u;
+    s_msg_until = SDL_GetTicks() + 3500u;
     s_dirty = 1;
 }
 
@@ -525,7 +701,7 @@ static int commit_vector(int d, int card, const uint16_t v[3])
     uint16_t old[3];
     const int had = psx_drop_edits_get(d, card, old);
     if (!psx_drop_edits_set(d, card, v)) {
-        say("EDIT REFUSED: EDIT TABLE FULL");
+        say("Edit refused: the edit table is full");
         return 0;
     }
     static uint16_t tmp[NCARDS];
@@ -534,8 +710,8 @@ static int commit_vector(int d, int card, const uint16_t v[3])
         if (rc == 1 || rc == -1) continue;   /* transformed, or nothing to do */
         if (had) (void)psx_drop_edits_set(d, card, old);
         else     (void)psx_drop_edits_unset(d, card);
-        say(rc == -4 ? "EDIT REFUSED: BAND WOULD EXCEED 1984"
-                     : "EDIT REFUSED: BAND CANNOT RENORMALIZE");
+        say(rc == -4 ? "Edit refused: a band would exceed 1984"
+                     : "Edit refused: that band cannot renormalize");
         return 0;
     }
     invalidate();
@@ -548,14 +724,14 @@ static void commit_edit_weight(int row, int weight)
     const DropRow *r = &s_rows[row];
     if (weight < 0) weight = 0;
     if (weight > (int)PSX_DROP_DB_TOTAL - 64) {
-        say("EDIT REFUSED: MAX WEIGHT IS 1984");
+        say("Edit refused: the most a weight can be is 1984");
         return;
     }
     uint16_t v[NTIER];
     for (int t = 0; t < NTIER; t++) v[t] = s_eff[r->duelist][t][r->card - 1];
     v[r->tier] = (uint16_t)weight;
     if (commit_vector(r->duelist, r->card, v))
-        say(weight ? "EDITED - SAVE TO KEEP" : "REMOVED FROM BAND - SAVE TO KEEP");
+        say(weight ? "Edited. Save to keep it." : "Removed from the band. Save to keep it.");
 }
 
 /* Move a row to another band; the weight travels with it (merging into
@@ -573,7 +749,7 @@ static void move_row_band(int row, int to)
     v[r->tier] = 0;
     v[to] = (uint16_t)merged;
     if (commit_vector(r->duelist, r->card, v))
-        say("BAND MOVED - SAVE TO KEEP");
+        say("Moved to another band. Save to keep it.");
 }
 
 static void cycle_rank(int row)
@@ -590,7 +766,7 @@ static void remove_row_band(int row)
     for (int t = 0; t < NTIER; t++) v[t] = s_eff[r->duelist][t][r->card - 1];
     v[r->tier] = 0;
     if (commit_vector(r->duelist, r->card, v))
-        say("REMOVED FROM BAND - SAVE TO KEEP");
+        say("Removed from the band. Save to keep it.");
 }
 
 /* Add a card to a duelist's band at a starter weight of 20 (~1%), ready to
@@ -605,12 +781,12 @@ static int add_card(int d, int card, int band)
     uint16_t v[NTIER];
     for (int t = 0; t < NTIER; t++) v[t] = s_eff[d][t][card - 1];
     if (v[band]) {
-        say("ALREADY IN THAT BAND - EDIT ITS WEIGHT");
+        say("Already in that band. Edit its weight instead.");
         return 0;
     }
     v[band] = ADD_WEIGHT;
     if (!commit_vector(d, card, v)) return 0;
-    say("ADDED AT WEIGHT 20 - SAVE TO KEEP");
+    say("Added at weight 20. Save to keep it.");
     /* If the new row is on screen (BY DUELIST, that duelist), open its
      * number box so the starter weight can be typed over immediately. */
     if (s_view == VIEW_DUELISTS && d == s_sel_duelist)
@@ -653,30 +829,28 @@ static void cmenu_add_s(const char *label, int action, const char *s)
     snprintf(s_cmenu[s_cmenu_n - 1].s, sizeof(s_cmenu[0].s), "%s", s);
 }
 
-static void cmenu_geom(int *x, int *y, int *w, int *h)
+static int cmenu_row_h(void) { return s_L.row_h + px(2.0f); }
+
+static Rect cmenu_rect(void)
 {
+    const PsxUiFace *fr = face_body();
     int wide = 0;
-    for (int i = 0; i < s_cmenu_n; i++) {
-        const int l = text_w(s_cmenu[i].label);
-        if (l > wide) wide = l;
-    }
-    *w = wide + 2 * PAD;
-    *h = s_cmenu_n * BTN_H + 2 * TS;
-    *x = s_cmenu_x;
-    *y = s_cmenu_y;
-    if (*x + *w > s_w) *x = s_w - *w;
-    if (*y + *h > s_h) *y = s_h - *h;
-    if (*x < 0) *x = 0;
-    if (*y < 0) *y = 0;
+    for (int i = 0; i < s_cmenu_n; i++) wide = imax(wide, tw(fr, s_cmenu[i].label));
+    Rect r = { s_cmenu_x, s_cmenu_y, wide + 2 * px(U_PAD) + px(6.0f), s_cmenu_n * cmenu_row_h() + px(6.0f) };
+    if (r.w < px(150.0f)) r.w = px(150.0f);
+    if (r.x + r.w > s_w - px(4.0f)) r.x = s_w - px(4.0f) - r.w;
+    if (r.y + r.h > s_h - px(4.0f)) r.y = s_h - px(4.0f) - r.h;
+    if (r.x < 0) r.x = 0;
+    if (r.y < 0) r.y = 0;
+    return r;
 }
 
 static int cmenu_item_at(int x, int y)
 {
-    int mx, my, mw, mh;
     if (!s_cmenu_n) return -1;
-    cmenu_geom(&mx, &my, &mw, &mh);
-    if (x < mx || x >= mx + mw || y < my + TS || y >= my + mh - TS) return -1;
-    const int i = (y - my - TS) / BTN_H;
+    const Rect r = cmenu_rect();
+    if (!in_rect(&r, x, y)) return -1;
+    const int i = (y - r.y - px(3.0f)) / cmenu_row_h();
     return (i >= 0 && i < s_cmenu_n) ? i : -1;
 }
 
@@ -697,22 +871,22 @@ static void cmenu_run(int i)
         const int n = psx_drop_edits_load_file(sarg);
         if (n >= 0) {
             invalidate();
-            char m[64];
-            snprintf(m, sizeof m, "LOADED %d ENTRIES - SAVE TO KEEP", n);
+            char m[80];
+            snprintf(m, sizeof m, "Loaded %d entr%s. Save to keep them.", n, n == 1 ? "y" : "ies");
             say(m);
         } else {
-            say("LOAD FAILED");
+            say("Load failed");
         }
         break;
     }
     case CM_EXPORT: {
         char name[64];
         if (psx_drop_edits_export(name, sizeof name)) {
-            char m[64];
-            snprintf(m, sizeof m, "EXPORTED %.40s", name);
+            char m[80];
+            snprintf(m, sizeof m, "Exported %.40s", name);
             say(m);
         } else {
-            say("EXPORT FAILED");
+            say("Export failed");
         }
         break;
     }
@@ -731,77 +905,22 @@ static void open_load_menu(int x, int y)
     s_cmenu_y = y;
     s_cmenu_n = 0;
     s_cmenu_hover = -1;
-    cmenu_add("EXPORT CURRENT TO drop_tables", CM_EXPORT, 0, 0, 0);
+    cmenu_add("Export the current table to drop_tables", CM_EXPORT, 0, 0, 0);
     for (int i = 0; i < n; i++) {
-        char label[44];
-        snprintf(label, sizeof label, "LOAD %.36s", names[i]);
+        char label[64];
+        snprintf(label, sizeof label, "Load %.56s", names[i]);
         cmenu_add_s(label, CM_LOAD_FILE, names[i]);
     }
     if (!n)
-        cmenu_add("(NO .INI FILES IN drop_tables YET)", CM_NONE, 0, 0, 0);
+        cmenu_add("No .ini files in drop_tables yet", CM_NONE, 0, 0, 0);
     s_dirty = 1;
 }
-
-/* --- layout ---------------------------------------------------------------
- *
- * Everything is derived from the drawable size, because the window is the
- * player's to resize and drag between displays: a 1180-wide constant becomes
- * a clipped right-hand column the moment they make it narrower. Rows are the
- * only fixed quantity, since a row has to match the font.
- */
-
-#define TOPBAR_H  (BTN_H + 2 * PAD)     /* tabs + search                     */
-#define TITLE_H   BTN_H                 /* what is selected, per pane        */
-#define HDR_H     BTN_H                 /* column names                      */
-#define HDR_Y     (TOPBAR_H + TITLE_H)
-#define LIST_Y    (HDR_Y + HDR_H)
-
-/* The top bar's controls, one place, so drawing and clicking cannot drift
- * apart. Widths come from the labels so they survive rescaling. */
-static void topbar_cols(int *b1x, int *b1w, int *b2x, int *b2w,
-                        int *box_x, int *box_w,
-                        int *sv_x, int *sv_w, int *ld_x, int *ld_w,
-                        int *df_x, int *df_w)
-{
-    *b1x = PAD;              *b1w = 9 * CW;   /* "BY CARD" + a cell each side */
-    *b2x = *b1x + *b1w + PAD; *b2w = 12 * CW; /* "BY DUELIST"                 */
-    const int lx = *b2x + *b2w + 2 * PAD;     /* "Search" label               */
-    *box_x = lx + 7 * CW;
-    /* From the right: the mod indicator keeps its line (24 cells covers
-     * "DROP MISSING CARDS: OFF"), then the view-dependent slot (DEFAULTS or
-     * ALL CPU), LOAD and SAVE, then the search box takes what is left. */
-    const int right = s_w - 25 * CW - PAD;
-    *df_w = 10 * CW;
-    *df_x = right - *df_w - PAD;
-    *ld_w = 6 * CW;
-    *ld_x = *df_x - *ld_w - PAD;
-    *sv_w = 7 * CW;
-    *sv_x = *ld_x - *sv_w - PAD;
-    *box_w = *sv_x - PAD - *box_x;
-    if (*box_w < 12 * CW) *box_w = 12 * CW;
-}
-
-/* The two views want the space split differently: a card list needs room for
- * long names AND two numeric columns, while a duelist list is short names and
- * one count. Splitting the same way for both starved whichever pane was not
- * being looked at. */
-static int split_x(void)
-{
-    int x = s_w * (s_view == VIEW_CARDS ? 60 : 38) / 100;
-    const int min_right = 38 * CW;      /* name + rank + weight + chance */
-    if (x < 30 * CW) x = 30 * CW;
-    if (x > s_w - min_right) x = s_w - min_right;
-    if (x < 0) x = 0;
-    return x;
-}
-
-static int list_rows(void) { return (s_h - LIST_Y - PAD) / ROW_H; }
 
 /* --- scrollbars -----------------------------------------------------------
  *
  * 722 cards is a lot of wheel. Each pane gets a real scrollbar in its right
  * gutter: proportional thumb, draggable, and the track pages on click. Drawn
- * only when the content overflows, same rule as the N-M OF K indicator.
+ * only when the content overflows, same rule as the N-M of K indicator.
  */
 static int s_sb_drag;              /* 0 none, 1 left pane, 2 right pane */
 static int s_sb_grab;              /* pointer offset inside the thumb */
@@ -817,24 +936,19 @@ static int *pane_scroll(int pane)
     return pane == 0 ? &s_scroll : &s_scroll_right;
 }
 
-/* Geometry of one pane's scrollbar; 0 when everything fits. */
-static int sb_geom(int pane, int *x0, int *w, int *ty, int *th,
-                   int *thumb_y, int *thumb_h)
+/* The thumb of one pane's scrollbar; 0 when everything fits. */
+static int sb_thumb(int pane, int *thumb_y, int *thumb_h)
 {
     const int total = pane_total(pane), page = list_rows();
     if (total <= page || page <= 0) return 0;
-    *w  = 3 * TS;
-    *x0 = (pane == 0 ? split_x() : s_w) - *w - TS;
-    *ty = LIST_Y;
-    *th = s_h - LIST_Y - PAD;
-    int h = *th * page / total;
-    if (h < 6 * TS) h = 6 * TS;
-    if (h > *th) h = *th;
+    const Rect *T = &s_L.sb[pane];
+    int h = T->h * page / total;
+    if (h < px(12.0f)) h = px(12.0f);
+    if (h > T->h) h = T->h;
     *thumb_h = h;
     const int range = total - page;
     const int sc = *pane_scroll(pane);
-    *thumb_y = *ty + (range > 0
-                          ? (int)((long long)(*th - h) * sc / range) : 0);
+    *thumb_y = T->y + (range > 0 ? (int)((long long)(T->h - h) * sc / range) : 0);
     return 1;
 }
 
@@ -854,17 +968,18 @@ static void set_scroll(int pane, int value)
 static int sb_press(int x, int y)
 {
     for (int pane = 0; pane < 2; pane++) {
-        int x0, w, ty, th, tyv, hh;
-        if (!sb_geom(pane, &x0, &w, &ty, &th, &tyv, &hh)) continue;
-        if (x < x0 - TS || x >= x0 + w + TS || y < ty || y >= ty + th)
-            continue;                      /* a whisker of slack either side */
+        int tyv, hh;
+        if (!sb_thumb(pane, &tyv, &hh)) continue;
+        const Rect *T = &s_L.sb[pane];
+        const int slack = px(4.0f);            /* a whisker either side */
+        if (x < T->x - slack || x >= T->x + T->w + slack || y < T->y || y >= T->y + T->h)
+            continue;
         if (y >= tyv && y < tyv + hh) {
             s_sb_drag = pane + 1;
             s_sb_grab = y - tyv;
         } else {
             const int page = list_rows();
-            set_scroll(pane, *pane_scroll(pane)
-                                 + (y < tyv ? -page : page));
+            set_scroll(pane, *pane_scroll(pane) + (y < tyv ? -page : page));
         }
         s_dirty = 1;
         return 1;
@@ -875,16 +990,16 @@ static int sb_press(int x, int y)
 static void sb_drag_to(int y)
 {
     const int pane = s_sb_drag - 1;
-    int x0, w, ty, th, tyv, hh;
-    if (pane < 0 || !sb_geom(pane, &x0, &w, &ty, &th, &tyv, &hh)) return;
+    int tyv, hh;
+    if (pane < 0 || !sb_thumb(pane, &tyv, &hh)) return;
+    const Rect *T = &s_L.sb[pane];
     const int total = pane_total(pane), page = list_rows();
-    const int span = th - hh;
+    const int span = T->h - hh;
     if (span <= 0) return;
-    int top = y - s_sb_grab - ty;
+    int top = y - s_sb_grab - T->y;
     if (top < 0) top = 0;
     if (top > span) top = span;
-    set_scroll(pane, (int)(((long long)top * (total - page) + span / 2)
-                           / span));
+    set_scroll(pane, (int)(((long long)top * (total - page) + span / 2) / span));
 }
 
 static void pct(char *out, unsigned cap, int weight)
@@ -896,168 +1011,122 @@ static void pct(char *out, unsigned cap, int weight)
     snprintf(out, cap, "%d.%02d%%", hundredths / 100, hundredths % 100);
 }
 
-static void draw_button(int x, int y, int w, const char *label, int on)
+/* --- drawing -------------------------------------------------------------- */
+
+static void draw_button(const Rect *r, const char *label, int primary, int hover)
 {
-    px_fill(x, y, w, BTN_H, on ? C_ACCENT : C_HEADER);
-    px_text(x + (w - text_w(label)) / 2, y + TXT_DY, x + w,
-            on ? C_BG : C_TEXT, label);
+    psx_ui_round_rect(&s_cv, r->x, r->y, r->w, r->h, r->h * 0.5f, primary ? COL_BTN_ON : COL_BTN);
+    if (hover) psx_ui_round_rect(&s_cv, r->x, r->y, r->w, r->h, r->h * 0.5f, COL_HOVER);
+    text_centered(r, label, COL_TEXT, face_bold());
 }
 
-static void draw_topbar(void)
+static void draw_bar(void)
 {
-    int b1x, b1w, b2x, b2w, bx, bw, svx, svw, ldx, ldw, dfx, dfw;
-    topbar_cols(&b1x, &b1w, &b2x, &b2w, &bx, &bw, &svx, &svw,
-                &ldx, &ldw, &dfx, &dfw);
+    const Layout *L = &s_L;
+    const PsxUiFace *ft = face_title(), *fr = face_body(), *fs = face_small();
+    psx_ui_fill(&s_cv, 0, 0, s_w, L->bar.h, COL_BAR);
+    psx_ui_fill(&s_cv, 0, L->bar.h - 1, s_w, 1, 0x40FFFFFFu);
+    Rect t = { px(8.0f), 0, L->tab_cards.x - px(8.0f), L->bar.h };
+    text_in(&t, 0, "Drop Table Manager", COL_ACCENT, ft);
 
-    px_fill(0, 0, s_w, TOPBAR_H, C_PANEL);
-    px_fill(0, TOPBAR_H - 1, s_w, 1, C_LINE);
-    draw_button(b1x, PAD, b1w, "BY CARD", s_view == VIEW_CARDS);
-    draw_button(b2x, PAD, b2w, "BY DUELIST", s_view == VIEW_DUELISTS);
+    draw_button(&L->tab_cards, "By card", s_view == VIEW_CARDS, s_hover_btn == 0);
+    draw_button(&L->tab_duel, "By duelist", s_view == VIEW_DUELISTS, s_hover_btn == 1);
 
-    /* SAVE carries the unsaved-changes star; LOAD opens the drop_tables
-     * share menu. The last slot is view-dependent: DEFAULTS scopes to the
-     * BY DUELIST selection, ALL CPU pads the BY CARD droppers list out to
+    /* The search box always has key focus by design, so the caret is always
+     * there — blinking, because a solid bar reads as a glyph. */
+    psx_ui_round_rect(&s_cv, L->search.x, L->search.y, L->search.w, L->search.h, L->search.h * 0.5f, COL_EDIT_BG);
+    if (s_search[0]) text_in(&L->search, px(8.0f), s_search, COL_TEXT, fr);
+    else             text_in(&L->search, px(8.0f), "Type to search" S_ELLIP, COL_DIM, fr);
+    if (s_caret_on && s_edit_row < 0) {
+        const int cx = L->search.x + px(8.0f) + (s_search[0] ? tw(fr, s_search) : 0) + 1;
+        psx_ui_fill(&s_cv, cx, L->search.y + px(3.0f), imax(1, px(1.2f)), L->search.h - px(6.0f), COL_ACCENT);
+    }
+
+    /* Save is lit while there are unsaved edits; Load opens the drop_tables
+     * share menu. The last slot is view-dependent: Defaults scopes to the
+     * BY DUELIST selection, All CPU pads the BY CARD droppers list out to
      * the whole roster for drag-and-drop. */
-    const int dirty = psx_drop_edits_dirty();
-    draw_button(svx, PAD, svw, dirty ? "SAVE*" : "SAVE", dirty);
-    draw_button(ldx, PAD, ldw, "LOAD", 0);
-    if (s_view == VIEW_DUELISTS)
-        draw_button(dfx, PAD, dfw, "DEFAULTS", 0);
-    else
-        draw_button(dfx, PAD, dfw, "ALL CPU", s_all_cpu);
+    draw_button(&L->btn_save, "Save", psx_drop_edits_dirty(), s_hover_btn == 2);
+    draw_button(&L->btn_load, "Load" S_ELLIP, 0, s_hover_btn == 3);
+    if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 4);
+    else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 4);
 
-    px_text(b2x + b2w + 2 * PAD, PAD + TXT_DY, s_w, C_DIM, "Search");
-    px_fill(bx, PAD, bw, BTN_H, C_BG);
-    px_fill(bx, PAD + BTN_H - 1, bw, 1, C_LINE);
-    px_text(bx + 3 * TS, PAD + TXT_DY, bx + bw - 3 * TS,
-            s_search[0] ? C_TEXT : C_DIM,
-            s_search[0] ? s_search : "type to filter");
-    /* The box always has key focus by design, so the caret is always there —
-     * blinking, because a solid bar reads as a glyph. With nothing typed it
-     * sits at the left edge, in front of the placeholder, which is exactly
-     * where a focused empty field puts it. */
-    if (s_caret_on)
-        px_fill(bx + 3 * TS + text_w(s_search), PAD + 2 * TS, TS, 9 * TS,
-                C_ACCENT);
-
-    char buf[80];
     const int on = psx_drop_missing_enabled();
-    snprintf(buf, sizeof buf, "DROP MISSING CARDS: %s", on ? "ON" : "OFF");
-    px_text_right(s_w - PAD, PAD + TXT_DY, on ? C_ACCENT : C_DIM, buf);
+    Rect m = { L->mod_x, 0, s_w - px(8.0f) - L->mod_x, L->bar.h };
+    text_in(&m, 0, on ? "Drop missing cards: on" : "Drop missing cards: off", on ? COL_ACCENT : COL_DIM, fs);
 }
 
-/* Both panes carry a title strip naming what is selected, so the right pane's
- * heading never has to share a line with its column names. */
-static void draw_titles(const char *left, const char *right)
+/* A panel with its title band: what is listed on the left, and at most ONE
+ * piece of side text on the right — the status line while it lives, else the
+ * N-M of K scroll position. The title is CLIPPED short of the side text,
+ * because a long card name drawn under it is soup. */
+static void draw_panel(int p, const char *title, uint32_t title_col, const char *side, uint32_t side_col)
 {
-    const int sx = split_x();
-    const int page = list_rows();
-    char rng[32];
-    px_fill(0, TOPBAR_H, s_w, TITLE_H, C_PANEL);
-    px_fill(0, HDR_Y, s_w, HDR_H, C_HEADER);
-    px_fill(sx, TOPBAR_H, 1, s_h - TOPBAR_H, C_LINE);
-
-    /* Each pane's right edge carries at most ONE piece of side text — the
-     * status line ("SAVED", "EDIT REFUSED: ...") while it lives, else the
-     * N-M OF K scroll position — and the pane title is CLIPPED short of it,
-     * because a long card name drawn under the side text is soup. */
-    const char *lside = NULL, *rside = NULL;
-    uint32_t rside_color = C_DIM;
-    const int ltot = (s_view == VIEW_CARDS) ? s_order_n : NDUEL;
-    if (ltot > page) {
-        const int hi = (s_scroll + page < ltot) ? s_scroll + page : ltot;
-        snprintf(rng, sizeof rng, "%d-%d OF %d", s_scroll + 1, hi, ltot);
-        lside = rng;
+    const Layout *L = &s_L;
+    const Rect *P = &L->pane[p], *T = &L->title[p];
+    const PsxUiFace *fb = face_bold(), *fs = face_small();
+    psx_ui_round_rect(&s_cv, P->x, P->y, P->w, P->h, (float)px(U_R_PANEL), COL_PANEL);
+    int right = T->x + T->w;
+    if (side && side[0]) {
+        const int base = psx_ui_baseline_in(T->y, T->h, fs);
+        right = text_right(T->x + T->w, base, side, side_col, fs) - px(10.0f);
     }
-    char rrng[32];
-    if (s_msg[0] && SDL_GetTicks() < s_msg_until) {
-        rside = s_msg;
-        rside_color = C_ACCENT;
-    } else if (s_rows_n > page) {
-        const int hi = (s_scroll_right + page < s_rows_n)
-                           ? s_scroll_right + page : s_rows_n;
-        snprintf(rrng, sizeof rrng, "%d-%d OF %d",
-                 s_scroll_right + 1, hi, s_rows_n);
-        rside = rrng;
-    }
-    const int lclip = lside ? sx - 2 * PAD - text_w(lside) : sx - PAD;
-    const int rclip = rside ? s_w - 2 * PAD - text_w(rside) : s_w - PAD;
-    px_text(PAD, TOPBAR_H + TXT_DY, lclip, C_DIM, left);
-    px_text(sx + PAD, TOPBAR_H + TXT_DY, rclip, C_ACCENT, right);
-    if (lside) px_text_right(sx - PAD, TOPBAR_H + TXT_DY, C_DIM, lside);
-    if (rside) px_text_right(s_w - PAD, TOPBAR_H + TXT_DY, rside_color, rside);
+    psx_ui_text_clip(&s_cv, T->x, psx_ui_baseline_in(T->y, T->h, fb), title, title_col, fb, right - T->x);
 }
 
-/* A sortable column header, with the direction marker when it is the active
+/* A sortable column name, with the direction marker when it is the active
  * key. `hot`/`desc` are passed in rather than read from s_sort, because three
- * different sorts now own headers (card list, duelist list, right pane). */
-static void draw_col_header(int x, int y, int right, const char *label,
-                            int hot, int desc)
+ * different sorts own headers (card list, duelist list, right pane). */
+static void draw_col(int x, int right, int y, int h, const char *label, int hot, int desc, int align_right)
 {
-    const int w = px_text(x, y, right, hot ? C_ACCENT : C_DIM, label);
-    if (hot) px_text(w + 2 * TS, y, right, C_ACCENT, desc ? "v" : "^");
-}
-
-static void draw_col_header_right(int right, int y, const char *label,
-                                  int hot, int desc)
-{
-    char buf[16];
-    if (hot) snprintf(buf, sizeof buf, "%s%s", label, desc ? "v" : "^");
+    const PsxUiFace *fs = face_small();
+    char buf[24];
+    if (hot) snprintf(buf, sizeof buf, "%s %s", label, desc ? S_DOWN : S_UP);
     else     snprintf(buf, sizeof buf, "%s", label);
-    px_text_right(right, y, hot ? C_ACCENT : C_DIM, buf);
+    const int base = psx_ui_baseline_in(y, h, fs);
+    const uint32_t col = hot ? COL_ACCENT : COL_DIM;
+    if (align_right) text_right(right, base, buf, col, fs);
+    else             psx_ui_text_clip(&s_cv, x, base, buf, col, fs, right - x);
 }
 
-/* Column edges of the card list, from the pane width. NAME takes whatever is
- * left after the fixed-width columns. TYPE gets 13 cells — "Beast-Warrior",
- * the longest name in the game's own table. */
-static void card_cols(int sx, int *id_r, int *name_r, int *type_r, int *atk_r,
-                      int *def_r, int *drop_r)
+static void draw_scrollbar(int pane)
 {
-    *drop_r = sx - PAD;
-    *def_r  = *drop_r - 6 * CW - PAD;
-    *atk_r  = *def_r - 5 * CW - PAD;
-    *type_r = *atk_r - 5 * CW - PAD;
-    *name_r = *type_r - 13 * CW - PAD;
-    *id_r   = PAD + 3 * CW;
-    if (*name_r < *id_r + 6 * CW) *name_r = *id_r + 6 * CW;
+    int tyv, hh;
+    if (!sb_thumb(pane, &tyv, &hh)) return;
+    const Rect *T = &s_L.sb[pane];
+    psx_ui_round_rect(&s_cv, T->x, T->y, T->w, T->h, T->w * 0.5f, COL_TRACK);
+    psx_ui_round_rect(&s_cv, T->x, tyv, T->w, hh, T->w * 0.5f, s_sb_drag == pane + 1 ? COL_ACCENT : COL_THUMB);
 }
 
-/* Column edges of the drop list. */
-/* Laid out from the right, because the three right-hand columns have known
- * widths ("S/A POW", four digits, "100.00%") and the name should get whatever
- * is left rather than a guess. */
-static void drop_cols(int sx, int *rank_x, int *weight_r, int *chance_r)
+/* The right pane's rows: who drops the selected card, or what the selected
+ * duelist drops. */
+static void draw_drop_rows(int name_of_card)
 {
-    *chance_r = s_w - PAD;
-    *weight_r = *chance_r - 8 * CW;          /* 8 cells hold "100.00%"      */
-    /* weight_r is the weight's RIGHT edge, so the rank has to clear the five
-     * cells the number occupies as well as its own eight. Computing rank_x
-     * from weight_r alone put "S/A POW" underneath the digits. */
-    *rank_x   = *weight_r - 5 * CW - PAD - 8 * CW;
-    if (*rank_x < sx + PAD + 8 * CW) *rank_x = sx + PAD + 8 * CW;
-}
+    const Layout *L = &s_L;
+    const PsxUiFace *fr = face_body();
+    const Rect *C = &L->cols[1], *R = &L->rows[1];
+    if (name_of_card) {
+        draw_col(L->r_id_x, L->r_id_r + px(4.0f), C->y, C->h, "ID", 0, 0, 0);
+        draw_col(L->r_name_x, L->r_name_r, C->y, C->h, "Card", 0, 0, 0);
+    } else {
+        draw_col(L->r_name_x, L->r_name_r, C->y, C->h, "Duelist", 0, 0, 0);
+    }
+    draw_col(L->r_rank_x, L->r_rank_r, C->y, C->h, "Rank", s_rsort == RSORT_RANK, s_rdesc, 0);
+    draw_col(L->r_weight_x, L->r_weight_r, C->y, C->h, "Weight", s_rsort == RSORT_WEIGHT, s_rdesc, 1);
+    draw_col(L->r_chance_x, L->r_chance_r, C->y, C->h, "Chance", s_rsort == RSORT_WEIGHT, s_rdesc, 1);
 
-static void draw_drop_rows(int sx, int name_of_card)
-{
-    int rank_x, weight_r, chance_r;
-    drop_cols(sx, &rank_x, &weight_r, &chance_r);
-    px_text(sx + PAD + (name_of_card ? 0 : ICON_PX + 4 * TS), HDR_Y + TXT_DY,
-            rank_x, C_DIM, name_of_card ? "CARD" : "DUELIST");
-    draw_col_header(rank_x, HDR_Y + TXT_DY, weight_r, "RANK",
-                    s_rsort == RSORT_RANK, s_rdesc);
-    draw_col_header_right(weight_r, HDR_Y + TXT_DY, "WEIGHT",
-                          s_rsort == RSORT_WEIGHT, s_rdesc);
-    draw_col_header_right(chance_r, HDR_Y + TXT_DY, "CHANCE",
-                          s_rsort == RSORT_WEIGHT, s_rdesc);
-
-    const int rows = list_rows();
-    for (int r = 0; r < rows; r++) {
+    const int icon = px(U_ICON);
+    for (int r = 0; r < L->nrows; r++) {
         const int i = s_scroll_right + r;
         if (i >= s_rows_n) break;
         const DropRow *d = &s_rows[i];
-        const int y = LIST_Y + r * ROW_H;
-        if (s_hover_pane == 1 && r == s_hover_row)
-            px_fill(sx + 1, y - TS, s_w - sx - 1, ROW_H, C_HOVER);
+        const int y = R->y + r * L->row_h;
+        const Rect row = { R->x, y, R->w, L->row_h };
+        uint32_t bg = COL_PANEL;
+        if (s_hover_pane == 1 && r == s_hover_row) {
+            psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, row.h * 0.5f, COL_HOVER);
+        }
+        const int base = psx_ui_baseline_in(y, L->row_h, fr);
         /* A grey row is the ALL CPU padding: this duelist does not drop the
          * card. It exists to be a drop target (and a quick-add on click), so
          * it draws dimmed with no numbers. */
@@ -1065,190 +1134,235 @@ static void draw_drop_rows(int sx, int name_of_card)
         if (name_of_card) {
             char idb[8];
             snprintf(idb, sizeof idb, "%d", d->card);
-            px_text_right(sx + PAD + 4 * CW, y, C_DIM, idb);
-            px_text(sx + PAD + 5 * CW, y, rank_x - PAD, C_TEXT,
-                    psx_card_db_name(d->card));
+            text_right(L->r_id_r, base, idb, COL_DIM, fr);
+            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_db_name(d->card), COL_TEXT, fr, L->r_name_r - L->r_name_x);
         } else {
-            draw_icon(sx + PAD, y - TS, d->duelist);
-            px_text(sx + PAD + ICON_PX + 4 * TS, y, rank_x - PAD,
-                    grey ? C_DIM : C_TEXT, PSX_DROP_DB[d->duelist].name);
+            draw_icon(L->r_icon_x, y + (L->row_h - icon) / 2, icon, d->duelist, bg);
+            psx_ui_text_clip(&s_cv, L->r_name_x, base, PSX_DROP_DB[d->duelist].name,
+                             grey ? COL_DIM : COL_TEXT, fr, L->r_name_r - L->r_name_x);
         }
         if (grey) {
-            px_text(rank_x, y, weight_r, C_HOT, "-");
+            psx_ui_text(&s_cv, L->r_rank_x, base, S_DASH, COL_DIM, fr);
             continue;
         }
-        /* An edited (duelist, card) carries an accent tick at the pane edge,
-         * so the player can see which rows are theirs. */
-        if (psx_drop_edits_get(d->duelist, d->card, 0))
-            px_fill(sx + 1, y - TS, TS, ROW_H, C_ACCENT);
-        px_text(rank_x, y, weight_r, C_DIM, PSX_DROP_TIER_NAMES[d->tier]);
+        /* An edited (duelist, card) carries a green dot in the gutter, so
+         * the player can see which rows are theirs. */
+        if (psx_drop_edits_get(d->duelist, d->card, 0)) {
+            const int dot = px(6.0f);
+            psx_ui_round_rect(&s_cv, L->r_dot_x - dot / 2, y + (L->row_h - dot) / 2, dot, dot, dot * 0.5f, COL_EDITED);
+        }
+        psx_ui_text(&s_cv, L->r_rank_x, base, PSX_DROP_TIER_NAMES[d->tier], COL_DIM, fr);
         char buf[16];
         if (i == s_edit_row) {
             /* The weight cell as a number box: typed digits and a caret. */
-            const int ebx = weight_r - 5 * CW;
-            px_fill(ebx - TS, y - TS, 5 * CW + 3 * TS, ROW_H, C_BG);
-            px_fill(ebx - TS, y - TS + ROW_H - 1, 5 * CW + 3 * TS, 1, C_ACCENT);
-            px_text(ebx, y, weight_r + 2 * TS, C_TEXT, s_edit_buf);
+            const Rect eb = { L->r_weight_x - px(6.0f), y + px(1.0f), L->r_weight_r - L->r_weight_x + px(12.0f), L->row_h - px(2.0f) };
+            psx_ui_round_rect(&s_cv, eb.x, eb.y, eb.w, eb.h, (float)px(U_R_BOX), COL_EDIT_BG);
+            psx_ui_round_rect_line(&s_cv, eb.x, eb.y, eb.w, eb.h, (float)px(U_R_BOX), COL_ACCENT, 1.0f);
+            const int ex = psx_ui_text(&s_cv, eb.x + px(5.0f), base, s_edit_buf, COL_TEXT, fr);
             if (s_caret_on)
-                px_fill(ebx + text_w(s_edit_buf), y, TS, 8 * TS, C_ACCENT);
+                psx_ui_fill(&s_cv, ex + 1, eb.y + px(3.0f), imax(1, px(1.2f)), eb.h - px(6.0f), COL_ACCENT);
         } else {
             snprintf(buf, sizeof buf, "%d", d->weight);
-            px_text_right(weight_r, y, C_DIM, buf);
+            text_right(L->r_weight_r, base, buf, COL_DIM, fr);
         }
         pct(buf, sizeof buf, d->weight);
-        px_text_right(chance_r, y, C_TEXT, buf);
+        text_right(L->r_chance_r, base, buf, COL_TEXT, fr);
     }
-    if (!s_rows_n)
-        px_text(sx + PAD, LIST_Y + 2 * TS, s_w - PAD, C_DIM,
-                psx_drop_missing_enabled()
-                    ? "Nothing here."
-                    : "No duelist drops this. Try DROP MISSING CARDS.");
+    if (!s_rows_n) {
+        const Rect e = { L->r_name_x, R->y, L->r_chance_r - L->r_name_x, L->row_h };
+        text_in(&e, 0, psx_drop_missing_enabled()
+                           ? "Nothing here."
+                           : "No duelist drops this card. Try Mods > Drop missing cards.",
+                COL_DIM, fr);
+    }
+}
+
+/* The side text shared by both views: the status line while it lives, else
+ * the right pane's scroll position. */
+static const char *right_side(char *buf, unsigned cap, uint32_t *col)
+{
+    const int page = list_rows();
+    if (s_msg[0] && SDL_GetTicks() < s_msg_until) { *col = COL_WARN; return s_msg; }
+    if (s_rows_n > page) {
+        const int hi = (s_scroll_right + page < s_rows_n) ? s_scroll_right + page : s_rows_n;
+        snprintf(buf, cap, "%d" S_DASH "%d of %d", s_scroll_right + 1, hi, s_rows_n);
+        *col = COL_DIM;
+        return buf;
+    }
+    return NULL;
+}
+
+static const char *left_side(char *buf, unsigned cap)
+{
+    const int page = list_rows();
+    const int ltot = (s_view == VIEW_CARDS) ? s_order_n : NDUEL;
+    if (ltot <= page) return NULL;
+    const int hi = (s_scroll + page < ltot) ? s_scroll + page : ltot;
+    snprintf(buf, cap, "%d" S_DASH "%d of %d", s_scroll + 1, hi, ltot);
+    return buf;
 }
 
 static void draw_cards_view(void)
 {
-    const int sx = split_x();
-    char title[80];
-    snprintf(title, sizeof title, "%d of %d cards", s_order_n, NCARDS);
-    char sel[80];
-    snprintf(sel, sizeof sel, "#%d  %s", s_sel_card,
-             psx_card_db_name(s_sel_card));
-    draw_titles(title, sel);
+    const Layout *L = &s_L;
+    const PsxUiFace *fr = face_body();
+    char title[80], sel[96], ls[32], rs[32];
+    if (s_search[0]) snprintf(title, sizeof title, "%d of %d cards", s_order_n, NCARDS);
+    else             snprintf(title, sizeof title, "%d cards", NCARDS);
+    snprintf(sel, sizeof sel, "Card %03d " S_DASH " %s", s_sel_card, psx_card_db_name(s_sel_card));
+    uint32_t rcol = COL_DIM;
+    const char *rside = right_side(rs, sizeof rs, &rcol);
+    draw_panel(0, title, COL_TEXT, left_side(ls, sizeof ls), COL_DIM);
+    draw_panel(1, sel, COL_ACCENT, rside, rcol);
 
-    int id_r, name_r, type_r, atk_r, def_r, drop_r;
-    card_cols(sx, &id_r, &name_r, &type_r, &atk_r, &def_r, &drop_r);
-    draw_col_header(PAD, HDR_Y + TXT_DY, id_r, "ID",
-                    s_sort == SORT_ID, s_desc);
-    draw_col_header(id_r + PAD, HDR_Y + TXT_DY, name_r, "NAME",
-                    s_sort == SORT_NAME, s_desc);
-    draw_col_header(name_r + PAD, HDR_Y + TXT_DY, type_r, "TYPE",
-                    s_sort == SORT_TYPE, s_desc);
-    draw_col_header_right(atk_r, HDR_Y + TXT_DY, "ATK",
-                          s_sort == SORT_ATK, s_desc);
-    draw_col_header_right(def_r, HDR_Y + TXT_DY, "DEF",
-                          s_sort == SORT_DEF, s_desc);
-    draw_col_header_right(drop_r, HDR_Y + TXT_DY, "DROPS",
-                          s_sort == SORT_DROPS, s_desc);
+    const Rect *C = &L->cols[0], *R = &L->rows[0];
+    draw_col(L->c_id_x, L->c_id_r + px(6.0f), C->y, C->h, "ID", s_sort == SORT_ID, s_desc, 0);
+    draw_col(L->c_name_x, L->c_name_r, C->y, C->h, "Name", s_sort == SORT_NAME, s_desc, 0);
+    draw_col(L->c_type_x, L->c_type_r, C->y, C->h, "Type", s_sort == SORT_TYPE, s_desc, 0);
+    draw_col(L->c_atk_x, L->c_atk_r, C->y, C->h, "ATK", s_sort == SORT_ATK, s_desc, 1);
+    draw_col(L->c_def_x, L->c_def_r, C->y, C->h, "DEF", s_sort == SORT_DEF, s_desc, 1);
+    draw_col(L->c_drop_x, L->c_drop_r, C->y, C->h, "Drops", s_sort == SORT_DROPS, s_desc, 1);
 
-    const int rows = list_rows();
-    for (int r = 0; r < rows; r++) {
+    for (int r = 0; r < L->nrows; r++) {
         const int i = s_scroll + r;
         if (i >= s_order_n) break;
         const int id = s_order[i];
-        const int y = LIST_Y + r * ROW_H;
-        if (id == s_sel_card) px_fill(0, y - TS, sx, ROW_H, C_HOT);
+        const int y = R->y + r * L->row_h;
+        const int selected = id == s_sel_card;
+        if (selected) psx_ui_round_rect(&s_cv, R->x, y, R->w, L->row_h, L->row_h * 0.5f, COL_SEL_BG);
         else if (s_hover_pane == 0 && r == s_hover_row)
-            px_fill(0, y - TS, sx, ROW_H, C_HOVER);
+            psx_ui_round_rect(&s_cv, R->x, y, R->w, L->row_h, L->row_h * 0.5f, COL_HOVER);
+        const int base = psx_ui_baseline_in(y, L->row_h, fr);
         char buf[16];
         snprintf(buf, sizeof buf, "%d", id);
-        px_text_right(id_r, y, C_DIM, buf);
-        px_text(id_r + PAD, y, name_r, C_TEXT, psx_card_db_name(id));
+        text_right(L->c_id_r, base, buf, COL_DIM, fr);
+        psx_ui_text_clip(&s_cv, L->c_name_x, base, psx_card_db_name(id), selected ? COL_ACCENT : COL_TEXT, fr, L->c_name_r - L->c_name_x);
         int atk = 0, def = 0, ty = 0;
         if (psx_card_db_stats(id, &atk, &def, &ty)) {
-            px_text(name_r + PAD, y, type_r, C_DIM,
-                    psx_card_db_type_name(ty));
+            psx_ui_text_clip(&s_cv, L->c_type_x, base, psx_card_db_type_name(ty), COL_DIM, fr, L->c_type_r - L->c_type_x);
             snprintf(buf, sizeof buf, "%d", atk);
-            px_text_right(atk_r, y, C_TEXT, buf);
+            text_right(L->c_atk_r, base, buf, COL_TEXT, fr);
             snprintf(buf, sizeof buf, "%d", def);
-            px_text_right(def_r, y, C_TEXT, buf);
+            text_right(L->c_def_r, base, buf, COL_TEXT, fr);
         }
         snprintf(buf, sizeof buf, "%d", s_drop_count[id]);
-        px_text_right(drop_r, y, s_drop_count[id] ? C_TEXT : C_DIM, buf);
+        text_right(L->c_drop_r, base, buf, s_drop_count[id] ? COL_TEXT : COL_DIM, fr);
     }
-    draw_drop_rows(sx, 0);
+    draw_drop_rows(0);
 }
 
 static void draw_duelists_view(void)
 {
-    const int sx = split_x();
-    char sel[80];
+    const Layout *L = &s_L;
+    const PsxUiFace *fr = face_body();
+    char sel[96], ls[32], rs[32];
     const int ec = psx_drop_edits_count(s_sel_duelist);
-    if (ec) snprintf(sel, sizeof sel, "%s  [%d EDIT%s]",
-                     PSX_DROP_DB[s_sel_duelist].name, ec, ec == 1 ? "" : "S");
+    if (ec) snprintf(sel, sizeof sel, "%s " S_DASH " %d edit%s", PSX_DROP_DB[s_sel_duelist].name, ec, ec == 1 ? "" : "s");
     else    snprintf(sel, sizeof sel, "%s", PSX_DROP_DB[s_sel_duelist].name);
-    draw_titles("39 duelists", sel);
+    uint32_t rcol = COL_DIM;
+    const char *rside = right_side(rs, sizeof rs, &rcol);
+    draw_panel(0, "39 duelists", COL_TEXT, left_side(ls, sizeof ls), COL_DIM);
+    draw_panel(1, sel, COL_ACCENT, rside, rcol);
 
-    draw_col_header(PAD + ICON_PX + 4 * TS, HDR_Y + TXT_DY, sx, "DUELIST",
-                    s_dsort == DSORT_NAME, s_ddesc);
-    draw_col_header_right(sx - PAD, HDR_Y + TXT_DY, "DROPS",
-                          s_dsort == DSORT_DROPS, s_ddesc);
+    const Rect *C = &L->cols[0], *R = &L->rows[0];
+    draw_col(L->d_name_x, L->d_name_r, C->y, C->h, "Duelist", s_dsort == DSORT_NAME, s_ddesc, 0);
+    draw_col(L->d_drops_x, L->d_drops_r, C->y, C->h, "Drops", s_dsort == DSORT_DROPS, s_ddesc, 1);
 
-    const int rows = list_rows();
-    for (int r = 0; r < rows; r++) {
+    const int icon = px(U_ICON);
+    for (int r = 0; r < L->nrows; r++) {
         const int i = s_scroll + r;
         if (i >= NDUEL) break;
         const int d = s_duel_order[i];
-        const int y = LIST_Y + r * ROW_H;
-        if (d == s_sel_duelist) px_fill(0, y - TS, sx, ROW_H, C_HOT);
-        else if (s_hover_pane == 0 && r == s_hover_row)
-            px_fill(0, y - TS, sx, ROW_H, C_HOVER);
-        draw_icon(PAD, y - TS, d);
-        px_text(PAD + ICON_PX + 4 * TS, y, sx - 7 * CW, C_TEXT,
-                PSX_DROP_DB[d].name);
+        const int y = R->y + r * L->row_h;
+        const int selected = d == s_sel_duelist;
+        uint32_t bg = COL_PANEL;
+        if (selected) {
+            psx_ui_round_rect(&s_cv, R->x, y, R->w, L->row_h, L->row_h * 0.5f, COL_SEL_BG);
+            bg = COL_SEL_BG;
+        } else if (s_hover_pane == 0 && r == s_hover_row) {
+            psx_ui_round_rect(&s_cv, R->x, y, R->w, L->row_h, L->row_h * 0.5f, COL_HOVER);
+        }
+        const int base = psx_ui_baseline_in(y, L->row_h, fr);
+        draw_icon(L->d_icon_x, y + (L->row_h - icon) / 2, icon, d, bg);
+        psx_ui_text_clip(&s_cv, L->d_name_x, base, PSX_DROP_DB[d].name, selected ? COL_ACCENT : COL_TEXT, fr, L->d_name_r - L->d_name_x);
         char buf[16];
         snprintf(buf, sizeof buf, "%d", s_duel_total[d]);
-        px_text_right(sx - PAD, y, C_DIM, buf);
+        text_right(L->d_drops_r, base, buf, COL_DIM, fr);
     }
-    draw_drop_rows(sx, 1);
-}
-
-static void draw_scrollbar(int pane)
-{
-    int x0, w, ty, th, tyv, hh;
-    if (!sb_geom(pane, &x0, &w, &ty, &th, &tyv, &hh)) return;
-    px_fill(x0, ty, w, th, C_HEADER);
-    px_fill(x0, tyv, w, hh, s_sb_drag == pane + 1 ? C_ACCENT : C_DIM);
+    draw_drop_rows(1);
 }
 
 static void draw_cmenu(void)
 {
     if (!s_cmenu_n) return;
-    int mx, my, mw, mh;
-    cmenu_geom(&mx, &my, &mw, &mh);
-    px_fill(mx - 1, my - 1, mw + 2, mh + 2, C_LINE);
-    px_fill(mx, my, mw, mh, C_PANEL);
+    const Rect r = cmenu_rect();
+    const int rh = cmenu_row_h();
+    const PsxUiFace *fr = face_body();
+    psx_ui_round_rect_shadow(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_PANEL, px(5.0f));
+    psx_ui_round_rect(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_EDIT_BG);
+    psx_ui_round_rect_line(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_ACCENT, 1.0f);
     for (int i = 0; i < s_cmenu_n; i++) {
-        const int y = my + TS + i * BTN_H;
-        if (i == s_cmenu_hover) px_fill(mx, y, mw, BTN_H, C_HOT);
-        px_text(mx + PAD, y + TXT_DY, mx + mw - PAD,
-                i == s_cmenu_hover ? C_TEXT : C_DIM, s_cmenu[i].label);
+        const Rect row = { r.x + px(3.0f), r.y + px(3.0f) + i * rh, r.w - px(6.0f), rh };
+        const int inert = s_cmenu[i].action == CM_NONE;
+        if (i == s_cmenu_hover && !inert)
+            psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, rh * 0.5f, COL_HOVER);
+        text_in(&row, px(8.0f), s_cmenu[i].label, inert ? COL_DIM : COL_TEXT, fr);
     }
 }
 
 static void draw_ghost(void)
 {
-    char buf[44];
+    char buf[80];
     if (!s_drag_live) return;
     if (s_drag_kind == DRAG_CARD) {
-        snprintf(buf, sizeof buf, "%d %.24s", s_drag_card,
-                 psx_card_db_name(s_drag_card));
+        snprintf(buf, sizeof buf, "%d  %.32s", s_drag_card, psx_card_db_name(s_drag_card));
     } else if (s_drag_row >= 0 && s_drag_row < s_rows_n) {
-        snprintf(buf, sizeof buf, "%.20s - DROP OUTSIDE TO REMOVE",
+        snprintf(buf, sizeof buf, "%.28s " S_DASH " drop outside the table to remove",
                  psx_card_db_name(s_rows[s_drag_row].card));
     } else {
         return;
     }
-    const int w = text_w(buf) + 2 * PAD;
-    int x = s_mouse_x + 2 * TS, y = s_mouse_y + 2 * TS;
-    if (x + w > s_w) x = s_w - w;
-    if (y + BTN_H > s_h) y = s_h - BTN_H;
-    px_fill(x, y, w, BTN_H, C_ACCENT);
-    px_text(x + PAD, y + TXT_DY, x + w - PAD, C_BG, buf);
+    const PsxUiFace *fb = face_bold();
+    const int h = px(U_BTN_H);
+    Rect g = { s_mouse_x + px(6.0f), s_mouse_y + px(6.0f), tw(fb, buf) + px(20.0f), h };
+    if (g.x + g.w > s_w) g.x = s_w - g.w;
+    if (g.y + g.h > s_h) g.y = s_h - g.h;
+    psx_ui_round_rect_shadow(&s_cv, g.x, g.y, g.w, g.h, h * 0.5f, COL_PANEL, px(4.0f));
+    psx_ui_round_rect(&s_cv, g.x, g.y, g.w, g.h, h * 0.5f, COL_BTN_ON);
+    text_centered(&g, buf, COL_TEXT, fb);
+}
+
+/* The bottom line: unsaved edits while there are some, else how to use the
+ * window — the things a first look would not guess (typing into a weight,
+ * dragging a card, the right-click menu). */
+static void draw_footer(void)
+{
+    const Layout *L = &s_L;
+    const PsxUiFace *fs = face_small();
+    const Rect f = { L->pane[0].x + px(4.0f), L->foot_y, s_w - 2 * L->pane[0].x - px(8.0f), L->foot_h };
+    if (psx_drop_edits_dirty())
+        text_in(&f, 0, "Unsaved edits. Save writes drop_table_edits.ini in your player-data folder; the game rolls what you save.", COL_WARN, fs);
+    else
+        text_in(&f, 0, "Click a weight to type a new one, Enter keeps it. Click a rank to move it between bands. Drag a card from the list onto a duelist to add it. Right-click a row for more.", COL_DIM, fs);
 }
 
 static void draw(void)
 {
-    px_fill(0, 0, s_w, s_h, C_BG);
-    draw_topbar();
+    s_cv.px = s_px; s_cv.w = s_w; s_cv.h = s_h;
+    layout_compute();
+    psx_ui_fill(&s_cv, 0, 0, s_w, s_h, COL_BG);
+    draw_bar();
     if (!psx_card_db_ready()) {
-        px_text(PAD, TOPBAR_H + PAD, s_w, C_DIM,
-                "Waiting for the game to load its card table...");
+        draw_panel(0, "Waiting for the game to load its card table" S_ELLIP, COL_DIM, NULL, COL_DIM);
+        draw_panel(1, "", COL_DIM, NULL, COL_DIM);
+        draw_footer();
         return;
     }
     if (s_view == VIEW_CARDS) draw_cards_view();
     else                      draw_duelists_view();
     draw_scrollbar(0);
     draw_scrollbar(1);
+    draw_footer();
     draw_cmenu();
     draw_ghost();
 }
@@ -1283,73 +1397,89 @@ static void set_dsort(int col)
     s_dirty = 1;
 }
 
+static void set_view(int view)
+{
+    if (s_view == view) return;
+    s_view = view;
+    s_scroll = 0;
+    s_scroll_right = 0;
+    rebuild_rows();
+    s_dirty = 1;
+}
+
+/* Which top-bar button the point is on: 0/1 the tabs, 2 Save, 3 Load, 4 the
+ * view-dependent slot; -1 none. */
+static int button_at(int x, int y)
+{
+    const Layout *L = &s_L;
+    if (in_rect(&L->tab_cards, x, y)) return 0;
+    if (in_rect(&L->tab_duel, x, y))  return 1;
+    if (in_rect(&L->btn_save, x, y))  return 2;
+    if (in_rect(&L->btn_load, x, y))  return 3;
+    if (in_rect(&L->btn_third, x, y)) return 4;
+    return -1;
+}
+
+/* The boundary between two columns: halfway across the gap. */
+static int mid(int left_r, int right_x) { return (left_r + right_x) / 2; }
+
 static void click(int x, int y)
 {
-    const int sx = split_x();
+    const Layout *L = &s_L;
     /* A click lands somewhere else: whatever number box was open is done.
      * (Clicking a weight cell reopens one right after.) */
     edit_end();
-    if (y < TOPBAR_H) {
-        int b1x, b1w, b2x, b2w, bx, bw, svx, svw, ldx, ldw, dfx, dfw;
-        topbar_cols(&b1x, &b1w, &b2x, &b2w, &bx, &bw, &svx, &svw,
-                    &ldx, &ldw, &dfx, &dfw);
-        if (y >= PAD && y < PAD + BTN_H) {
-            if (x >= b1x && x < b1x + b1w && s_view != VIEW_CARDS) {
-                s_view = VIEW_CARDS; s_scroll = 0; s_scroll_right = 0;
-                rebuild_rows(); s_dirty = 1;
-            } else if (x >= b2x && x < b2x + b2w
-                       && s_view != VIEW_DUELISTS) {
-                s_view = VIEW_DUELISTS; s_scroll = 0; s_scroll_right = 0;
-                rebuild_rows(); s_dirty = 1;
-            } else if (x >= svx && x < svx + svw) {
-                say(psx_drop_edits_save() ? "SAVED" : "SAVE FAILED");
-            } else if (x >= ldx && x < ldx + ldw) {
-                open_load_menu(ldx, TOPBAR_H);
-            } else if (s_view == VIEW_DUELISTS && x >= dfx && x < dfx + dfw) {
-                /* RETURN TO DEFAULT, scoped to the duelist on screen. The
+    if (in_rect(&L->bar, x, y)) {
+        switch (button_at(x, y)) {
+        case 0: set_view(VIEW_CARDS); break;
+        case 1: set_view(VIEW_DUELISTS); break;
+        case 2: say(psx_drop_edits_save() ? "Saved" : "Save failed"); break;
+        case 3: open_load_menu(L->btn_load.x, L->bar.h); break;
+        case 4:
+            if (s_view == VIEW_DUELISTS) {
+                /* Return to default, scoped to the duelist on screen. The
                  * default is whatever the layers underneath produce: stock,
                  * plus the mod when its row is on. */
                 if (psx_drop_edits_clear(s_sel_duelist)) {
                     invalidate();
-                    say("EDITS CLEARED - SAVE TO KEEP");
+                    say("Edits cleared. Save to keep it.");
                 } else {
-                    say("NO EDITS FOR THIS DUELIST");
+                    say("No edits for this duelist");
                 }
-            } else if (s_view == VIEW_CARDS && x >= dfx && x < dfx + dfw) {
+            } else {
                 s_all_cpu = !s_all_cpu;
                 s_scroll_right = 0;
                 rebuild_rows();
                 s_dirty = 1;
             }
+            break;
+        default: break;
         }
         return;
     }
-    if (y >= HDR_Y && y < LIST_Y) {
-        if (x >= sx) {
-            /* RANK is left-aligned at rank_x, seven cells wide; everything
-             * right of it is the weight in one scaling or another. */
-            int rank_x, weight_r, chance_r;
-            drop_cols(sx, &rank_x, &weight_r, &chance_r);
-            if (x >= rank_x)
-                set_rsort(x <= rank_x + 7 * CW ? RSORT_RANK : RSORT_WEIGHT);
+    const int p = pane_at(x, y);
+    if (p < 0) return;
+    if (y >= L->cols[p].y && y < L->cols[p].y + L->cols[p].h) {
+        if (p == 1) {
+            /* RANK is left-aligned; everything right of it is the weight in
+             * one scaling or another. */
+            if (x >= mid(L->r_name_r, L->r_rank_x))
+                set_rsort(x < mid(L->r_rank_r, L->r_weight_x) ? RSORT_RANK : RSORT_WEIGHT);
         } else if (s_view == VIEW_CARDS) {
-            int id_r, name_r, type_r, atk_r, def_r, drop_r;
-            card_cols(sx, &id_r, &name_r, &type_r, &atk_r, &def_r, &drop_r);
-            if (x <= id_r)        set_sort(SORT_ID);
-            else if (x <= name_r) set_sort(SORT_NAME);
-            else if (x <= type_r) set_sort(SORT_TYPE);
-            else if (x <= atk_r)  set_sort(SORT_ATK);
-            else if (x <= def_r)  set_sort(SORT_DEF);
-            else                  set_sort(SORT_DROPS);
+            if (x < mid(L->c_id_r, L->c_name_x))        set_sort(SORT_ID);
+            else if (x < mid(L->c_name_r, L->c_type_x)) set_sort(SORT_NAME);
+            else if (x < mid(L->c_type_r, L->c_atk_x))  set_sort(SORT_TYPE);
+            else if (x < mid(L->c_atk_r, L->c_def_x))   set_sort(SORT_ATK);
+            else if (x < mid(L->c_def_r, L->c_drop_x))  set_sort(SORT_DEF);
+            else                                        set_sort(SORT_DROPS);
         } else {
-            set_dsort(x <= sx - PAD - 6 * CW ? DSORT_NAME : DSORT_DROPS);
+            set_dsort(x < mid(L->d_name_r, L->d_drops_x) ? DSORT_NAME : DSORT_DROPS);
         }
         return;
     }
-    if (y < LIST_Y) return;
-    const int r = (y - LIST_Y) / ROW_H;
-    if (r >= list_rows()) return;
-    if (x < sx) {
+    const int r = row_at(p, x, y);
+    if (r < 0) return;
+    if (p == 0) {
         if (s_view == VIEW_CARDS) {
             const int i = s_scroll + r;
             if (i >= 0 && i < s_order_n) {
@@ -1385,19 +1515,17 @@ static void click(int x, int y)
  * into "what else do they drop" without hunting for the name. */
 static void right_row_click(int x, int y)
 {
-    const int sx = split_x();
-    if (y < LIST_Y || x < sx) return;
-    const int r = (y - LIST_Y) / ROW_H;
+    const Layout *L = &s_L;
+    const int r = row_at(1, x, y);
+    if (r < 0) return;
     const int i = s_scroll_right + r;
-    if (r >= list_rows() || i < 0 || i >= s_rows_n) return;
+    if (i < 0 || i >= s_rows_n) return;
     /* A grey ALL CPU row has no cells to act on — adds happen by DRAG or
      * right-click there, and a plain click falls through to the cross-jump
      * like the name of any other row. */
     if (s_rows[i].tier >= 0) {
-        int rank_x, weight_r, chance_r;
-        drop_cols(sx, &rank_x, &weight_r, &chance_r);
-        if (x >= rank_x && x <= rank_x + 7 * CW) { cycle_rank(i); return; }
-        if (x > weight_r - 5 * CW) { edit_begin(i); return; }
+        if (x >= mid(L->r_rank_r, L->r_weight_x)) { edit_begin(i); return; }
+        if (x >= mid(L->r_name_r, L->r_rank_x))   { cycle_rank(i); return; }
     }
     if (s_view == VIEW_CARDS) {
         s_view = VIEW_DUELISTS;
@@ -1426,36 +1554,33 @@ static void rclick(int x, int y)
 {
     edit_end();
     cmenu_close();
-    const int sx = split_x();
-    if (y < LIST_Y) return;
-    const int r = (y - LIST_Y) / ROW_H;
-    if (r < 0 || r >= list_rows()) return;
-    char buf[44];
+    const int p = pane_at(x, y);
+    const int r = row_at(p, x, y);
+    if (r < 0) return;
+    char buf[64];
     s_cmenu_x = x; s_cmenu_y = y; s_cmenu_n = 0; s_cmenu_hover = -1;
-    if (x >= sx) {
+    if (p == 1) {
         const int i = s_scroll_right + r;
         if (i >= 0 && i < s_rows_n && s_rows[i].tier < 0) {
             /* grey ALL CPU row: the duelist does not drop the card yet */
             for (int t = 0; t < NTIER; t++) {
-                snprintf(buf, sizeof buf, "ADD TO %.18s - %s",
-                         PSX_DROP_DB[s_rows[i].duelist].name,
-                         PSX_DROP_TIER_NAMES[t]);
+                snprintf(buf, sizeof buf, "Add to %.24s (%s)",
+                         PSX_DROP_DB[s_rows[i].duelist].name, PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_rows[i].duelist, s_rows[i].card, t);
             }
         } else if (i >= 0 && i < s_rows_n) {
-            cmenu_add("EDIT WEIGHT", CM_EDIT_WEIGHT, i, 0, 0);
+            cmenu_add("Edit weight", CM_EDIT_WEIGHT, i, 0, 0);
             for (int t = 0; t < NTIER; t++) {
                 if (t == s_rows[i].tier) continue;
-                snprintf(buf, sizeof buf, "MOVE TO %s",
-                         PSX_DROP_TIER_NAMES[t]);
+                snprintf(buf, sizeof buf, "Move to %s", PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_MOVE_BAND, i, t, 0);
             }
-            cmenu_add("REMOVE FROM BAND", CM_REMOVE, i, 0, 0);
+            cmenu_add("Remove from the band", CM_REMOVE, i, 0, 0);
         } else if (s_view == VIEW_DUELISTS) {
             /* Empty space in a duelist's table: offer to add the card that
              * is selected in the BY CARD view. */
             for (int t = 0; t < NTIER; t++) {
-                snprintf(buf, sizeof buf, "ADD %d %.16s - %s", s_sel_card,
+                snprintf(buf, sizeof buf, "Add %d %.24s (%s)", s_sel_card,
                          psx_card_db_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_sel_duelist, s_sel_card, t);
             }
@@ -1468,9 +1593,8 @@ static void rclick(int x, int y)
             s_scroll_right = 0;
             rebuild_rows();
             for (int t = 0; t < NTIER; t++) {
-                snprintf(buf, sizeof buf, "ADD TO %.18s - %s",
-                         PSX_DROP_DB[s_sel_duelist].name,
-                         PSX_DROP_TIER_NAMES[t]);
+                snprintf(buf, sizeof buf, "Add to %.24s (%s)",
+                         PSX_DROP_DB[s_sel_duelist].name, PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_sel_duelist, s_sel_card, t);
             }
         }
@@ -1479,7 +1603,7 @@ static void rclick(int x, int y)
         if (i >= 0 && i < NDUEL) {
             const int d = s_duel_order[i];
             for (int t = 0; t < NTIER; t++) {
-                snprintf(buf, sizeof buf, "ADD %d %.16s - %s", s_sel_card,
+                snprintf(buf, sizeof buf, "Add %d %.24s (%s)", s_sel_card,
                          psx_card_db_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, d, s_sel_card, t);
             }
@@ -1490,33 +1614,27 @@ static void rclick(int x, int y)
 
 /* Where a live drag ends. A card dropped on a duelist (or one of their drop
  * rows, which also names the band) is an add; a table row dropped anywhere
- * outside the right pane is a removal; anything else cancels. */
+ * outside the right pane's rows is a removal; anything else cancels. */
 static void drop_at(int x, int y)
 {
-    const int sx = split_x();
+    const int p = pane_at(x, y);
+    const int r = row_at(p, x, y);
     if (s_drag_kind == DRAG_CARD) {
-        if (y >= LIST_Y) {
-            const int r = (y - LIST_Y) / ROW_H;
-            if (r >= 0 && r < list_rows()) {
-                if (x >= sx) {
-                    const int i = s_scroll_right + r;
-                    if (s_view == VIEW_CARDS && i >= 0 && i < s_rows_n)
-                        (void)add_card(s_rows[i].duelist, s_drag_card,
-                                       s_rows[i].tier < 0
-                                           ? 0 : s_rows[i].tier);
-                    else if (s_view == VIEW_DUELISTS)
-                        (void)add_card(s_sel_duelist, s_drag_card,
-                                       (i >= 0 && i < s_rows_n)
-                                           ? s_rows[i].tier : 0);
-                } else if (s_view == VIEW_DUELISTS) {
-                    const int i = s_scroll + r;
-                    if (i >= 0 && i < NDUEL)
-                        (void)add_card(s_duel_order[i], s_drag_card, 0);
-                }
-            }
+        if (p == 1 && r >= 0) {
+            const int i = s_scroll_right + r;
+            if (s_view == VIEW_CARDS && i >= 0 && i < s_rows_n)
+                (void)add_card(s_rows[i].duelist, s_drag_card,
+                               s_rows[i].tier < 0 ? 0 : s_rows[i].tier);
+            else if (s_view == VIEW_DUELISTS)
+                (void)add_card(s_sel_duelist, s_drag_card,
+                               (i >= 0 && i < s_rows_n) ? s_rows[i].tier : 0);
+        } else if (p == 0 && r >= 0 && s_view == VIEW_DUELISTS) {
+            const int i = s_scroll + r;
+            if (i >= 0 && i < NDUEL)
+                (void)add_card(s_duel_order[i], s_drag_card, 0);
         }
     } else if (s_drag_kind == DRAG_ROW) {
-        if (x < sx || y < LIST_Y) remove_row_band(s_drag_row);
+        if (p != 1 || y < s_L.rows[1].y) remove_row_band(s_drag_row);
     }
     s_dirty = 1;
 }
@@ -1525,29 +1643,16 @@ static void drop_at(int x, int y)
  * carry a card from the BY CARD list onto any duelist in the other view. */
 static void spring_tabs(int x, int y)
 {
-    if (s_drag_kind != DRAG_CARD || y >= TOPBAR_H) return;
-    int b1x, b1w, b2x, b2w, bx, bw, svx, svw, ldx, ldw, dfx, dfw;
-    topbar_cols(&b1x, &b1w, &b2x, &b2w, &bx, &bw, &svx, &svw,
-                &ldx, &ldw, &dfx, &dfw);
-    int want = -1;
-    if (x >= b1x && x < b1x + b1w) want = VIEW_CARDS;
-    if (x >= b2x && x < b2x + b2w) want = VIEW_DUELISTS;
-    if (want >= 0 && want != s_view) {
-        s_view = want;
-        s_scroll = 0;
-        s_scroll_right = 0;
-        rebuild_rows();
-        s_dirty = 1;
-    }
+    if (s_drag_kind != DRAG_CARD) return;
+    if (in_rect(&s_L.tab_cards, x, y)) set_view(VIEW_CARDS);
+    else if (in_rect(&s_L.tab_duel, x, y)) set_view(VIEW_DUELISTS);
 }
 
 static void scroll_by(int x, int amount)
 {
-    const int sx = split_x();
-    int *s = (x < sx) ? &s_scroll : &s_scroll_right;
-    int n = (x < sx)
-                ? (s_view == VIEW_CARDS ? s_order_n : NDUEL)
-                : s_rows_n;
+    const int right = x >= s_L.pane[1].x;
+    int *s = right ? &s_scroll_right : &s_scroll;
+    const int n = right ? s_rows_n : (s_view == VIEW_CARDS ? s_order_n : NDUEL);
     const int page = list_rows();
     *s += amount;
     if (*s > n - page) *s = n - page;
@@ -1566,8 +1671,8 @@ static void type(char ch)
     s_dirty = 1;
 }
 
-/* Which pane and visible row the pointer is over. Only a change redraws, so
- * mouse motion over the same row costs two compares. */
+/* Which pane and visible row (or top-bar button) the pointer is over. Only a
+ * change redraws, so mouse motion over the same row costs a few compares. */
 static void hover_move(int x, int y)
 {
     s_mouse_x = x;
@@ -1577,25 +1682,22 @@ static void hover_move(int x, int y)
         if (it != s_cmenu_hover) { s_cmenu_hover = it; s_dirty = 1; }
         return;                     /* the menu owns hover while it is open */
     }
-    int pane = -1, row = -1;
-    if (y >= LIST_Y) {
-        const int r = (y - LIST_Y) / ROW_H;
-        if (r >= 0 && r < list_rows()) {
-            pane = (x < split_x()) ? 0 : 1;
-            row = r;
-        }
-    }
-    if (pane != s_hover_pane || row != s_hover_row) {
+    const int btn = in_rect(&s_L.bar, x, y) ? button_at(x, y) : -1;
+    int pane = pane_at(x, y);
+    int row = row_at(pane, x, y);
+    if (row < 0) pane = -1;
+    if (pane != s_hover_pane || row != s_hover_row || btn != s_hover_btn) {
         s_hover_pane = pane;
         s_hover_row = row;
+        s_hover_btn = btn;
         s_dirty = 1;
     }
 }
 
 static void hover_clear(void)
 {
-    if (s_hover_pane != -1 || s_hover_row != -1) {
-        s_hover_pane = s_hover_row = -1;
+    if (s_hover_pane != -1 || s_hover_row != -1 || s_hover_btn != -1) {
+        s_hover_pane = s_hover_row = s_hover_btn = -1;
         s_dirty = 1;
     }
 }
@@ -1615,6 +1717,7 @@ static int on_event(const void *evp)
     case SDL_MOUSEBUTTONDOWN: {
         if (ev->button.windowID != id) return 0;
         const int x = (int)ev->button.x, y = (int)ev->button.y;
+        layout_compute();
         if (ev->button.button == SDL_BUTTON_RIGHT) {
             rclick(x, y);
             return 1;
@@ -1639,6 +1742,7 @@ static int on_event(const void *evp)
         if (ev->button.windowID != id) return 0;
         if (ev->button.button != SDL_BUTTON_LEFT) return 1;
         const int x = (int)ev->button.x, y = (int)ev->button.y;
+        layout_compute();
         if (s_sb_drag) {
             s_sb_drag = 0;
             s_dirty = 1;
@@ -1657,12 +1761,13 @@ static int on_event(const void *evp)
     case SDL_MOUSEMOTION: {
         if (ev->motion.windowID != id) return 0;
         const int x = (int)ev->motion.x, y = (int)ev->motion.y;
+        layout_compute();
         hover_move(x, y);
         if (s_sb_drag) {
             sb_drag_to(y);
         } else if (s_down && s_drag_kind != DRAG_NONE && !s_drag_live) {
             const int dx = x - s_down_x, dy = y - s_down_y;
-            if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > ROW_H / 2) {
+            if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > s_L.row_h / 2) {
                 s_drag_live = 1;
                 s_dirty = 1;
             }
@@ -1693,6 +1798,7 @@ static int on_event(const void *evp)
         int mx = 0, my = 0;
         SDL_GetMouseState(&mx, &my);
 #endif
+        layout_compute();
         scroll_by(mx, ev->wheel.y > 0 ? -3 : 3);
         return 1;
     }
@@ -1731,9 +1837,7 @@ static int on_event(const void *evp)
             const size_t n = strlen(s_search);
             if (n) { s_search[n - 1] = '\0'; s_scroll = 0; rebuild_order(); }
         } else if (key == SDLK_TAB) {
-            s_view = (s_view == VIEW_CARDS) ? VIEW_DUELISTS : VIEW_CARDS;
-            s_scroll = s_scroll_right = 0;
-            rebuild_rows();
+            set_view(s_view == VIEW_CARDS ? VIEW_DUELISTS : VIEW_CARDS);
         } else if (key == SDLK_PAGEUP) {
             scroll_by(0, -list_rows());
         } else if (key == SDLK_PAGEDOWN) {
@@ -1808,6 +1912,11 @@ static int ensure_canvas(int w, int h)
     gl_restore();
     if (!s_tex) { free(s_px); s_px = NULL; s_w = s_h = 0; return 0; }
     s_w = w; s_h = h;
+    /* The design unit follows the drawable: a drag onto the 4K display
+     * rescales the next frame, the same path as any resize. */
+    s_u = (float)h / 480.0f;
+    if (s_u < 1.0f) s_u = 1.0f;
+    if (s_u > 8.0f) s_u = 8.0f;
     s_dirty = 1;
     return 1;
 }
@@ -1829,17 +1938,18 @@ void psx_drop_viewer_open(void)
     s_win = SDL_CreateWindow("Drop Table Manager",
                              SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                              WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
-    if (!s_win) { host_osd_push("Drop viewer: no window", 2000); return; }
+    if (!s_win) { host_osd_push("Drop table manager: no window", 2000); return; }
     gl_capture();
     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
     if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
     gl_restore();
     if (!s_ren) {
         SDL_DestroyWindow(s_win); s_win = NULL;
-        host_osd_push("Drop viewer: no renderer", 2000);
+        host_osd_push("Drop table manager: no renderer", 2000);
         return;
     }
     if (!ensure_canvas(WIN_W, WIN_H)) { psx_drop_viewer_close(); return; }
+    layout_compute();
     invalidate();
     SDL_StartTextInput(s_win);
 }
@@ -1852,7 +1962,7 @@ void psx_drop_viewer_close(void)
     gl_restore();
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
-    s_hover_pane = s_hover_row = -1;
+    s_hover_pane = s_hover_row = s_hover_btn = -1;
     s_cmenu_n = 0;
     s_cmenu_hover = -1;
     s_down = 0;
@@ -1888,15 +1998,6 @@ static void tick(void)
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_drop_viewer_close(); return; }
     }
-    /* Text scale follows the drawable: how many copies of the layout's
-     * natural 740x410 fit. A drag onto the 4K display rescales the next
-     * frame, the same path as any resize. */
-    {
-        int ts = s_w / 740 < s_h / 410 ? s_w / 740 : s_h / 410;
-        if (ts < 1) ts = 1;
-        if (ts > 5) ts = 5;
-        if (ts != s_ts) { s_ts = ts; s_dirty = 1; }
-    }
     /* The search caret blinks at the usual 2 Hz-ish; only the phase flip
      * redraws. */
     {
@@ -1921,6 +2022,14 @@ static void tick(void)
     const unsigned icon_gen = psx_duelist_icon_cache_generation();
     if (icon_gen != last_icon_gen) {
         last_icon_gen = icon_gen;
+        s_dirty = 1;
+    }
+    /* The disc portraits decode on the first frame the disc is readable;
+     * the plates drawn before that need one more pass. */
+    static int last_portraits = -1;
+    const int portraits = psx_duelist_portraits_ready();
+    if (portraits != last_portraits) {
+        last_portraits = portraits;
         s_dirty = 1;
     }
     if (s_msg[0] && SDL_GetTicks() >= s_msg_until) {
@@ -1969,6 +2078,7 @@ int psx_drop_viewer_set(int view, int sort, int desc, int card, int duelist,
     }
     if (card >= 1 && card <= NCARDS) s_sel_card = card;
     if (duelist >= 0 && duelist < NDUEL) s_sel_duelist = duelist;
+    layout_compute();
     rebuild_order();
     rebuild_duel_order();
     rebuild_rows();
@@ -2097,26 +2207,80 @@ int psx_drop_viewer_inject_text(const char *text)
     return SDL_PushEvent(&ev) == 1;
 }
 
+static unsigned rect_json(char *out, unsigned cap, const char *key, const Rect *r)
+{
+    return (unsigned)snprintf(out, cap, ",\"%s\":[%d,%d,%d,%d]", key, r->x, r->y, r->w, r->h);
+}
+
 int psx_drop_viewer_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 256u) return 0;
-    return snprintf(out, cap,
+    if (s_win) layout_compute();
+    const Layout *L = &s_L;
+    unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"view\":\"%s\",\"sort\":%d,\"desc\":%d,"
         "\"rsort\":%d,\"rdesc\":%d,\"dsort\":%d,\"ddesc\":%d,"
         "\"search\":\"%s\",\"cards_listed\":%d,\"rows\":%d,"
         "\"sel_card\":%d,\"sel_duelist\":%d,\"modded\":%d,\"ready\":%d,"
-        "\"canvas\":[%d,%d],\"split_x\":%d,\"list_rows\":%d,\"ts\":%d,"
-        "\"hover\":[%d,%d],\"edit_row\":%d,\"edit_buf\":\"%s\","
+        "\"canvas\":[%d,%d],\"split_x\":%d,\"list_rows\":%d,\"unit\":%.3f,"
+        "\"hover\":[%d,%d],\"hover_btn\":%d,\"edit_row\":%d,\"edit_buf\":\"%s\","
         "\"edits_dirty\":%d,\"msg\":\"%s\",\"menu\":%d,\"menu_hover\":%d,"
-        "\"drag\":%d,\"drag_live\":%d,\"scroll\":[%d,%d],\"all_cpu\":%d",
+        "\"drag\":%d,\"drag_live\":%d,\"scroll\":[%d,%d],\"all_cpu\":%d,\"disc_portraits\":%d",
         s_win != NULL, s_view == VIEW_CARDS ? "cards" : "duelists",
         s_sort, s_desc, s_rsort, s_rdesc, s_dsort, s_ddesc,
         s_search, s_order_n, s_rows_n,
         s_sel_card, s_sel_duelist, s_eff_modded, psx_card_db_ready(),
-        s_w, s_h, s_win ? split_x() : 0, s_win ? list_rows() : 0, s_ts,
-        s_hover_pane, s_hover_row, s_edit_row, s_edit_buf,
+        s_w, s_h, s_win ? L->pane[1].x : 0, s_win ? list_rows() : 0, s_u,
+        s_hover_pane, s_hover_row, s_hover_btn, s_edit_row, s_edit_buf,
         psx_drop_edits_dirty(), s_msg, s_cmenu_n, s_cmenu_hover,
-        s_drag_kind, s_drag_live, s_scroll, s_scroll_right, s_all_cpu);
+        s_drag_kind, s_drag_live, s_scroll, s_scroll_right, s_all_cpu, psx_duelist_portraits_ready());
+    if (!s_win || n >= cap) return n < cap;
+    /* Geometry, so a script can click what it sees without knowing the
+     * layout's arithmetic. Rects are [x, y, w, h] in canvas pixels. */
+    n += (unsigned)snprintf(out + n, cap - n, ",\"geom\":{\"row_h\":%d", L->row_h);
+    if (n < cap) n += rect_json(out + n, cap - n, "bar", &L->bar);
+    if (n < cap) n += rect_json(out + n, cap - n, "tab_cards", &L->tab_cards);
+    if (n < cap) n += rect_json(out + n, cap - n, "tab_duelists", &L->tab_duel);
+    if (n < cap) n += rect_json(out + n, cap - n, "search", &L->search);
+    if (n < cap) n += rect_json(out + n, cap - n, "save", &L->btn_save);
+    if (n < cap) n += rect_json(out + n, cap - n, "load", &L->btn_load);
+    if (n < cap) n += rect_json(out + n, cap - n, "third", &L->btn_third);
+    if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
+    if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);
+    if (n < cap) n += rect_json(out + n, cap - n, "left_cols", &L->cols[0]);
+    if (n < cap) n += rect_json(out + n, cap - n, "right_cols", &L->cols[1]);
+    if (n < cap) n += rect_json(out + n, cap - n, "left_rows", &L->rows[0]);
+    if (n < cap) n += rect_json(out + n, cap - n, "right_rows", &L->rows[1]);
+    if (n < cap) n += rect_json(out + n, cap - n, "left_sb", &L->sb[0]);
+    if (n < cap) n += rect_json(out + n, cap - n, "right_sb", &L->sb[1]);
+    if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
+        ",\"card_cols\":{\"id\":[%d,%d],\"name\":[%d,%d],\"type\":[%d,%d],\"atk\":[%d,%d],\"def\":[%d,%d],\"drops\":[%d,%d]}"
+        ",\"duelist_cols\":{\"name\":[%d,%d],\"drops\":[%d,%d]}"
+        ",\"drop_cols\":{\"name\":[%d,%d],\"rank\":[%d,%d],\"weight\":[%d,%d],\"chance\":[%d,%d]}}",
+        L->c_id_x, L->c_id_r, L->c_name_x, L->c_name_r, L->c_type_x, L->c_type_r,
+        L->c_atk_x, L->c_atk_r, L->c_def_x, L->c_def_r, L->c_drop_x, L->c_drop_r,
+        L->d_name_x, L->d_name_r, L->d_drops_x, L->d_drops_r,
+        L->r_name_x, L->r_name_r, L->r_rank_x, L->r_rank_r, L->r_weight_x, L->r_weight_r,
+        L->r_chance_x, L->r_chance_r);
+    return n < cap;
+}
+
+/* The canvas as a binary PPM — the window is a host surface the game's
+ * screenshot commands cannot reach, so this is how a script sees it. */
+int psx_drop_viewer_shot(const char *path)
+{
+    if (!s_win || !s_px || !path) return 0;
+    if (s_dirty) { draw(); s_dirty = 0; }
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
+    for (int i = 0; i < s_w * s_h; i++) {
+        const uint32_t c = s_px[i];
+        const unsigned char rgb[3] = { (unsigned char)(c >> 16), (unsigned char)(c >> 8), (unsigned char)c };
+        fwrite(rgb, 1, 3, f);
+    }
+    fclose(f);
+    return 1;
 }
 
 PSX_MOD_CONSTRUCTOR(psx_drop_viewer_install)

@@ -435,7 +435,7 @@ static void handle_card_manager_shot(int id, const char *json)
 static void handle_drop_viewer(int id, const char *json)
 {
     (void)json;
-    char buf[640];
+    char buf[2048];
     if (!psx_drop_viewer_state_json(buf, sizeof(buf))) {
         send_err(id, "state unavailable"); return;
     }
@@ -465,9 +465,18 @@ static void handle_drop_viewer_set(int id, const char *json)
         && open < 0) {
         send_err(id, "viewer is closed"); return;
     }
-    char buf[640];
+    char buf[2048];
     psx_drop_viewer_state_json(buf, sizeof(buf));
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* drop_viewer_shot — the window's canvas as a PPM, like card_manager_shot. */
+static void handle_drop_viewer_shot(int id, const char *json)
+{
+    char path[1024];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "missing path"); return; }
+    if (!psx_drop_viewer_shot(path)) { send_err(id, "viewer is closed"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
 /* drop_viewer_click / drop_viewer_move — a mouse press / motion at window
@@ -833,6 +842,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_viewer_move",  handle_drop_viewer_move);
     (void)psx_debug_add_command("drop_viewer_key",   handle_drop_viewer_key);
     (void)psx_debug_add_command("drop_viewer_text",  handle_drop_viewer_text);
+    (void)psx_debug_add_command("drop_viewer_shot",  handle_drop_viewer_shot);
     (void)psx_debug_add_command("drop_edits",        handle_drop_edits);
     (void)psx_debug_add_command("duelist_icons",     handle_duelist_icons);
     (void)psx_debug_add_command("card_shop",         handle_card_shop);

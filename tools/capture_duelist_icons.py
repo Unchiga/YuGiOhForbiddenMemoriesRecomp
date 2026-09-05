@@ -8,13 +8,15 @@ Writes `duelist_NN.png`, NN being the duelist index the drop tables use, which
 tools/gen_duelist_icons.py then bakes. Re-run it as often as you like: existing
 files are kept, so several passes accumulate.
 
-WHY THIS AND NOT THE DISC
--------------------------
-The portrait atlas is compressed on disc — searching for its VRAM bytes in
-WA_MRG.MRG, SLUS_014.11 and SU_MRG.MRG finds nothing — so unlike the sprites
-and font these cannot be baked from the player's copy directly. They are
-captured from a running game instead, which is also how the rank badges were
-originally found.
+WHY THIS AND NOT THE DISC (historical)
+--------------------------------------
+This was written believing the portrait atlas was compressed on disc. It is
+not: the forty 48x48 tiles sit plain at WA_MRG.MRG offset 0xF55000 (disc LBA
+17952), 2432 bytes each, in grid order = drop-table order + 1, and the recomp
+now decodes them at runtime (src/psx_duelist_portraits.c). The search that
+"found nothing" looked for the 8bpp VRAM layout the game uploads to, which is
+column-interleaved and never appears on disc as such. This capture remains as
+the fallback path and as the way the reference set was first built.
 
 THE TWO OBSERVATIONS THAT MAKE IT RELIABLE
 ------------------------------------------
