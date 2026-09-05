@@ -661,12 +661,16 @@ static char *raw_from_plain(const Run *r, const char *plain, char *err, unsigned
         const int k = wrap_line(buf, w, 16);
         for (int i = 0; i < k; i++) { if (nl < MAXL) { lines[nl] = w[i]; page_of[nl] = page; nl++; } else free(w[i]); }
     }
-    /* pages that do not fit are split */
+    /* pages of plain words that do not fit are split; a page holding any
+     * game code (a choice list, a jump) is left whole: the game lays those
+     * out itself and a wait in the middle of a choice breaks it */
+    int page_has_code[MAXL]; memset(page_has_code, 0, sizeof page_has_code);
+    for (int i = 0; i < nl; i++) if (strchr(lines[i], '{') && page_of[i] < MAXL) page_has_code[page_of[i]] = 1;
     size_t cap = strlen(plain) * 2 + 256, len = 0;
     char *out = (char *)malloc(cap); out[0] = 0;
     int cur_page = -1, in_page = 0, mark = 0;
     for (int i = 0; i < nl; i++) {
-        if (page_of[i] != cur_page || in_page >= PSX_DIALOGUE_LINES) {
+        if (page_of[i] != cur_page || (in_page >= PSX_DIALOGUE_LINES && !page_has_code[page_of[i]])) {
             if (cur_page >= 0) cat(&out, &len, &cap, "{FA}");
             cur_page = page_of[i]; in_page = 0;
         } else cat(&out, &len, &cap, "\n");
