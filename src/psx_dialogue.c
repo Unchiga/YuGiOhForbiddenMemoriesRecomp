@@ -528,10 +528,21 @@ static int encode_text(const char *text, uint8_t *enc, int cap, Mark *marks, int
  * PSX_DIALOGUE_LINES lines is split into more pages. */
 #define NAME_INSERT "{FC @125A}"
 
+/* the first campaign text's offset: menu and duel labels sit before it */
+static uint32_t story_first(void)
+{
+    static uint32_t first;
+    if (first) return first;
+    first = 0xFFFFu;
+    for (int i = 0; i < s_nruns; i++)
+        for (int k = 0; k < s_runs[i].nids; k++)
+            if (s_runs[i].ids[k] >= 0x400 && s_runs[i].start < first) { first = s_runs[i].start; break; }
+    return first;
+}
 static int run_is_story(const Run *r)
 {
-    if (r->nids == 0) return 1;                       /* reached by jumps from story texts */
     for (int k = 0; k < r->nids; k++) if (r->ids[k] >= 0x400) return 1;
+    if (r->nids == 0) return r->start >= story_first();   /* reached by jumps: story when it sits among the story texts */
     return 0;
 }
 
@@ -1113,6 +1124,7 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
         char why[160]; int longest = 0, missing = 0;
         char *raw = NULL;
         if (blocks[b].plain) {
+            if (!run_is_story(r)) { unknown++; if (unknown <= 3) WARN("line %d: [%04X] is a menu or duel label, not dialogue: skipped; ", blocks[b].line, r->start); continue; }
             /* untouched plain text is the original, byte for byte */
             if (!strcmp(blocks[b].text, r->plain_stock)) { run_clear(r); stock++; continue; }
             raw = raw_from_plain(r, blocks[b].text, why, sizeof why);
