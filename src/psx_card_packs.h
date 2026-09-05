@@ -22,6 +22,9 @@ extern "C" {
 #define PSX_CARD_PACK_EQUIP_MAX   256
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
+#define PSX_CARD_PACK_FILTER_TYPE 1000
+/* words a bonus filter, e.g. "Lava Battleguard", "Dragon", "allied monster" */
+const char *psx_card_packs_filter_name(int filter, int enemy);
 
 /* One triggered effect: a magic effect class and its number. */
 typedef struct { int fx, amount, target, terrain; } PsxCardFxSpec;
@@ -66,6 +69,7 @@ typedef struct {
     int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
     PsxCardFxSpec on_summon, on_death, on_attack, each_turn, on_flip;   /* fx = -1 = none */
     int  bonus_flat, bonus_ally, bonus_enemy;   /* ATK/DEF while on the field; PSX_CARD_PACK_BOOST_UNSET */
+    int  bonus_ally_filter, bonus_enemy_filter; /* which monsters count: 0 any, 1..722 that card, PSX_CARD_PACK_FILTER_TYPE+t that type */
     int  immune;                          /* -1 unset; bit 1 traps, bit 2 magic destruction */
 } PsxCardPack;
 

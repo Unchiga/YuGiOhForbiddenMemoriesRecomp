@@ -234,10 +234,29 @@ static void casts_tick(void)
 }
 
 /* ---- bonuses -------------------------------------------------------------------- */
+/* How many of side s's field monsters a filter counts: any monster, or
+ * (identity known only face-up) that card / that type. `self` is left out. */
+static int count_matching(int s, int filter, int self_row)
+{
+    int n = 0;
+    for (int r = 5; r <= 9; r++) {
+        const int row = 15 * s + r;
+        if (row == self_row) continue;
+        const unsigned fl = row_flags(row);
+        if (!(fl & 0x8000u)) continue;
+        if (filter <= 0) { n++; continue; }
+        if (fl & 0x1000u) continue;
+        const int id = row_id(row);
+        if (filter >= PSX_CARD_PACK_FILTER_TYPE) {
+            const uint32_t w = psx_mod_read_word(0x801D4244u + (uint32_t)(id - 1) * 4u);
+            if ((int)((w >> 26) & 0x1Fu) == filter - PSX_CARD_PACK_FILTER_TYPE) n++;
+        } else if (id == filter) n++;
+    }
+    return n;
+}
+
 static void bonus_tick(void)
 {
-    int mon[2] = { 0, 0 };
-    for (int s = 0; s < 2; s++) for (int r = 5; r <= 9; r++) if (row_flags(15 * s + r) & 0x8000u) mon[s]++;
     for (int row = 0; row < 30; row++) {
         if (!is_monster_row(row)) continue;
         const unsigned fl = row_flags(row);
@@ -256,8 +275,8 @@ static void bonus_tick(void)
             const PsxCardPack *c = &m->cfg;
             const int s = side_of_row(row);
             if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_flat;
-            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_ally * (mon[s] - 1);
-            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_enemy * mon[s ^ 1];
+            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_ally * count_matching(s, c->bonus_ally_filter, row);
+            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_enemy * count_matching(s ^ 1, c->bonus_enemy_filter, -1);
         }
         if (want != b->applied) {
             const uint32_t at = ROWS + (uint32_t)row * ROW_STRIDE + 0x12;

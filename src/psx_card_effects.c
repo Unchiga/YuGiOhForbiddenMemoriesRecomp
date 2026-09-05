@@ -752,8 +752,8 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
         if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) {
             char e[200] = ""; unsigned n = 0;
             if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "ATK and DEF %+d on the field", c->bonus_flat);
-            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per allied monster", n ? ", " : "ATK and DEF ", c->bonus_ally);
-            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per enemy monster", n ? ", " : "ATK and DEF ", c->bonus_enemy);
+            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per %s", n ? ", " : "ATK and DEF ", c->bonus_ally, psx_card_packs_filter_name(c->bonus_ally_filter, 0));
+            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per %s", n ? ", " : "ATK and DEF ", c->bonus_enemy, psx_card_packs_filter_name(c->bonus_enemy_filter, 1));
             snprintf(e + n, sizeof e - n, ".");
             wrap_append(out, cap, e);
         }

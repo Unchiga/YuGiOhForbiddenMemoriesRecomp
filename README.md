@@ -238,7 +238,9 @@ on_flip   = raigeki             ... when it is turned face-up: attacked, flipped
 on_death  = raigeki             ... when it is destroyed (battle, trap or magic)
 on_attack = heal 500            ... when it declares an attack
 each_turn = damage 200          ... at the start of its owner's turn, while on the field
-bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field
+bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field (face-up)
+            500 per Lava Battleguard            ... per face-up copy of a card, or a type
+            300 per enemy Dragon                ("per <card or type>" counts your side)
 immune    = traps, magic        traps never fire on it; destruction magic passes it by
 ```
 

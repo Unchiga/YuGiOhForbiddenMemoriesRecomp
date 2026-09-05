@@ -1144,7 +1144,7 @@ static void draw_editor(void)
                     p = bar ? bar + 1 : NULL;
                 }
             } else {
-                if (f == F_MBONUS && !set) text_in(v, px(6.0f), "e.g. 500, 200 per ally, 100 per enemy", COL_DIM, fs);
+                if (f == F_MBONUS && !set) text_in(v, px(6.0f), "e.g. 500, 200 per ally, 100 per enemy, 500 per Lava Battleguard, 300 per Dragon", COL_DIM, fs);
             else text_in(v, px(6.0f), t, set ? COL_EDITED : COL_TEXT, fb);
             }
         }
