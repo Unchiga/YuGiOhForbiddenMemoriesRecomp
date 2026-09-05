@@ -719,12 +719,13 @@ static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *ou
         else snprintf(t, sizeof t, "A ritual summon.");
         break;
     case PSX_CARD_FX_GAMBLE:
-        snprintf(t, sizeof t, "Flip a coin. Heads: destroy all the opponent's monsters. Tails: destroy all your own monsters and lose LP equal to their total ATK.");
+        snprintf(t, sizeof t, "Flip a coin. Heads: destroy all the opponent's monsters. Tails: destroy all your own monsters and lose LP equal to half their total ATK.");
         break;
     case PSX_CARD_FX_DESTROY_STRONGEST: snprintf(t, sizeof t, "Destroys the opponent's strongest monster."); break;
     case PSX_CARD_FX_LOSE_LP: snprintf(t, sizeof t, "You lose %d LP.", amt >= 0 ? amt : 500); break;
     case PSX_CARD_FX_GAMBLE_LP: snprintf(t, sizeof t, "Flip a coin. Tails: you lose half your LP."); break;
     case PSX_CARD_FX_DESTROY_OWN: snprintf(t, sizeof t, "Destroys all your own monsters."); break;
+    case PSX_CARD_FX_DESTROY_OWN_LP: snprintf(t, sizeof t, "Destroys all your own monsters; you lose LP equal to half their total ATK."); break;
     default: break;
     }
     if (t[0]) wrap_append(out, cap, t);

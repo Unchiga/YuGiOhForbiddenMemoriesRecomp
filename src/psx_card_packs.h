@@ -143,6 +143,7 @@ enum {
     PSX_CARD_FX_GAMBLE,           /* Time Wizard's coin: heads destroys the opponent's monsters, tails your own
                                      and their total ATK comes off your LP (monster triggers only) */
     PSX_CARD_FX_DESTROY_OWN,      /* destroy all of the owner's own monsters (monster triggers only) */
+    PSX_CARD_FX_DESTROY_OWN_LP,   /* ... and lose LP equal to half their total ATK (Time Wizard's tails) */
     PSX_CARD_FX_COUNT
 };
 const char *psx_card_packs_effect_name(int fx);      /* ini spelling */

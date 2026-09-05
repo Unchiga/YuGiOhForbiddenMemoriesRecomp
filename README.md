@@ -238,7 +238,7 @@ on_flip   = raigeki             ... when it is turned face-up: attacked, flipped
 on_death  = raigeki             ... when it is destroyed (battle, trap or magic)
 on_attack = heal 500            ... when it declares an attack
 each_turn = damage 200          ... at the start of its owner's turn, while on the field
-on_summon = 50%: raigeki; else: destroy_own     branches: each rolls its own odds, "else"
+on_summon = 50%: raigeki; else: destroy_own_lp  branches: each rolls its own odds, "else"
 on_death  = 25%: heal 1000; 25%: damage 500     fires only when the branch before it did not
 bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field (face-up)
             500 per Lava Battleguard            ... per face-up copy of a card, or a type
@@ -249,7 +249,7 @@ immune    = traps, magic        traps never fire on it; destruction magic passes
 A trigger holds up to four branches separated by `;`. A branch is
 `NN%: <effect>` (plain `<effect>` is 100%), and `else: <effect>` runs when
 the branch just before it failed its roll, so Time Wizard is
-`on_summon = 50%: raigeki; else: destroy_own`. In the manager each
+`on_summon = 50%: raigeki; else: destroy_own_lp`. In the manager each
 trigger shows one row per branch, chance list first, effect list second,
 and an empty row under the last one to add another.
 
@@ -267,7 +267,10 @@ The cast effects are the same list a Magic card can be given (`heal`,
 `dragon_jar`, `stop_defense`, `flip`, `weaken 500`, `swords`, `cursebreaker`,
 `harpie`, `field Yami`), plus `gamble`, Time Wizard's coin: heads destroys
 the opponent's monsters, tails destroys your own and their total ATK comes
-off your LP, and `destroy_own`, which destroys your own monsters. They run through the game's own effect engine, with
+off half their ATK from your LP, and `destroy_own` / `destroy_own_lp`, which
+destroy your own monsters (the second also costs half their total ATK in
+LP), so the real Time Wizard is `on_summon = 50%: raigeki; else:
+destroy_own_lp`. They run through the game's own effect engine, with
 the popup and sound the matching spell would show, the moment the duel is
 idle after the trigger. A monster with any of these draws with the orange
 effect-monster frame unless `color` says otherwise, and `Effect text →

@@ -255,13 +255,13 @@ static const char *const STAR_NAMES[11] = {
 static const char *const FX_NAMES[PSX_CARD_FX_COUNT] = {
     "none", "heal", "damage", "destroy_type", "destroy_atk", "raigeki", "dark_hole", "dragon_jar",
     "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual",
-    "destroy_strongest", "lose_lp", "coin_lp", "gamble", "destroy_own"
+    "destroy_strongest", "lose_lp", "coin_lp", "gamble", "destroy_own", "destroy_own_lp"
 };
 static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
     "No effect", "Heal LP", "Damage LP", "Destroy a type", "Destroy by ATK", "Destroy all monsters (Raigeki)",
     "Destroy everything (Dark Hole)", "Destroy Dragons", "Stop Defense", "Flip face-down monsters",
     "Weaken opponent's monsters", "Swords of Revealing Light", "Cursebreaker", "Destroy magic/trap zone (Harpie)",
-    "Change the field", "Ritual summon", "Destroy the strongest monster", "Lose LP yourself", "Coin flip: tails, lose half your LP", "Coin flip (Time Wizard)", "Destroy your own monsters"
+    "Change the field", "Ritual summon", "Destroy the strongest monster", "Lose LP yourself", "Coin flip: tails, lose half your LP", "Coin flip (Time Wizard)", "Destroy your own monsters", "Destroy your own, lose half their ATK"
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
 static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
@@ -1079,7 +1079,7 @@ static int read_ini(int id, PsxCardPack *c)
             if (ok) memcpy(c->password, val, 9);
         } else if (!strcmp(key, "effect")) {
             c->effect = psx_card_packs_parse_effect(val);
-            if (c->effect == PSX_CARD_FX_GAMBLE) c->effect = -1;      /* monster triggers only */
+            if (c->effect == PSX_CARD_FX_GAMBLE || c->effect == PSX_CARD_FX_DESTROY_OWN || c->effect == PSX_CARD_FX_DESTROY_OWN_LP) c->effect = -1;   /* monster triggers only */
         } else if (!strcmp(key, "amount")) {
             const int v = atoi(val); if (v >= -9999 && v <= 25500) c->amount = v;
         } else if (!strcmp(key, "target")) {

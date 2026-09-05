@@ -135,11 +135,11 @@ static void enqueue_raw(int side, int card, int fx, int amount, int target, int 
  * Tails: Raigeki cast as the opponent, so the owner's own monsters go, then
  * their total ATK as damage to the owner: the burn popup for what its
  * byte can show (2550) and a direct LP write for any remainder. */
-static void gamble(int side, int card)
+/* Destroy the owner's own monsters; pct% of their total ATK comes off the
+ * owner's LP (Time Wizard's tails is 50). The damage shows through the
+ * game's own burn popup up to its 2550 ceiling, the rest is written. */
+static void destroy_own(int side, int card, int pct)
 {
-    const unsigned r = (unsigned)rand() ^ s_frame;
-    const int heads = (r & 1u) != 0;
-    if (heads) { enqueue_raw(side, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); ev("coin_heads", card, side, 0); return; }
     int total = 0;
     for (int r5 = 5; r5 <= 9; r5++) {
         const int row = 15 * side + r5;
@@ -150,22 +150,33 @@ static void gamble(int side, int card)
         total += atk;
     }
     enqueue_raw(side ^ 1, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1);
-    const int shown = total > 2550 ? 2550 : total;
+    const int loss = total * pct / 100 / 10 * 10;
+    const int shown = loss > 2550 ? 2550 : loss;
     if (shown > 0) enqueue_raw(side ^ 1, card, PSX_CARD_FX_DAMAGE, shown, -1, -1);
-    if (total > shown) {
+    if (loss > shown) {
         const uint32_t lpat = SIDES + (uint32_t)side * 0x20u + 0x14u;
-        int lp = psx_mod_read_half(lpat) - (total - shown);
+        int lp = psx_mod_read_half(lpat) - (loss - shown);
         if (lp < 0) lp = 0;
         psx_mod_write_half(lpat, (uint16_t)lp);
     }
-    ev("coin_tails", card, side, total);
+    ev("destroy_own", card, side, loss);
+}
+
+static void gamble(int side, int card)
+{
+    const unsigned r = (unsigned)rand() ^ s_frame;
+    const int heads = (r & 1u) != 0;
+    if (heads) { enqueue_raw(side, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); ev("coin_heads", card, side, 0); return; }
+    ev("coin_tails", card, side, 0);
+    destroy_own(side, card, 50);
 }
 
 static void enqueue_fx(int side, int card, int fx, int amount, int target, int terrain)
 {
     if (fx < 0 || fx == PSX_CARD_FX_RITUAL || fx == PSX_CARD_FX_NONE) return;
     if (fx == PSX_CARD_FX_GAMBLE) { gamble(side, card); return; }
-    if (fx == PSX_CARD_FX_DESTROY_OWN) { enqueue_raw(side ^ 1, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); return; }
+    if (fx == PSX_CARD_FX_DESTROY_OWN) { destroy_own(side, card, 0); return; }
+    if (fx == PSX_CARD_FX_DESTROY_OWN_LP) { destroy_own(side, card, 50); return; }
     enqueue_raw(side, card, fx, amount, target, terrain);
 }
 

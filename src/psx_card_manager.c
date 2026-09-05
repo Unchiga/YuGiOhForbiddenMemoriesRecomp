@@ -186,9 +186,9 @@ static int magic_dispatchable(int id);
 static const int TRIG_FX[] = { -1, PSX_CARD_FX_HEAL, PSX_CARD_FX_DAMAGE, PSX_CARD_FX_DESTROY_TYPE, PSX_CARD_FX_DESTROY_ATK,
     PSX_CARD_FX_RAIGEKI, PSX_CARD_FX_DARK_HOLE, PSX_CARD_FX_DRAGON_JAR, PSX_CARD_FX_STOP_DEFENSE, PSX_CARD_FX_FLIP,
     PSX_CARD_FX_WEAKEN, PSX_CARD_FX_SWORDS, PSX_CARD_FX_CURSEBREAKER, PSX_CARD_FX_HARPIE, PSX_CARD_FX_FIELD,
-    PSX_CARD_FX_DESTROY_STRONGEST, PSX_CARD_FX_LOSE_LP, PSX_CARD_FX_GAMBLE_LP, PSX_CARD_FX_GAMBLE, PSX_CARD_FX_DESTROY_OWN };
+    PSX_CARD_FX_DESTROY_STRONGEST, PSX_CARD_FX_LOSE_LP, PSX_CARD_FX_GAMBLE_LP, PSX_CARD_FX_GAMBLE, PSX_CARD_FX_DESTROY_OWN, PSX_CARD_FX_DESTROY_OWN_LP };
 #define TRIG_N ((int)(sizeof TRIG_FX / sizeof TRIG_FX[0]))
-#define TRIG_MONSTER_ONLY 2            /* the coin and "destroy your own" only make sense on a monster */
+#define TRIG_MONSTER_ONLY 3            /* the coin and the two "destroy your own" only make sense on a monster */
 static const char *const BATTLE_LABEL[PSX_CARD_BATTLE_COUNT] = { "Normal", "Never destroyed in battle", "Destroys itself and its foe", "Destroys its foe" };
 static const char *const IMMUNE_LABEL[4] = { "Nothing", "Traps", "Destruction magic", "Traps and magic" };
 /* the odds a branch can roll; "Otherwise" (an else branch) is offered from the second branch on */
