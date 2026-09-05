@@ -73,6 +73,9 @@
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
 #include "psx_card_effects.h"
+#include "psx_video_menu.h"
+#include "psx_card_manager.h"
+#include "host_osd.h"
 #include "psx_fusion_font.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -251,13 +254,14 @@ static const char *const STAR_NAMES[11] = {
 };
 static const char *const FX_NAMES[PSX_CARD_FX_COUNT] = {
     "none", "heal", "damage", "destroy_type", "destroy_atk", "raigeki", "dark_hole", "dragon_jar",
-    "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual", "gamble"
+    "stop_defense", "flip", "weaken", "swords", "cursebreaker", "harpie", "field", "ritual",
+    "destroy_strongest", "lose_lp", "coin_lp", "gamble"
 };
 static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
     "No effect", "Heal LP", "Damage LP", "Destroy a type", "Destroy by ATK", "Destroy all monsters (Raigeki)",
     "Destroy everything (Dark Hole)", "Destroy Dragons", "Stop Defense", "Flip face-down monsters",
     "Weaken opponent's monsters", "Swords of Revealing Light", "Cursebreaker", "Destroy magic/trap zone (Harpie)",
-    "Change the field", "Ritual summon", "Coin flip (Time Wizard)"
+    "Change the field", "Ritual summon", "Destroy the strongest monster", "Lose LP yourself", "Coin flip: tails, lose half your LP", "Coin flip (Time Wizard)"
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
 static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
@@ -334,6 +338,7 @@ static int parse_filter(const char *w)
 {
     while (*w == ' ') w++;
     if (!*w) return 0;
+    if (!strncmp(w, "hand", 4) || !strncmp(w, "card in hand", 12)) return PSX_CARD_PACK_FILTER_HAND;
     if (*w >= '0' && *w <= '9') { const int x = atoi(w); return (x >= 1 && x <= CARD_COUNT) ? x : -1; }
     const int ty = match_name(w, TYPE_NAMES, 20, 0);
     if (ty >= 0) return PSX_CARD_PACK_FILTER_TYPE + ty;
@@ -351,6 +356,7 @@ const char *psx_card_packs_filter_name(int filter, int enemy)
 {
     static char buf[64];
     if (filter <= 0) return enemy ? "enemy monster" : "allied monster";
+    if (filter == PSX_CARD_PACK_FILTER_HAND) return enemy ? "card in the opponent's hand" : "card in your hand";
     if (filter >= PSX_CARD_PACK_FILTER_TYPE) { snprintf(buf, sizeof buf, "%s%s", TYPE_NAMES[(filter - PSX_CARD_PACK_FILTER_TYPE) % 20], enemy ? " the opponent controls" : " you control"); return buf; }
     snprintf(buf, sizeof buf, "%s%s", psx_card_db_ready() ? psx_card_db_name(filter) : "card", enemy ? " the opponent controls" : " you control");
     return buf;
@@ -387,11 +393,11 @@ void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap)
     unsigned n = 0; out[0] = 0;
     if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(out + n, cap - n, "%d", c->bonus_flat);
     if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET && n < cap) {
-        if (c->bonus_ally_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per %s", n ? ", " : "", c->bonus_ally, c->bonus_ally_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_ally_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_ally_filter) : "?"));
+        if (c->bonus_ally_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per %s", n ? ", " : "", c->bonus_ally, c->bonus_ally_filter == PSX_CARD_PACK_FILTER_HAND ? "hand" : c->bonus_ally_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_ally_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_ally_filter) : "?"));
         else n += (unsigned)snprintf(out + n, cap - n, "%s%d per ally", n ? ", " : "", c->bonus_ally);
     }
     if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET && n < cap) {
-        if (c->bonus_enemy_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy %s", n ? ", " : "", c->bonus_enemy, c->bonus_enemy_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_enemy_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_enemy_filter) : "?"));
+        if (c->bonus_enemy_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy %s", n ? ", " : "", c->bonus_enemy, c->bonus_enemy_filter == PSX_CARD_PACK_FILTER_HAND ? "hand" : c->bonus_enemy_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_enemy_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_enemy_filter) : "?"));
         else n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy", n ? ", " : "", c->bonus_enemy);
     }
     if (!n) snprintf(out, cap, "none");
@@ -450,6 +456,9 @@ typedef struct {
 static Pack    *s_packs[CARD_COUNT + 1];
 static char     s_dir[1024];
 static int      s_dir_ok;
+static int      s_dev;                /* 1 = the Card Effects mod's set is live */
+static int      s_dev_want = -1;      /* a switch asked for, applied on the emulation thread */
+static int      s_menu_row = -1;
 static unsigned s_generation;
 static uint32_t s_names_next = NAMES_BASE;
 static int      s_pw_dirty;           /* the price/password sectors need a rebuild */
@@ -888,8 +897,10 @@ int psx_card_packs_parse_equips(const char *v, PsxCardPack *c, char *err, unsign
             continue;
         }
         const int ty = match_name(t, TYPE_NAMES, 20, 0);
-        if (ty < 0) { char m[96]; snprintf(m, sizeof m, "'%s' is not a monster type or a card id", t); seterr(err, errcap, m); return 0; }
-        types |= 1u << ty;
+        if (ty >= 0) { types |= 1u << ty; continue; }
+        const int at = match_name(t, ATTR_NAMES, 6, 0);
+        if (at < 0) { char m[96]; snprintf(m, sizeof m, "'%s' is not a monster type, an attribute or a card id", t); seterr(err, errcap, m); return 0; }
+        types |= PSX_CARD_PACK_EQUIP_ATTR_BIT(at);
     }
     c->equips_set = 1;
     c->equip_types = types;
@@ -941,7 +952,10 @@ void psx_card_packs_format_equips(const PsxCardPack *c, char *out, unsigned cap)
 {
     unsigned n = 0; out[0] = 0;
     if (c->equip_types & PSX_CARD_PACK_EQUIP_ALL) n += (unsigned)snprintf(out + n, cap - n, "all");
-    else for (int t = 0; t < 20; t++) if (c->equip_types & (1u << t)) n += (unsigned)snprintf(out + n, cap - n, "%s%s", n ? ", " : "", TYPE_NAMES[t]);
+    else {
+        for (int t = 0; t < 20; t++) if (c->equip_types & (1u << t)) n += (unsigned)snprintf(out + n, cap - n, "%s%s", n ? ", " : "", TYPE_NAMES[t]);
+        for (int a = 0; a < 6; a++) if (c->equip_types & PSX_CARD_PACK_EQUIP_ATTR_BIT(a)) n += (unsigned)snprintf(out + n, cap - n, "%s%s", n ? ", " : "", ATTR_NAMES[a]);
+    }
     for (int i = 0; i < c->equip_n && n + 8 < cap; i++) n += (unsigned)snprintf(out + n, cap - n, "%s%d", n ? ", " : "", c->equip_ids[i]);
     if (!n) snprintf(out, cap, "none");
 }
@@ -1489,8 +1503,8 @@ int psx_card_packs_thumb_rgb(int id, uint8_t *out)
 
 int psx_card_packs_state_json(char *out, unsigned cap)
 {
-    unsigned n = (unsigned)snprintf(out, cap, "\"dir\":\"%s\",\"generation\":%u,\"overrides\":%u,\"packs\":[",
-                                    s_dir, s_generation, cdrom_override_count());
+    unsigned n = (unsigned)snprintf(out, cap, "\"dir\":\"%s\",\"dev\":%d,\"generation\":%u,\"overrides\":%u,\"packs\":[",
+                                    s_dir, s_dev, s_generation, cdrom_override_count());
     int first = 1;
     for (int id = 1; id <= CARD_COUNT && n + 64 < cap; id++) {
         const Pack *pk = s_packs[id];
@@ -1503,6 +1517,73 @@ int psx_card_packs_state_json(char *out, unsigned cap)
     return n < cap;
 }
 
+/* ---- card sets --------------------------------------------------------------- */
+static void set_dir_for(int dev)
+{
+    const char *dir = psx_mod_player_data_dir();
+    if (dev) {
+        char mods[1200]; snprintf(mods, sizeof mods, "%s/mods", dir); MKDIR(mods);
+        snprintf(mods, sizeof mods, "%s/mods/card_effects", dir); MKDIR(mods);
+        snprintf(s_dir, sizeof s_dir, "%s/mods/card_effects/cards", dir);
+    } else snprintf(s_dir, sizeof s_dir, "%s/cards", dir);
+    MKDIR(s_dir);
+}
+
+/* Put every card of the live set back to stock and forget it. */
+static void unload_all(void)
+{
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        Pack *pk = s_packs[id];
+        if (!pk) continue;
+        if (pk->present) {
+            restore_ram(pk);
+            if (pk->rec_override) for (int s = 0; s < REC_SECTORS; s++) psx_mod_cd_override_clear(REC_LBA(id) + (uint32_t)s);
+            if (pk->thumb_override) psx_mod_cd_override_clear(THUMB_LBA(id));
+        }
+        free(pk);
+        s_packs[id] = NULL;
+    }
+    for (int s = 0; s < PW_SECTORS; s++) psx_mod_cd_override_clear(PW_LBA + (uint32_t)s);
+    s_names_next = NAMES_BASE;
+    psx_card_db_invalidate();
+}
+
+static void switch_set(int dev)
+{
+    if (!s_dir_ok) { s_dev = dev ? 1 : 0; return; }
+    unload_all();
+    s_dev = dev ? 1 : 0;
+    set_dir_for(s_dev);
+    scan_all();
+    rebuild_password_table();
+    bump();
+}
+
+void psx_card_packs_set_dev(int dev) { s_dev_want = dev ? 1 : 0; }
+int  psx_card_packs_is_dev(void) { return s_dev; }
+
+static void menu_changed(int value)
+{
+    if (psx_video_menu_is_restoring()) { psx_card_packs_set_dev(value); return; }
+    if (value && !s_dev) {
+        /* turning it on is asked about, in the Card Manager; the row keeps its
+         * ON until the answer, and goes back to OFF on a no */
+        psx_card_manager_ask_activate();
+        return;
+    }
+    psx_card_packs_set_dev(value);
+    host_osd_push(value ? "Card effects: on (the mod's card set)" : "Card effects: off (your own cards)", 1200);
+}
+
+void psx_card_packs_register_menu(void)
+{
+    static const char *const ONOFF[2] = { "OFF", "ON" };
+    if (s_menu_row >= 0) return;
+    s_menu_row = psx_video_menu_add_option(PSX_VM_MENU_MODS, "Card effects",
+        "The Card Effects set: original cards with their real effects, edited in the Card Manager as Dev Card Effects",
+        ONOFF, 2, "card_effects", 0, menu_changed);
+}
+
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)
 {
@@ -1512,11 +1593,20 @@ static void card_packs_tick(void)
     if (!booted) {
         const char *dir = psx_mod_player_data_dir();
         if (!dir || !dir[0]) return;
-        snprintf(s_dir, sizeof s_dir, "%s/cards", dir);
+        if (s_dev_want >= 0) { s_dev = s_dev_want; s_dev_want = -1; }
+        set_dir_for(s_dev);
         s_dir_ok = 1;
         booted = 1;
         scan_all();
         rebuild_password_table();
+    }
+    if (s_dev_want >= 0) {
+        const int want = s_dev_want; s_dev_want = -1;
+        if (want != s_dev) switch_set(want);
+        if (s_menu_row >= 0 && psx_video_menu_get_row(s_menu_row) != s_dev) psx_video_menu_set_row(s_menu_row, s_dev);
+        /* the row is persisted by the menu when the player uses it; a switch
+         * from the Card Manager button writes the file itself */
+        { extern int psx_host_menu_settings_save(void); (void)psx_host_menu_settings_save(); }
     }
     frames++;
     /* Hot reload: known packs every second, the whole tree every ten. */
@@ -1540,5 +1630,6 @@ static void card_packs_tick(void)
 
 PSX_MOD_CONSTRUCTOR(psx_card_packs_install)
 {
+    psx_card_packs_register_menu();
     (void)psx_game_add_frame_hook(card_packs_tick);
 }

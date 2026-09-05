@@ -52,6 +52,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_db.h"
+#include "psx_card_packs.h"
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
 #include "psx_drop_missing.h"
@@ -2040,6 +2041,18 @@ static void tick(void)
     SDL_GetRendererOutputSize(s_ren, &w, &h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_drop_viewer_close(); return; }
+    }
+    /* A card renamed in the Card Manager (or a card set switched) shows
+     * here at once: names come live from the card table, so a resort and a
+     * redraw are all it takes. */
+    {
+        static unsigned seen_gen = (unsigned)-1;
+        const unsigned gen = psx_card_packs_generation();
+        if (gen != seen_gen) {
+            seen_gen = gen;
+            if (psx_card_db_ready()) { rebuild_order(); rebuild_rows(); }
+            s_dirty = 1;
+        }
     }
     /* The search caret blinks at the usual 2 Hz-ish; only the phase flip
      * redraws. */

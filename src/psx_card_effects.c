@@ -481,7 +481,8 @@ static void hold_apply(void)
     case PSX_CARD_FX_HEAL:   assert_byte(HEAL_TAB, s_hold.heal); break;
     case PSX_CARD_FX_DAMAGE: assert_byte(BURN_TAB, s_hold.burn); break;
     case PSX_CARD_FX_DESTROY_TYPE:
-    case PSX_CARD_FX_DESTROY_ATK: assert_byte(KILL_TAB, s_hold.kill_id); assert_byte(KILL_TAB + 1, s_hold.kill_arg); break;
+    case PSX_CARD_FX_DESTROY_ATK:
+    case PSX_CARD_FX_DESTROY_STRONGEST: assert_byte(KILL_TAB, s_hold.kill_id); assert_byte(KILL_TAB + 1, s_hold.kill_arg); break;
     case PSX_CARD_FX_WEAKEN: s_malus_dirty = 1; assert_code(MALUS_WORD, s_hold.malus); break;
     default: break;
     }
@@ -529,7 +530,7 @@ static void tick(void)
  * stock card that implements it. */
 /* Fill the hold for an effect and return the stock card id whose class
  * implements it, or -1 (none, ritual: the class byte does those). */
-static int fx_prepare(int fx, int amount, int target, int terrain)
+static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
 {
     int proxy = -1;
     memset(&s_hold, 0, sizeof s_hold);
@@ -556,6 +557,41 @@ static int fx_prepare(int fx, int amount, int target, int terrain)
     case PSX_CARD_FX_CURSEBREAKER: proxy = 655; break;
     case PSX_CARD_FX_HARPIE:       proxy = 672; break;
     case PSX_CARD_FX_FIELD:        proxy = 329 + (terrain >= 1 && terrain <= 6 ? terrain : 1); break;
+    case PSX_CARD_FX_DESTROY_STRONGEST: {
+        /* the kill class with its threshold set to the strongest monster the
+         * acting side's opponent has right now: that one goes (ties all go) */
+        const int side = psx_mod_read_byte(0x8009B1D5u) & 1;
+        int best = 0;
+        for (int r = 5; r <= 9; r++) {
+            const uint32_t row = 0x801A7AD8u + (uint32_t)(15 * (side ^ 1) + r) * 0x1Cu;
+            if (!(psx_mod_read_half(row + 0x16) & 0x8000u)) continue;
+            int atk = (int)(int16_t)psx_mod_read_half(row + 0xE) + (int)(int16_t)psx_mod_read_half(row + 0x12) + (int)(int16_t)psx_mod_read_half(row + 0x14);
+            if (atk < 0) atk = 0; if (atk > 9999) atk = 9999;
+            if (atk > best) best = atk;
+        }
+        long a = best / 10; if (a < 21) a = 21; if (a > 255) a = 255;
+        ev(0x653u, best, (int)a, side);
+        proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = (uint8_t)a; break;
+    }
+    case PSX_CARD_FX_LOSE_LP:
+    case PSX_CARD_FX_GAMBLE_LP: {
+        /* the caster's own LP: written directly (the game has no such class),
+         * shown with the number popup, and the play itself becomes a no-op
+         * spell (class 0) */
+        /* the dispatcher runs once per phase of a play: act on phase 1 only */
+        proxy = 301;
+        if (phase != 1) break;
+        const int side = psx_mod_read_byte(0x8009B1D5u) & 1;
+        const uint32_t lpat = 0x800E9FF0u + (uint32_t)side * 0x20u + 0x14u;
+        const int lp = psx_mod_read_half(lpat);
+        int loss = 0;
+        if (fx == PSX_CARD_FX_LOSE_LP) loss = amount >= 0 ? amount : 500;
+        else if (((unsigned)rand() ^ s_frame) & 1u) loss = lp / 2;
+        if (loss > lp) loss = lp;
+        if (loss > 0) { psx_mod_write_half(lpat, (uint16_t)(lp - loss)); psx_lp_popup_show(loss, 0); }
+        ev(0x700u, fx, loss, side);
+        break;
+    }
     default: break;
     }
     if (proxy < 0) return -1;
@@ -574,7 +610,7 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
     const Fx *f = fx_of(id);
     if (!f || f->cfg.effect < 0) return;
     const PsxCardPack *c = &f->cfg;
-    const int proxy = fx_prepare(c->effect, c->amount, c->target, c->terrain);
+    const int proxy = fx_prepare(c->effect, c->amount, c->target, c->terrain, (int)cpu->gpr[5]);
     if (proxy < 0) return;
     cpu->gpr[4] = (uint32_t)proxy;
     ev(HOOK_MAGIC, id, (int)cpu->gpr[5], proxy);
@@ -585,7 +621,7 @@ int psx_card_effects_hold_active(void) { return s_hold.active; }
 int psx_card_effects_cast(int fx, int amount, int target, int terrain)
 {
     if (!s_stock_ok) return 0;
-    const int proxy = fx_prepare(fx, amount, target, terrain);
+    const int proxy = fx_prepare(fx, amount, target, terrain, 1);
     if (proxy < 0) return 0;
     /* what func_80026BA4(proxy, 1) would set */
     const int idx = fx_index(proxy);
@@ -613,7 +649,8 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
             int yes = 0;
             if (fa && tb >= 0 && tb < 20) {
                 const uint32_t m = fa->cfg.equip_types;
-                yes = (m & PSX_CARD_PACK_EQUIP_ALL) || (m & (1u << tb));
+                const int attr = psx_mod_read_byte(psx_card_extend_aux_base() + (uint32_t)b) >> 4;
+                yes = (m & PSX_CARD_PACK_EQUIP_ALL) || (m & (1u << tb)) || (attr < 6 && (m & PSX_CARD_PACK_EQUIP_ATTR_BIT(attr)));
             }
             const uint16_t key = yes ? (uint16_t)a : SCRATCH_KEY;
             psx_mod_write_half(EQUIP_RAM, key);
@@ -684,6 +721,9 @@ static void psx_card_effects_describe_effect_only(const PsxCardPack *c, char *ou
     case PSX_CARD_FX_GAMBLE:
         snprintf(t, sizeof t, "Flip a coin. Heads: destroy all the opponent's monsters. Tails: destroy all your own monsters and lose LP equal to their total ATK.");
         break;
+    case PSX_CARD_FX_DESTROY_STRONGEST: snprintf(t, sizeof t, "Destroys the opponent's strongest monster."); break;
+    case PSX_CARD_FX_LOSE_LP: snprintf(t, sizeof t, "You lose %d LP.", amt >= 0 ? amt : 500); break;
+    case PSX_CARD_FX_GAMBLE_LP: snprintf(t, sizeof t, "Flip a coin. Tails: you lose half your LP."); break;
     default: break;
     }
     if (t[0]) wrap_append(out, cap, t);

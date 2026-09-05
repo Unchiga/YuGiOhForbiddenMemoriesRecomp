@@ -258,6 +258,21 @@ idle after the trigger. A monster with any of these draws with the orange
 effect-monster frame unless `color` says otherwise, and `Effect text →
 description` writes the wording onto the card.
 
+#### The Card Effects mod
+
+`MODS → Card effects` (or the `Dev Card Effects` button top-right in the
+Card Manager) switches to a second, separate card set kept in
+`mods/card_effects/cards/`: the original cards with their real effects
+adapted to Forbidden Memories, built one card at a time in the Card
+Manager. Turning it on asks first; while it is on, the manager, Export and
+Import all work on that set, and your own `cards/` edits sit untouched
+until you switch back. It is off by default.
+
+Effects added for it: `destroy_strongest` (the opponent's strongest monster
+goes), `lose_lp` (you lose LP), `coin_lp` (tails: half your LP), equips
+that fit an attribute (`equips = Dark`), and a bonus per card in your hand
+(`bonus = 300 per hand`).
+
 #### One file to share
 
 `Export…` writes every edited card — `card.ini` and PNGs — plus your

@@ -52,6 +52,7 @@
 #include "psx_card_db.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
+#include "psx_lp_popup.h"
 
 #define CARD_COUNT 722
 
@@ -227,6 +228,18 @@ static void casts_tick(void)
     }
     if (s_qh == s_qt || !duel_idle()) return;
     const Cast c = s_q[s_qh]; s_qh = (s_qh + 1) % 24;
+    if (c.fx == PSX_CARD_FX_LOSE_LP || c.fx == PSX_CARD_FX_GAMBLE_LP) {
+        /* the owner's own LP, no handler needed: direct write and the popup */
+        const uint32_t lpat = SIDES + (uint32_t)c.side * 0x20u + 0x14u;
+        const int lp = psx_mod_read_half(lpat);
+        int loss = 0;
+        if (c.fx == PSX_CARD_FX_LOSE_LP) loss = c.amount >= 0 ? c.amount : 500;
+        else if (((unsigned)rand() ^ s_frame) & 1u) loss = lp / 2;
+        if (loss > lp) loss = lp;
+        if (loss > 0) { psx_mod_write_half(lpat, (uint16_t)(lp - loss)); psx_lp_popup_show(loss, 0); }
+        ev("lose_lp", c.card, loss, c.side);
+        return;
+    }
     flip_side(c.side);
     if (!psx_card_effects_cast(c.fx, c.amount, c.target, c.terrain)) { unflip(); return; }
     s_casting = 1; s_cast_frame = s_frame;
@@ -239,6 +252,10 @@ static void casts_tick(void)
 static int count_matching(int s, int filter, int self_row)
 {
     int n = 0;
+    if (filter == PSX_CARD_PACK_FILTER_HAND) {
+        for (int r = 0; r <= 4; r++) if (row_flags(15 * s + r) & 0x8000u) n++;
+        return n;
+    }
     for (int r = 5; r <= 9; r++) {
         const int row = 15 * s + r;
         if (row == self_row) continue;

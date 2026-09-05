@@ -23,6 +23,9 @@ extern "C" {
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
 #define PSX_CARD_PACK_FILTER_TYPE 1000
+#define PSX_CARD_PACK_FILTER_HAND 999      /* "per card in hand" (own hand) */
+/* equip mask: bits 0..19 monster types, bits 24..29 attributes (Light..Wind), bit 31 all */
+#define PSX_CARD_PACK_EQUIP_ATTR_BIT(a) (1u << (24 + (a)))
 /* words a bonus filter, e.g. "Lava Battleguard", "Dragon", "allied monster" */
 const char *psx_card_packs_filter_name(int filter, int enemy);
 
@@ -124,6 +127,9 @@ enum {
     PSX_CARD_FX_HARPIE,           /* destroy the opponent's magic/trap zone */
     PSX_CARD_FX_FIELD,            /* change the field to `terrain` */
     PSX_CARD_FX_RITUAL,           /* the ritual recipe below */
+    PSX_CARD_FX_DESTROY_STRONGEST,/* destroy the opponent's strongest monster (ties all go) */
+    PSX_CARD_FX_LOSE_LP,          /* the caster / owner loses `amount` LP */
+    PSX_CARD_FX_GAMBLE_LP,        /* Jirai Gumo's coin: tails, the owner loses half their LP */
     PSX_CARD_FX_GAMBLE,           /* Time Wizard's coin: heads destroys the opponent's monsters, tails your own
                                      and their total ATK comes off your LP (monster triggers only) */
     PSX_CARD_FX_COUNT
@@ -173,6 +179,16 @@ typedef struct {
 
 /* Player folder holding the packs (".../cards"); "" before boot. */
 const char *psx_card_packs_dir(void);
+
+/* Two card sets share the machinery: the player's own edits in cards/, and
+ * the Card Effects mod's set in mods/card_effects/cards/. One is live at a
+ * time; switching unloads one and loads the other (the game sees the change
+ * on the next screen), and the Card Manager, Export and Import work on the
+ * live set. Persisted as menu_settings.ini `card_effects`. */
+void psx_card_packs_set_dev(int dev);
+int  psx_card_packs_is_dev(void);
+/* the Card Effects mod's menu row, so a button elsewhere can drive it */
+void psx_card_packs_register_menu(void);
 
 /* Pack for a card, or 0 when none is loaded. */
 int  psx_card_packs_get(int id, PsxCardPack *out);

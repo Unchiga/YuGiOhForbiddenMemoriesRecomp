@@ -34,6 +34,9 @@ int  psx_card_manager_key(int sdl_key);
 void psx_card_manager_search(const char *text);
 /* Show the import preview for a file, as the Import button would. */
 void psx_card_manager_import_preview(const char *path);
+/* Open the manager asking whether to activate the Card Effects mod; the
+ * answer goes to psx_card_packs_set_dev. Used by the MODS menu row. */
+void psx_card_manager_ask_activate(void);
 int  psx_card_manager_shot(const char *path);
 
 #ifdef __cplusplus
