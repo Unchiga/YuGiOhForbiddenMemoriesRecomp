@@ -119,17 +119,19 @@ static int  s_sb_drag, s_sb_grab;
 /* --- editor ---------------------------------------------------------------- */
 enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR,
        F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_TRAP_MAX,
-       F_BATTLE,
-       F_TRIG_FIRST,                                      /* 5 triggers x 4 branches x (chance, effect, parameter) */
-       F_TRIG_END = F_TRIG_FIRST + 5 * PSX_CARD_BRANCHES * 3,
-       F_BONUS_FLAT = F_TRIG_END, F_BONUS_ALLY, F_BONUS_ALLY_PER, F_BONUS_ENEMY, F_BONUS_ENEMY_PER, F_IMMUNE, F_COUNT };
+       F_RULE_FIRST,                                      /* the effects list: RULE_MAX rows of RP_N boxes */
+       F_RULE_END = F_RULE_FIRST + 16 * 5,
+       F_IMMUNE = F_RULE_END, F_COUNT };
+#define RULE_MAX 16
+enum { RP_WHEN, RP_CHANCE, RP_FX, RP_PARAM, RP_PER, RP_N };
 #define F_FX_FIRST F_EFFECT
-#define F_COL2_FIRST F_BATTLE          /* monster effects sit in a second column */
-enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT,
+static const char *const TAB_LABEL[2] = { "Card", "Effects" };
+static int s_tab;                     /* 0 the card's own fields, 1 its effects */
+enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT, B_ADD_RULE,
        B_EXPORT_TEXTS, B_IMPORT_TEXTS, B_EXPORT, B_IMPORT, B_DEV, B_COUNT };   /* B_EXPORT_TEXTS.. sit in the top bar */
 #define B_BAR_FIRST B_EXPORT_TEXTS
 static const char *const BTN_LABEL[B_COUNT] = { "Save", "Restore stock", "Open folder", "Pick art\xE2\x80\xA6", "Pick thumbnail\xE2\x80\xA6", "Pick title\xE2\x80\xA6",
-                                                "Effect text \xE2\x86\x92 description", "Export Descriptions", "Import Descriptions", "Export Config", "Import Config", "Dev Card Effects: OFF" };
+                                                "Effect text \xE2\x86\x92 description", "+ Add effect", "Export Descriptions", "Import Descriptions", "Export Config", "Import Config", "Dev Card Effects: OFF" };
 static char s_dev_label[32];
 #define FTEXT 2048                    /* the longest field text (an equip list) */
 
@@ -175,6 +177,8 @@ typedef struct {
     int  info_x, info_y;
     int  status_y;
     int  fx_note_x, fx_note_y;        /* the effects note line, 0 = none */
+    Rect tab[2];
+    int  preview_y;                   /* the card-text preview under the rules, 0 = none */
     Rect modal, modal_ok, modal_cancel;
 } Layout;
 static Layout s_L;
@@ -192,28 +196,35 @@ static const int TRIG_FX[] = { -1, PSX_CARD_FX_HEAL, PSX_CARD_FX_DAMAGE, PSX_CAR
     PSX_CARD_FX_DESTROY_STRONGEST, PSX_CARD_FX_LOSE_LP, PSX_CARD_FX_GAMBLE_LP, PSX_CARD_FX_GAMBLE, PSX_CARD_FX_DESTROY_OWN, PSX_CARD_FX_DESTROY_OWN_LP };
 #define TRIG_N ((int)(sizeof TRIG_FX / sizeof TRIG_FX[0]))
 #define TRIG_MONSTER_ONLY 3            /* the coin and the two "destroy your own" only make sense on a monster */
-static const char *const BATTLE_LABEL[PSX_CARD_BATTLE_COUNT] = { "Normal", "Never destroyed in battle", "Destroys itself and its foe", "Destroys its foe" };
 static const char *const IMMUNE_LABEL[4] = { "Nothing", "Traps", "Destruction magic", "Traps and magic" };
-/* the odds a branch can roll; "Otherwise" (an else branch) is offered from the second branch on */
+/* the odds a rule can roll; "Otherwise" (an else branch) is offered when a rule follows another on the same trigger */
 static const int CHANCES[] = { 100, 90, 80, 75, 66, 50, 40, 33, 25, 20, 10, 5 };
 #define CHANCE_N ((int)(sizeof CHANCES / sizeof CHANCES[0]))
 #define CHANCE_ELSE (-1)
-#define PER_PICK (-2)                  /* "a card from the list": the next list click sets the filter */
-#define PER_N 23                       /* any, hand, 20 types, pick */
 
-/* --- trigger fields: 5 triggers x 4 branches x (chance, effect, parameter) --- */
-static int is_trigf(int f)   { return f >= F_TRIG_FIRST && f < F_TRIG_END; }
-static int trig_of(int f)    { return (f - F_TRIG_FIRST) / (PSX_CARD_BRANCHES * 3); }
-static int branch_of(int f)  { return ((f - F_TRIG_FIRST) / 3) % PSX_CARD_BRANCHES; }
-static int part_of(int f)    { return (f - F_TRIG_FIRST) % 3; }
-static int trig_field(int t, int k, int part) { return F_TRIG_FIRST + (t * PSX_CARD_BRANCHES + k) * 3 + part; }
-static int is_chance(int f)  { return is_trigf(f) && part_of(f) == 0; }
-static int is_trig(int f)    { return is_trigf(f) && part_of(f) == 1; }
-static int is_param(int f)   { return is_trigf(f) && part_of(f) == 2; }
-static int is_per(int f)     { return f == F_BONUS_ALLY_PER || f == F_BONUS_ENEMY_PER; }
-static int is_bonus_num(int f) { return f == F_BONUS_FLAT || f == F_BONUS_ALLY || f == F_BONUS_ENEMY; }
-static int no_steppers(int f) { return is_trigf(f) || is_per(f); }
-static const char *const TRIG_NAME[5] = { "On summon", "On flip", "On death", "On attack", "Each turn" };
+/* --- rules --------------------------------------------------------------------
+ * A monster's effects are shown as one list of rules, each a sentence:
+ *   When [Summoned face-up] [50%] do [Destroy all the opponent's monsters]
+ *   When [While face-up]          do [Gain ATK/DEF] [500] per [each Lava Battleguard you control]
+ * Behind it sit the six triggers' branch lists, the ATK/DEF bonus rules
+ * and the battle behaviour; the list is rebuilt from them after every
+ * change, in that order. A rule row is RP_N fields. */
+#define WHEN_N 7                       /* 0..5 the triggers, 6 "While face-up" */
+#define WHEN_FACEUP 6
+static const char *const WHEN_LABEL[WHEN_N] = { "Summoned face-up", "Flipped face-up", "Destroyed", "Attacks", "Your turn starts", "Opponent's turn starts", "While face-up" };
+/* what a face-up rule can do */
+enum { PFX_BONUS, PFX_INDESTRUCTIBLE, PFX_SLAYER, PFX_MUTUAL, PFX_N };
+static const char *const PFX_LABEL[PFX_N] = { "Gain ATK/DEF", "Never destroyed in battle", "Destroys its foe", "Destroys itself and its foe" };
+static const int PFX_BATTLE[PFX_N] = { -1, PSX_CARD_BATTLE_INDESTRUCTIBLE, PSX_CARD_BATTLE_SLAYER, PSX_CARD_BATTLE_MUTUAL };
+enum { RK_TRIG, RK_BONUS, RK_BATTLE };
+typedef struct { int kind, t, k, bi; } Rule;
+static Rule s_rules[RULE_MAX];
+static int  s_rule_n;
+/* "per" choices of a bonus rule */
+#define PER_N (5 + 40 + 2)
+#define PER_PICK_OWN (PER_N - 2)
+#define PER_PICK_ENEMY (PER_N - 1)
+
 static PsxCardTrigger *trig_at(int t)
 {
     switch (t) {
@@ -221,31 +232,25 @@ static PsxCardTrigger *trig_at(int t)
     case 1: return &s_edit.on_flip;
     case 2: return &s_edit.on_death;
     case 3: return &s_edit.on_attack;
-    default: return &s_edit.each_turn;
+    case 4: return &s_edit.each_turn;
+    default: return &s_edit.opp_turn;
     }
 }
-static PsxCardTrigger *trig_ptr(int f) { return trig_at(trig_of(f)); }
-static PsxCardFxBranch *branch_ptr(int f) { return &trig_ptr(f)->b[branch_of(f)]; }
-static int branch_live(int f) { return branch_of(f) < trig_ptr(f)->n; }
 static void branch_reset(PsxCardFxBranch *b) { b->chance = 100; b->is_else = 0; b->fx = b->amount = b->target = b->terrain = -1; }
-/* the row below the last branch is an empty one; touching it makes it real */
-static void branch_touch(int f)
+static void trig_remove(PsxCardTrigger *t, int k)
 {
-    PsxCardTrigger *t = trig_ptr(f);
-    const int k = branch_of(f);
-    if (k < t->n) return;
-    for (int i = t->n; i <= k && i < PSX_CARD_BRANCHES; i++) branch_reset(&t->b[i]);
-    t->n = k + 1;
-}
-static void branch_remove(int f)
-{
-    PsxCardTrigger *t = trig_ptr(f);
-    const int k = branch_of(f);
-    if (k >= t->n) return;
+    if (k < 0 || k >= t->n) return;
     for (int i = k; i + 1 < t->n; i++) t->b[i] = t->b[i + 1];
     t->n--;
     branch_reset(&t->b[t->n]);
-    t->b[0].is_else = 0;
+    if (t->n) t->b[0].is_else = 0;
+}
+static int trig_append(PsxCardTrigger *t, const PsxCardFxBranch *b)
+{
+    if (t->n >= PSX_CARD_BRANCHES) return -1;
+    t->b[t->n] = *b;
+    if (t->n == 0) t->b[0].is_else = 0;
+    return t->n++;
 }
 /* branches with no effect are dropped before a save */
 static void trigger_prune(PsxCardTrigger *t)
@@ -256,42 +261,76 @@ static void trigger_prune(PsxCardTrigger *t)
     for (int i = w; i < PSX_CARD_BRANCHES; i++) branch_reset(&t->b[i]);
     if (w) t->b[0].is_else = 0;
 }
-static const char *field_label(int f)
+static void bonus_remove(int i)
 {
-    static const char *const FIELD_LABEL[F_TRIG_FIRST] = {
-        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame",
-        "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max",
-        "In battle"
-    };
-    if (f < F_TRIG_FIRST) return FIELD_LABEL[f];
-    if (is_trigf(f)) return (part_of(f) == 0 && branch_of(f) == 0) ? TRIG_NAME[trig_of(f)] : "";
-    switch (f) {
-    case F_BONUS_FLAT: return "Bonus";
-    case F_BONUS_ALLY: return "Per ally";
-    case F_BONUS_ENEMY: return "Per enemy";
-    case F_IMMUNE: return "Immune to";
-    default: return "";
-    }
+    if (i < 0 || i >= s_edit.bonus_n) return;
+    for (int k = i; k + 1 < s_edit.bonus_n; k++) s_edit.bonus[k] = s_edit.bonus[k + 1];
+    s_edit.bonus_n--;
 }
-/* what a trigger's parameter box holds: 'a' amount, 't' monster type, 'f' field, 0 nothing */
+static int bonus_append(int amount, int enemy, int filter)
+{
+    if (s_edit.bonus_n >= PSX_CARD_BONUSES) return -1;
+    s_edit.bonus[s_edit.bonus_n].amount = amount; s_edit.bonus[s_edit.bonus_n].enemy = enemy; s_edit.bonus[s_edit.bonus_n].filter = filter;
+    return s_edit.bonus_n++;
+}
+static void rules_build(void)
+{
+    s_rule_n = 0;
+    for (int t = 0; t < 6; t++)
+        for (int k = 0; k < trig_at(t)->n && s_rule_n < RULE_MAX; k++) { Rule r = { RK_TRIG, t, k, -1 }; s_rules[s_rule_n++] = r; }
+    if (s_edit.battle > 0 && s_rule_n < RULE_MAX) { Rule r = { RK_BATTLE, WHEN_FACEUP, 0, -1 }; s_rules[s_rule_n++] = r; }
+    for (int i = 0; i < s_edit.bonus_n && s_rule_n < RULE_MAX; i++) { Rule r = { RK_BONUS, WHEN_FACEUP, 0, i }; s_rules[s_rule_n++] = r; }
+}
+static int is_rulef(int f)   { return f >= F_RULE_FIRST && f < F_RULE_END; }
+static int rule_of(int f)    { return (f - F_RULE_FIRST) / RP_N; }
+static int part_of(int f)    { return (f - F_RULE_FIRST) % RP_N; }
+static int rule_field(int r, int part) { return F_RULE_FIRST + r * RP_N + part; }
+static const Rule *rule_ptr(int f) { if (!is_rulef(f)) return NULL; const int r = rule_of(f); return (r >= 0 && r < s_rule_n) ? &s_rules[r] : NULL; }
+static PsxCardFxBranch *rule_branch(int f) { const Rule *r = rule_ptr(f); return (r && r->kind == RK_TRIG) ? &trig_at(r->t)->b[r->k] : NULL; }
+static PsxCardBonus *rule_bonus(int f) { const Rule *r = rule_ptr(f); return (r && r->kind == RK_BONUS) ? &s_edit.bonus[r->bi] : NULL; }
+static int is_when(int f)    { return is_rulef(f) && part_of(f) == RP_WHEN; }
+static int is_chance(int f)  { return is_rulef(f) && part_of(f) == RP_CHANCE; }
+static int is_trig(int f)    { return is_rulef(f) && part_of(f) == RP_FX; }
+static int is_param(int f)   { return is_rulef(f) && part_of(f) == RP_PARAM; }
+static int is_per(int f)     { return is_rulef(f) && part_of(f) == RP_PER; }
+static int no_steppers(int f) { return is_rulef(f); }
+/* what a rule's parameter box holds: 'a' amount, 't' monster type, 'f' field, 0 nothing */
 static int param_kind(int f)
 {
-    if (!is_param(f) || !branch_live(f)) return 0;
-    switch (branch_ptr(f)->fx) {
+    if (!is_param(f)) return 0;
+    const Rule *r = rule_ptr(f);
+    if (!r) return 0;
+    if (r->kind == RK_BONUS) return 'a';
+    if (r->kind != RK_TRIG) return 0;
+    switch (rule_branch(f)->fx) {
     case PSX_CARD_FX_HEAL: case PSX_CARD_FX_DAMAGE: case PSX_CARD_FX_DESTROY_ATK: case PSX_CARD_FX_WEAKEN: case PSX_CARD_FX_LOSE_LP: return 'a';
     case PSX_CARD_FX_DESTROY_TYPE: return 't';
     case PSX_CARD_FX_FIELD: return 'f';
     default: return 0;
     }
 }
+static const char *field_label(int f)
+{
+    static const char *const FIELD_LABEL[F_RULE_FIRST] = {
+        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame",
+        "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max"
+    };
+    if (f < F_RULE_FIRST) return FIELD_LABEL[f];
+    if (f == F_IMMUNE) return "Immune to";
+    if (is_when(f)) return "When";
+    if (is_trig(f)) return "do";
+    if (is_per(f)) return "per";
+    return "";
+}
 static int field_is_enum(int f)
 {
     if (is_param(f)) { const int k = param_kind(f); return k == 't' || k == 'f'; }
     return f == F_STAR1 || f == F_STAR2 || f == F_TYPE || f == F_ATTR || f == F_COLOR || f == F_EFFECT || f == F_TARGET || f == F_TERRAIN
-        || f == F_BATTLE || f == F_IMMUNE || is_trig(f) || is_chance(f) || is_per(f);
+        || f == F_IMMUNE || is_when(f) || is_chance(f) || is_trig(f) || is_per(f);
 }
-static int *per_filter(int f) { return f == F_BONUS_ALLY_PER ? &s_edit.bonus_ally_filter : &s_edit.bonus_enemy_filter; }
-static int *per_amount(int f) { return f == F_BONUS_ALLY_PER ? &s_edit.bonus_ally : &s_edit.bonus_enemy; }
+/* the open dropdown; a "per" list may be showing the 722 cards instead */
+static int s_drop = -1, s_drop_scroll, s_drop_hover = -1, s_drop_cards;
+static char s_drop_filter[32];
 static int enum_count(int f)
 {
     switch (f) {
@@ -302,14 +341,17 @@ static int enum_count(int f)
     case F_EFFECT: return magic_dispatchable(s_sel) ? PSX_CARD_FX_GAMBLE : TRIG_N - 1 - TRIG_MONSTER_ONLY;   /* every spell effect; outside the game's own spell ids also no "none" / ritual */
     case F_TARGET: return 20;
     case F_TERRAIN: return 6;
-    case F_BATTLE: return PSX_CARD_BATTLE_COUNT;
     case F_IMMUNE: return 4;
-    default:
-        if (is_chance(f)) return CHANCE_N + (branch_of(f) > 0 ? 1 : 0);
-        if (is_trig(f)) return TRIG_N;
+    default: {
+        const Rule *r = rule_ptr(f);
+        if (!r) return 0;
+        if (is_when(f)) return WHEN_N;
+        if (is_chance(f)) return CHANCE_N + (r->kind == RK_TRIG && r->k > 0 ? 1 : 0);
+        if (is_trig(f)) return r->kind == RK_TRIG ? TRIG_N : PFX_N;
         if (is_param(f)) return param_kind(f) == 't' ? 20 : 6;
-        if (is_per(f)) return PER_N;
+        if (is_per(f)) return (s_drop == f && s_drop_cards) ? CARDS : PER_N;
         return 0;
+    }
     }
 }
 /* the value option i stands for */
@@ -318,17 +360,43 @@ static int enum_value(int f, int i)
     if (f == F_STAR1 || f == F_STAR2 || f == F_TERRAIN) return i + 1;
     if (f == F_EFFECT && !magic_dispatchable(s_sel)) return TRIG_FX[i + 1];
     if (is_chance(f)) {
-        if (branch_of(f) > 0) { if (i == 1) return CHANCE_ELSE; if (i > 1) i--; }
+        const Rule *r = rule_ptr(f);
+        if (r && r->kind == RK_TRIG && r->k > 0) { if (i == 1) return CHANCE_ELSE; if (i > 1) i--; }
         return CHANCES[i];
     }
-    if (is_trig(f)) return TRIG_FX[i];
+    if (is_trig(f)) { const Rule *r = rule_ptr(f); return (r && r->kind == RK_TRIG) ? TRIG_FX[i] : i; }
     if (is_param(f)) return param_kind(f) == 'f' ? i + 1 : i;
-    if (is_per(f)) return i == 0 ? 0 : i == 1 ? PSX_CARD_PACK_FILTER_HAND : i == PER_N - 1 ? PER_PICK : PSX_CARD_PACK_FILTER_TYPE + (i - 2);
+    if (is_per(f)) return (s_drop == f && s_drop_cards) ? i + 1 : i;
     return i;
+}
+/* a "per" option as (enemy, filter); i = PER_PICK_* stands for "a card…" */
+static void per_decode(int i, int *enemy, int *filter)
+{
+    if (i == 0) { *enemy = 0; *filter = -1; }
+    else if (i <= 4) { *enemy = i >= 3; *filter = (i == 2 || i == 4) ? PSX_CARD_PACK_FILTER_HAND : 0; }
+    else if (i < 45) { *enemy = i >= 25; *filter = PSX_CARD_PACK_FILTER_TYPE + (i - 5) % 20; }
+    else { *enemy = i == PER_PICK_ENEMY; *filter = 0; }
+}
+static int per_encode(int enemy, int filter)
+{
+    if (filter < 0) return 0;
+    if (filter == 0) return enemy ? 3 : 1;
+    if (filter == PSX_CARD_PACK_FILTER_HAND) return enemy ? 4 : 2;
+    if (filter >= PSX_CARD_PACK_FILTER_TYPE) return 5 + (enemy ? 20 : 0) + (filter - PSX_CARD_PACK_FILTER_TYPE) % 20;
+    return enemy ? PER_PICK_ENEMY : PER_PICK_OWN;   /* a card */
+}
+static const char *per_label(int enemy, int filter)
+{
+    static char b[96];
+    if (filter < 0) return "always";
+    if (filter == 0) return enemy ? "each monster the opponent controls" : "each monster you control";
+    if (filter == PSX_CARD_PACK_FILTER_HAND) return enemy ? "each card in the opponent's hand" : "each card in your hand";
+    snprintf(b, sizeof b, "each %s", psx_card_packs_filter_name(filter, enemy));
+    return b;
 }
 static const char *enum_label(int f, int i)
 {
-    static char b[64];
+    static char b[96];
     const int v = enum_value(f, i);
     switch (f) {
     case F_STAR1: case F_STAR2: return psx_card_packs_star_name(v);
@@ -338,21 +406,23 @@ static const char *enum_label(int f, int i)
     case F_EFFECT: return psx_card_packs_effect_label(v);
     case F_TARGET: return psx_card_packs_type_name(v);
     case F_TERRAIN: return psx_card_packs_terrain_name(v);
-    case F_BATTLE: return BATTLE_LABEL[v];
     case F_IMMUNE: return IMMUNE_LABEL[v];
-    default:
+    default: {
+        const Rule *r = rule_ptr(f);
+        if (!r) return "?";
+        if (is_when(f)) return WHEN_LABEL[v];
         if (is_chance(f)) { if (v == CHANCE_ELSE) return "Otherwise"; if (v == 100) return "Always"; snprintf(b, sizeof b, "%d%%", v); return b; }
-        if (is_trig(f)) return v < 0 ? "Nothing" : psx_card_packs_effect_label(v);
+        if (is_trig(f)) return r->kind == RK_TRIG ? (v < 0 ? "Choose an effect\xE2\x80\xA6" : psx_card_packs_effect_label(v)) : PFX_LABEL[v];
         if (is_param(f)) return param_kind(f) == 'f' ? psx_card_packs_terrain_name(v) : psx_card_packs_type_name(v);
         if (is_per(f)) {
-            const int enemy = f == F_BONUS_ENEMY_PER;
-            if (v == 0) return enemy ? "each monster the opponent controls" : "each monster you control";
-            if (v == PSX_CARD_PACK_FILTER_HAND) return enemy ? "each card in the opponent's hand" : "each card in your hand";
-            if (v == PER_PICK) return "a card from the list\xE2\x80\xA6";
-            snprintf(b, sizeof b, "each %s", psx_card_packs_filter_name(v, enemy));
-            return b;
+            if (s_drop == f && s_drop_cards) { snprintf(b, sizeof b, "%d  %s", v, psx_card_db_name(v)); return b; }
+            if (i == PER_PICK_OWN) return "a card you control\xE2\x80\xA6";
+            if (i == PER_PICK_ENEMY) return "a card the opponent controls\xE2\x80\xA6";
+            int e, fl; per_decode(i, &e, &fl);
+            return per_label(e, fl);
         }
         return "?";
+    }
     }
 }
 static int effective_type(void);
@@ -368,14 +438,22 @@ static int enum_current_value(int f)
     case F_EFFECT: return s_edit.effect >= 0 ? s_edit.effect : (s_stock.effect >= 0 ? s_stock.effect : (magic_dispatchable(s_sel) ? 0 : PSX_CARD_FX_HEAL));
     case F_TARGET: return s_edit.target >= 0 ? s_edit.target : ((s_stock.effect == PSX_CARD_FX_DESTROY_TYPE && s_stock.amount >= 0) ? s_stock.amount : 3);
     case F_TERRAIN: return s_edit.terrain >= 1 ? s_edit.terrain : ((s_stock.effect == PSX_CARD_FX_FIELD && s_stock.amount >= 1) ? s_stock.amount : 1);
-    case F_BATTLE: return s_edit.battle >= 0 ? s_edit.battle : 0;
     case F_IMMUNE: return s_edit.immune >= 0 ? s_edit.immune : 0;
-    default:
-        if (is_chance(f)) { if (!branch_live(f)) return 100; const PsxCardFxBranch *b = branch_ptr(f); return b->is_else ? CHANCE_ELSE : b->chance; }
-        if (is_trig(f)) return branch_live(f) ? branch_ptr(f)->fx : -1;
-        if (is_param(f)) { const PsxCardFxBranch *b = branch_ptr(f); return param_kind(f) == 'f' ? (b->terrain >= 1 ? b->terrain : 1) : (b->target >= 0 ? b->target : 3); }
-        if (is_per(f)) { const int v = *per_filter(f); return (v >= 1 && v <= CARDS) ? PER_PICK : v; }
+    default: {
+        const Rule *r = rule_ptr(f);
+        if (!r) return 0;
+        if (is_when(f)) return r->kind == RK_TRIG ? r->t : WHEN_FACEUP;
+        if (is_chance(f)) { const PsxCardFxBranch *b = rule_branch(f); return !b ? 100 : b->is_else ? CHANCE_ELSE : b->chance; }
+        if (is_trig(f)) {
+            if (r->kind == RK_TRIG) return rule_branch(f)->fx;
+            if (r->kind == RK_BONUS) return PFX_BONUS;
+            for (int i = 1; i < PFX_N; i++) if (PFX_BATTLE[i] == s_edit.battle) return i;
+            return PFX_INDESTRUCTIBLE;
+        }
+        if (is_param(f)) { const PsxCardFxBranch *b = rule_branch(f); if (!b) return 0; return param_kind(f) == 'f' ? (b->terrain >= 1 ? b->terrain : 1) : (b->target >= 0 ? b->target : 3); }
+        if (is_per(f)) { const PsxCardBonus *b = rule_bonus(f); if (!b) return 0; if (s_drop == f && s_drop_cards) return (b->filter >= 1 && b->filter <= CARDS) ? b->filter : 1; return per_encode(b->enemy, b->filter); }
         return 0;
+    }
     }
 }
 static int enum_current_index(int f)
@@ -390,8 +468,31 @@ static int enum_current_index(int f)
     }
     return 0;
 }
-static int s_pick = -1;                /* the "per" field waiting for a list click */
 static void say(const char *m);
+static void drop_open_cards(int f);
+/* a rule's "When" moves it between the triggers' lists and the face-up rules */
+static void rule_set_when(int f, int when)
+{
+    const Rule r = *rule_ptr(f);
+    const int cur = enum_current_value(f);
+    if (when == cur) return;
+    if (r.kind == RK_TRIG && when != WHEN_FACEUP) {
+        PsxCardFxBranch b = trig_at(r.t)->b[r.k];
+        if (trig_at(when)->n >= PSX_CARD_BRANCHES) { say("That trigger already holds four effects"); return; }
+        trig_remove(trig_at(r.t), r.k);
+        trig_append(trig_at(when), &b);
+    } else if (r.kind == RK_TRIG) {
+        /* becomes an ATK/DEF bonus */
+        if (s_edit.bonus_n >= PSX_CARD_BONUSES) { say("Six ATK/DEF bonuses at most"); return; }
+        trig_remove(trig_at(r.t), r.k);
+        bonus_append(500, 0, -1);
+    } else {
+        if (trig_at(when)->n >= PSX_CARD_BRANCHES) { say("That trigger already holds four effects"); return; }
+        if (r.kind == RK_BONUS) bonus_remove(r.bi); else s_edit.battle = -1;
+        PsxCardFxBranch b; branch_reset(&b);
+        trig_append(trig_at(when), &b);
+    }
+}
 static void enum_set(int f, int i)
 {
     const int v = enum_value(f, i);
@@ -404,46 +505,62 @@ static void enum_set(int f, int i)
     case F_EFFECT: s_edit.effect = v; break;
     case F_TARGET: s_edit.target = v; break;
     case F_TERRAIN: s_edit.terrain = v; break;
-    case F_BATTLE: s_edit.battle = v; break;
     case F_IMMUNE: s_edit.immune = v; break;
-    default:
-        if (is_chance(f)) {
-            branch_touch(f);
-            PsxCardFxBranch *b = branch_ptr(f);
-            if (v == CHANCE_ELSE) { b->is_else = 1; b->chance = 100; }
-            else { b->is_else = 0; b->chance = v; }
+    default: {
+        const Rule *r = rule_ptr(f);
+        if (!r) return;
+        if (is_when(f)) rule_set_when(f, v);
+        else if (is_chance(f)) {
+            PsxCardFxBranch *b = rule_branch(f);
+            if (b) { if (v == CHANCE_ELSE) { b->is_else = 1; b->chance = 100; } else { b->is_else = 0; b->chance = v; } }
         } else if (is_trig(f)) {
-            if (v < 0) { branch_remove(f); break; }
-            branch_touch(f);
-            PsxCardFxBranch *b = branch_ptr(f);
-            if (b->fx != v) { b->fx = v; b->amount = -1; b->target = -1; b->terrain = -1; }
+            if (r->kind == RK_TRIG) {
+                PsxCardFxBranch *b = rule_branch(f);
+                if (b->fx != v) { b->fx = v; b->amount = -1; b->target = -1; b->terrain = -1; }
+            } else if (v == PFX_BONUS) {
+                if (r->kind == RK_BATTLE) { s_edit.battle = -1; bonus_append(500, 0, -1); }
+            } else {
+                if (r->kind == RK_BONUS) bonus_remove(r->bi);
+                s_edit.battle = PFX_BATTLE[v];
+            }
         } else if (is_param(f)) {
-            PsxCardFxBranch *b = branch_ptr(f);
-            if (param_kind(f) == 'f') b->terrain = v; else b->target = v;
+            PsxCardFxBranch *b = rule_branch(f);
+            if (b) { if (param_kind(f) == 'f') b->terrain = v; else b->target = v; }
         } else if (is_per(f)) {
-            if (v == PER_PICK) { s_pick = f; say("Click a card in the list: the bonus counts each copy of it on the field"); s_dirty = 1; return; }
-            *per_filter(f) = v;
-            if (*per_amount(f) == PSX_CARD_PACK_BOOST_UNSET) *per_amount(f) = 500;
+            PsxCardBonus *b = rule_bonus(f);
+            if (!b) return;
+            if (s_drop == f && s_drop_cards) { b->filter = v; }
+            else if (i == PER_PICK_OWN || i == PER_PICK_ENEMY) { b->enemy = i == PER_PICK_ENEMY; drop_open_cards(f); s_changed = 1; return; }   /* the card list follows */
+            else per_decode(i, &b->enemy, &b->filter);
         }
         break;
     }
+    }
+    rules_build();
     s_changed = 1; s_dirty = 1;
 }
-/* the list click that ends a "per a card from the list" pick */
-static void pick_card(int id)
+/* "+ Add effect": a new rule on the summon trigger, effect still to choose */
+static void rule_add(void)
 {
-    const int f = s_pick;
-    s_pick = -1;
-    if (f < 0) return;
-    *per_filter(f) = id;
-    if (*per_amount(f) == PSX_CARD_PACK_BOOST_UNSET) *per_amount(f) = 500;
-    char m[160]; snprintf(m, sizeof m, "The bonus counts each %s %s", psx_card_db_name(id), f == F_BONUS_ENEMY_PER ? "the opponent controls" : "you control");
-    say(m);
+    PsxCardFxBranch b; branch_reset(&b);
+    int t = 0;
+    while (t < 6 && trig_at(t)->n >= PSX_CARD_BRANCHES) t++;
+    if (t >= 6 || s_rule_n >= RULE_MAX) { say("No room for another effect on this card"); return; }
+    trig_append(trig_at(t), &b);
+    rules_build();
+    s_changed = 1; s_dirty = 1;
+}
+static void rule_delete(int f)
+{
+    const Rule *r = rule_ptr(f);
+    if (!r) return;
+    if (r->kind == RK_TRIG) trig_remove(trig_at(r->t), r->k);
+    else if (r->kind == RK_BONUS) bonus_remove(r->bi);
+    else s_edit.battle = -1;
+    rules_build();
     s_changed = 1; s_dirty = 1;
 }
 
-/* the open dropdown, if any */
-static int s_drop = -1, s_drop_scroll, s_drop_hover = -1;
 #define DROP_ROWS 12
 static int field_is_set(int f);
 /* The type the game will see: the edit when set, else stock. Magic, Trap,
@@ -454,34 +571,41 @@ static int is_monster(void) { return effective_type() < 20; }
 /* Cards the game's magic dispatcher knows: 301..350, 651..700, 721. */
 static int magic_dispatchable(int id) { return (id >= 301 && id <= 350) || (id >= 651 && id <= 700) || id == 721; }
 static int eff_effect(void) { return s_edit.effect >= 0 ? s_edit.effect : s_stock.effect; }
-static int field_applies(int f)
+static int field_tab(int f) { return f < F_FX_FIRST ? 0 : 1; }
+/* whether the card's type has a use for the field (the tab aside) */
+static int field_fits(int f)
 {
     const int t = effective_type();
     switch (f) {
     case F_ATK: case F_DEF: case F_STAR1: case F_STAR2: case F_LEVEL: case F_ATTR: return is_monster();
     case F_EFFECT:  return t == 20 || t == 22;   /* any card the game plays as a spell; the hook rewrites the id */
     case F_AMOUNT: {
-        if (!field_applies(F_EFFECT)) return 0;
+        if (!field_fits(F_EFFECT)) return 0;
         const int e = eff_effect();
         return e == PSX_CARD_FX_HEAL || e == PSX_CARD_FX_DAMAGE || e == PSX_CARD_FX_DESTROY_ATK || e == PSX_CARD_FX_WEAKEN || e == PSX_CARD_FX_LOSE_LP;
     }
-    case F_TARGET:  return field_applies(F_EFFECT) && eff_effect() == PSX_CARD_FX_DESTROY_TYPE;
-    case F_TERRAIN: return field_applies(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD;
-    case F_RITUAL:  return field_applies(F_EFFECT) && eff_effect() == PSX_CARD_FX_RITUAL;
+    case F_TARGET:  return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_DESTROY_TYPE;
+    case F_TERRAIN: return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD;
+    case F_RITUAL:  return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_RITUAL;
     case F_EQUIP_BONUS: case F_EQUIPS: return t == 23;
     case F_BOOST:   return s_sel >= 330 && s_sel <= 335;
     case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686;
-    case F_BATTLE: case F_BONUS_FLAT: case F_BONUS_ALLY: case F_BONUS_ALLY_PER: case F_BONUS_ENEMY: case F_BONUS_ENEMY_PER: case F_IMMUNE: return is_monster();
+    case F_IMMUNE: return is_monster();
     default:
-        if (is_trigf(f)) {
-            if (!is_monster()) return 0;
-            /* the branches so far, plus one empty row to fill (four at most) */
-            if (branch_of(f) > trig_ptr(f)->n) return 0;
-            return is_param(f) ? param_kind(f) != 0 : 1;
+        if (is_rulef(f)) {
+            const Rule *r = rule_ptr(f);
+            if (!is_monster() || !r) return 0;
+            switch (part_of(f)) {
+            case RP_CHANCE: return r->kind == RK_TRIG;
+            case RP_PARAM: return param_kind(f) != 0;
+            case RP_PER: return r->kind == RK_BONUS;
+            default: return 1;
+            }
         }
         return 1;
     }
 }
+static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab; }
 
 static void layout_compute(void)
 {
@@ -499,90 +623,117 @@ static void layout_compute(void)
     L->ed = (Rect){ L->list.x + L->list.w + gap, top, s_w - (L->list.x + L->list.w + gap) - gap, s_h - top - gap };
 
     const int ex = L->ed.x + pad;
+    const int right = L->ed.x + L->ed.w - pad;
     int y = L->ed.y + pad + px(16.0f) + px(8.0f);        /* below the header line */
-    /* previews */
-    const int art_h = px(72.0f), art_w = art_h * 102 / 96;
-    L->art = (Rect){ ex, y, art_w, art_h };
-    const int th_h = px(24.0f), th_w = th_h * 40 / 32;
-    L->thumb = (Rect){ ex + art_w + pad, y, th_w, th_h };
-    L->info_x = L->thumb.x + th_w + pad;
-    L->info_y = y;
-    y += art_h + px(12.0f);
+    /* the two tabs */
+    {
+        const PsxUiFace *fb = face_bold();
+        const int th = px(U_BTN_H);
+        int tx = ex;
+        for (int i = 0; i < 2; i++) {
+            const int tw = psx_ui_font_text_w(fb, TAB_LABEL[i]) + px(26.0f);
+            L->tab[i] = (Rect){ tx, y, tw, th };
+            tx += tw + px(4.0f);
+        }
+        y += th + px(8.0f);
+    }
+    if (s_tab == 0) {
+        /* previews */
+        const int art_h = px(72.0f), art_w = art_h * 102 / 96;
+        L->art = (Rect){ ex, y, art_w, art_h };
+        const int th_h = px(24.0f), th_w = th_h * 40 / 32;
+        L->thumb = (Rect){ ex + art_w + pad, y, th_w, th_h };
+        L->info_x = L->thumb.x + th_w + pad;
+        L->info_y = y;
+        y += art_h + px(12.0f);
+    }
     /* fields */
     const int label_w = px(U_LABEL_W), box_h = px(U_BOX_H), step_w = px(U_STEP_W), sgap = px(3.0f);
-    const int right = L->ed.x + L->ed.w - pad;
     const int desc_h = psx_ui_font_line_height(face_body()) * 6 + px(6.0f);   /* the game's six lines */
-    /* two columns: the card's own fields on the left, a monster's effects on the right */
-    const int ex2 = ex + px(270.0f), label_w2 = px(52.0f);
-    int y2 = y, trow_x = 0, trow_y = 0;
+    const int rules_here = s_tab == 1 && is_monster();
+    int trow_y = 0, trow_x = 0;
+    if (rules_here) {
+        /* the note above the list */
+        y += px(2.0f);
+        L->fx_note_x = ex; L->fx_note_y = y;
+        y += psx_ui_font_line_height(face_small()) + px(6.0f);
+    }
     for (int f = 0; f < F_COUNT; f++) {
         if (!field_applies(f)) {
             /* the monster-only rows collapse to one note line for a spell */
-            if (f == F_ATK) { L->label[f] = (Rect){ ex, y, label_w, box_h }; y += px(U_FIELD_H); }
+            if (f == F_ATK && s_tab == 0) { L->label[f] = (Rect){ ex, y, label_w, box_h }; y += px(U_FIELD_H); }
             continue;
         }
-        const int col2 = f >= F_COL2_FIRST;
-        int *yy = col2 ? &y2 : &y;
-        const int cx = col2 ? ex2 : ex;
-        const int lw = col2 ? label_w2 : label_w;
-        if (is_trigf(f)) {
-            /* one row per branch: [chance v] [effect v] [parameter] [x] */
+        if (is_rulef(f)) {
+            /* When [when] [chance] do [effect] [parameter] per [per]                x */
+            const Rule *r = rule_ptr(f);
             const int part = part_of(f);
-            if (part == 0) {
-                trow_y = *yy;
-                L->label[f] = (Rect){ cx, trow_y, lw, box_h };
-                L->value[f] = (Rect){ cx + lw, trow_y, px(54.0f), box_h };
-                trow_x = L->value[f].x + L->value[f].w + sgap;
-                *yy += px(U_FIELD_H);
-            } else if (part == 1) {
-                L->label[f] = (Rect){ trow_x, trow_y, 0, box_h };
-                L->value[f] = (Rect){ trow_x, trow_y, px(90.0f), box_h };
-                trow_x += px(90.0f) + sgap;
-                L->clear[f] = (Rect){ trow_x + sgap, trow_y, step_w, box_h };
-            } else {
-                const int w = param_kind(f) == 'a' ? px(46.0f) : px(64.0f);
-                L->label[f] = (Rect){ trow_x, trow_y, 0, box_h };
+            if (part == RP_WHEN) {
+                trow_y = y;
+                L->label[f] = (Rect){ ex, trow_y, px(34.0f), box_h };
+                L->value[f] = (Rect){ ex + px(34.0f), trow_y, px(118.0f), box_h };
+                L->clear[f] = (Rect){ right - step_w, trow_y, step_w, box_h };
+                trow_x = L->value[f].x + L->value[f].w + px(4.0f);
+                y += px(U_FIELD_H);
+            } else if (part == RP_CHANCE) {
+                L->value[f] = (Rect){ trow_x, trow_y, px(66.0f), box_h };
+                trow_x += px(66.0f) + px(4.0f);
+            } else if (part == RP_FX) {
+                L->label[f] = (Rect){ trow_x, trow_y, px(16.0f), box_h };
+                trow_x += px(16.0f);
+                const int w = r->kind == RK_TRIG ? px(168.0f) : px(126.0f);
                 L->value[f] = (Rect){ trow_x, trow_y, w, box_h };
-                trow_x += w + sgap;
-                L->clear[f - 1] = (Rect){ trow_x + sgap, trow_y, step_w, box_h };   /* the row's x moves past the parameter */
+                trow_x += w + px(4.0f);
+            } else if (part == RP_PARAM) {
+                const int w = param_kind(f) == 'a' ? px(46.0f) : px(62.0f);
+                L->value[f] = (Rect){ trow_x, trow_y, w, box_h };
+                trow_x += w + px(4.0f);
+            } else {
+                L->label[f] = (Rect){ trow_x, trow_y, px(18.0f), box_h };
+                trow_x += px(18.0f);
+                int w = right - step_w - sgap * 2 - trow_x; if (w < px(60.0f)) w = px(60.0f);
+                L->value[f] = (Rect){ trow_x, trow_y, w, box_h };
             }
             continue;
         }
-        if (is_per(f)) {
-            /* beside its amount box, on the same row; the row's x sits after it */
-            const int a = f - 1;
-            const int x0 = L->value[a].x + L->value[a].w + sgap;
-            L->label[f] = (Rect){ x0, L->value[a].y, 0, box_h };
-            L->value[f] = (Rect){ x0, L->value[a].y, right - x0 - step_w - sgap * 2, box_h };
-            L->clear[a] = (Rect){ right - step_w, L->value[a].y, step_w, box_h };
-            continue;
+        if (f == F_IMMUNE) {
+            /* "+ Add effect" sits between the rules and the immunity row */
+            const PsxUiFace *fb = face_bold();
+            const int bh = px(U_BTN_H), bw = psx_ui_font_text_w(fb, BTN_LABEL[B_ADD_RULE]) + px(18.0f);
+            L->btn[B_ADD_RULE] = (Rect){ ex, y + px(2.0f), bw, bh };
+            y += bh + px(10.0f);
         }
-        if ((f >= F_FX_FIRST && f < F_COL2_FIRST && !L->fx_note_y) || (f == F_COL2_FIRST)) {
-            *yy += px(4.0f);
-            L->fx_note_x = cx; L->fx_note_y = *yy;
-            *yy += psx_ui_font_line_height(face_small()) + px(4.0f);
+        if (f >= F_FX_FIRST && f < F_IMMUNE && !L->fx_note_y) {
+            y += px(2.0f);
+            L->fx_note_x = ex; L->fx_note_y = y;
+            y += psx_ui_font_line_height(face_small()) + px(6.0f);
         }
         const int fh = (f == F_DESC) ? desc_h + px(3.0f) + psx_ui_font_line_height(face_small()) + px(2.0f) : px(U_FIELD_H);
-        L->label[f] = (Rect){ cx, *yy, lw, box_h };
-        int vx = cx + lw, vw;
+        L->label[f] = (Rect){ ex, y, label_w, box_h };
+        int vx = ex + label_w, vw;
         if (field_is_enum(f)) {
-            L->step_l[f] = (Rect){ vx, *yy, step_w, box_h };
+            L->step_l[f] = (Rect){ vx, y, step_w, box_h };
             vx += step_w + sgap;
-            vw = (f == F_EFFECT) ? px(190.0f) : (f == F_COLOR || f == F_BATTLE || f == F_IMMUNE) ? px(120.0f) : px(90.0f);
-            L->value[f] = (Rect){ vx, *yy, vw, box_h };
-            L->step_r[f] = (Rect){ vx + vw + sgap, *yy, step_w, box_h };
-            L->clear[f] = (Rect){ L->step_r[f].x + step_w + sgap * 2, *yy, step_w, box_h };
+            vw = (f == F_EFFECT) ? px(190.0f) : (f == F_COLOR || f == F_IMMUNE) ? px(120.0f) : px(90.0f);
+            L->value[f] = (Rect){ vx, y, vw, box_h };
+            L->step_r[f] = (Rect){ vx + vw + sgap, y, step_w, box_h };
+            L->clear[f] = (Rect){ L->step_r[f].x + step_w + sgap * 2, y, step_w, box_h };
         } else {
-            const int wide = (f == F_DESC || f == F_EQUIPS || f == F_BOOST || f == F_RITUAL);
-            const int lim = col2 ? right : (is_monster() ? ex2 - px(12.0f) : right);
-            vw = (f == F_NAME) ? px(170.0f) : wide ? (lim - vx - step_w - sgap * 2) : is_bonus_num(f) ? px(46.0f) : px(70.0f);
+            const int wide = (f == F_EQUIPS || f == F_BOOST || f == F_RITUAL);
+            vw = (f == F_NAME) ? px(170.0f) : (f == F_DESC) ? px(300.0f) : wide ? (right - vx - step_w - sgap * 2) : px(70.0f);
+            if (vw > right - vx - step_w - sgap * 2) vw = right - vx - step_w - sgap * 2;
             if (vw < px(40.0f)) vw = px(40.0f);
-            L->value[f] = (Rect){ vx, *yy, vw, (f == F_DESC) ? desc_h : box_h };
-            L->clear[f] = (Rect){ vx + vw + sgap * 2, *yy, step_w, box_h };
+            L->value[f] = (Rect){ vx, y, vw, (f == F_DESC) ? desc_h : box_h };
+            L->clear[f] = (Rect){ vx + vw + sgap * 2, y, step_w, box_h };
         }
-        *yy += fh;
+        y += fh;
     }
-    if (y2 > y) y = y2;
+    if (rules_here) {
+        /* what the card would say, under the list */
+        y += px(2.0f);
+        L->preview_y = y;
+        y += psx_ui_font_line_height(face_small()) * 4 + px(4.0f);
+    }
     y += px(6.0f);
     /* buttons: flow layout, wrapping to a new line when the panel runs out */
     {
@@ -602,6 +753,7 @@ static void layout_compute(void)
             L->bar_free = rx - (L->search.x + L->search.w);
         }
         for (int b = 0; b < B_BAR_FIRST; b++) {
+            if (b == B_ADD_RULE) continue;                    /* placed with the rules */
             const int bw = psx_ui_font_text_w(fb, BTN_LABEL[b]) + px(18.0f);
             if (bx + bw > right && bx > ex) { bx = ex; y += bh + px(5.0f); }
             L->btn[b] = (Rect){ bx, y, bw, bh };
@@ -725,6 +877,7 @@ static void load_editor(void)
         psx_card_packs_effects_reset(&s_edit);
     }
     s_stock_ok = psx_card_packs_stock(s_sel, &s_stock);
+    rules_build();
     s_changed = 0;
     s_art_id = -1;
     s_dirty = 1;
@@ -733,7 +886,7 @@ static void load_editor(void)
 static void select_card(int id)
 {
     if (id < 1 || id > CARDS) return;
-    s_sel = id; s_pick = -1;
+    s_sel = id;
     load_editor();
 }
 
@@ -773,16 +926,9 @@ static int field_is_set(int f)
     case F_EQUIPS: return s_edit.equips_set || s_edit.equip_types != 0;
     case F_BOOST: return s_edit.boost_set;
     case F_TRAP_MAX: return s_edit.trap_atk_max >= 0;
-    case F_BATTLE: return s_edit.battle >= 0;
-    case F_BONUS_FLAT: return s_edit.bonus_flat != PSX_CARD_PACK_BOOST_UNSET;
-    case F_BONUS_ALLY: return s_edit.bonus_ally != PSX_CARD_PACK_BOOST_UNSET;
-    case F_BONUS_ENEMY: return s_edit.bonus_enemy != PSX_CARD_PACK_BOOST_UNSET;
-    case F_BONUS_ALLY_PER: case F_BONUS_ENEMY_PER: return 0;   /* the row's x belongs to the amount box */
     case F_IMMUNE: return s_edit.immune >= 0;
     default:
-        /* only a branch's effect box carries the row's x; the chance and parameter never do */
-        if (is_trig(f)) return branch_live(f);
-        return 0;
+        return is_when(f);                /* a rule's row carries one x, on its When box */
     }
     return 0;
 }
@@ -811,19 +957,12 @@ static void field_clear(int f)
     case F_EQUIPS: s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; break;
     case F_BOOST: s_edit.boost_set = 0; for (int t = 0; t < 20; t++) s_edit.boost[t] = PSX_CARD_PACK_BOOST_UNSET; break;
     case F_TRAP_MAX: s_edit.trap_atk_max = -1; break;
-    case F_BATTLE: s_edit.battle = -1; break;
-    case F_BONUS_FLAT: s_edit.bonus_flat = PSX_CARD_PACK_BOOST_UNSET; break;
-    case F_BONUS_ALLY: s_edit.bonus_ally = PSX_CARD_PACK_BOOST_UNSET; s_edit.bonus_ally_filter = 0; break;
-    case F_BONUS_ENEMY: s_edit.bonus_enemy = PSX_CARD_PACK_BOOST_UNSET; s_edit.bonus_enemy_filter = 0; break;
-    case F_BONUS_ALLY_PER: s_edit.bonus_ally_filter = 0; break;
-    case F_BONUS_ENEMY_PER: s_edit.bonus_enemy_filter = 0; break;
     case F_IMMUNE: s_edit.immune = -1; break;
     default:
-        if (is_trig(f)) branch_remove(f);
-        else if (is_chance(f)) { if (branch_live(f)) { branch_ptr(f)->chance = 100; branch_ptr(f)->is_else = 0; } }
-        else if (is_param(f)) {
-            PsxCardFxBranch *b = branch_ptr(f); const int k = param_kind(f);
-            if (k == 'a') b->amount = -1; else if (k == 't') b->target = -1; else b->terrain = -1;
+        if (is_when(f)) { rule_delete(f); return; }
+        if (is_param(f)) {
+            PsxCardFxBranch *b = rule_branch(f); const int k = param_kind(f);
+            if (b) { if (k == 'a') b->amount = -1; else if (k == 't') b->target = -1; else b->terrain = -1; }
         }
         break;
     }
@@ -874,29 +1013,20 @@ static void field_text(int f, int stock, char *out, size_t cap)
         else { PsxCardPack tmp; memset(&tmp, 0, sizeof tmp); memcpy(tmp.boost, s_stock.boost, sizeof tmp.boost); psx_card_packs_format_boost(&tmp, out, (unsigned)cap); }
         break;
     case F_TRAP_MAX: snprintf(out, cap, "%d", set ? s_edit.trap_atk_max : s_stock.trap_atk_max); break;
-    case F_BATTLE: snprintf(out, cap, "%s", BATTLE_LABEL[set ? s_edit.battle : 0]); break;
-    case F_BONUS_FLAT: snprintf(out, cap, "%d", set ? s_edit.bonus_flat : 0); break;
-    case F_BONUS_ALLY: snprintf(out, cap, "%d", set ? s_edit.bonus_ally : 0); break;
-    case F_BONUS_ENEMY: snprintf(out, cap, "%d", set ? s_edit.bonus_enemy : 0); break;
-    case F_BONUS_ALLY_PER: case F_BONUS_ENEMY_PER: {
-        const int v = stock ? 0 : *per_filter(f);
-        if (v >= 1 && v <= CARDS) snprintf(out, cap, "each %s", psx_card_packs_filter_name(v, f == F_BONUS_ENEMY_PER));
-        else snprintf(out, cap, "%s", enum_label(f, stock ? 0 : enum_current_index(f)));
+    case F_IMMUNE: snprintf(out, cap, "%s", IMMUNE_LABEL[set ? s_edit.immune : 0]); break;
+    default: {
+        const Rule *r = rule_ptr(f);
+        out[0] = 0;
+        if (!r || stock) break;
+        if (is_when(f) || is_chance(f) || is_trig(f)) snprintf(out, cap, "%s", enum_label(f, enum_current_index(f)));
+        else if (is_param(f)) {
+            const int k = param_kind(f);
+            if (r->kind == RK_BONUS) snprintf(out, cap, "%d", rule_bonus(f)->amount);
+            else if (k == 'a' && rule_branch(f)) { const PsxCardFxBranch *b = rule_branch(f); snprintf(out, cap, "%d", b->amount != -1 ? b->amount : (b->fx == PSX_CARD_FX_DESTROY_ATK ? 1500 : 500)); }
+            else if (k) snprintf(out, cap, "%s", enum_label(f, enum_current_index(f)));
+        } else if (is_per(f)) { const PsxCardBonus *b = rule_bonus(f); if (b) snprintf(out, cap, "%s", per_label(b->enemy, b->filter)); }
         break;
     }
-    case F_IMMUNE: snprintf(out, cap, "%s", IMMUNE_LABEL[set ? s_edit.immune : 0]); break;
-    default:
-        if (is_chance(f)) {
-            if (stock || !branch_live(f)) snprintf(out, cap, "Always");
-            else { const PsxCardFxBranch *b = branch_ptr(f); if (b->is_else) snprintf(out, cap, "Otherwise"); else if (b->chance >= 100) snprintf(out, cap, "Always"); else snprintf(out, cap, "%d%%", b->chance); }
-        } else if (is_trig(f)) snprintf(out, cap, "%s", (!stock && branch_live(f) && branch_ptr(f)->fx >= 0) ? psx_card_packs_effect_label(branch_ptr(f)->fx) : "Nothing");
-        else if (is_param(f)) {
-            const PsxCardFxBranch *b = branch_ptr(f); const int k = param_kind(f);
-            if (k == 'a') snprintf(out, cap, "%d", b->amount != -1 ? b->amount : (b->fx == PSX_CARD_FX_DESTROY_ATK ? 1500 : 500));
-            else if (k) snprintf(out, cap, "%s", enum_label(f, enum_current_index(f)));
-            else out[0] = 0;
-        } else out[0] = 0;
-        break;
     }
 }
 
@@ -917,7 +1047,6 @@ static void field_step(int f, int dir)
 static int field_placeholder(int f)
 {
     if (f == F_EQUIPS && !field_is_set(f)) return 1;
-    if (is_bonus_num(f) && !field_is_set(f)) return 1;
     if (f == F_PASSWORD && !field_is_set(f) && !s_stock.password[0]) return 1;
     return 0;
 }
@@ -1227,15 +1356,14 @@ static void focus_commit(void)
     case F_RITUAL: { char err[96]; if (!psx_card_packs_parse_ritual(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
     case F_EQUIPS: { char err[96]; if (!psx_card_packs_parse_equips(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
     case F_BOOST:  { char err[96]; if (!psx_card_packs_parse_boost(s_buf, &s_edit, err, sizeof err)) { say(err); return; } break; }
-    case F_BONUS_FLAT: case F_BONUS_ALLY: case F_BONUS_ENEMY: {
-        if (v < -9990 || v > 9990) { say("A bonus is -9990 to 9990"); return; }
-        const int b = v / 10 * 10;
-        if (f == F_BONUS_FLAT) s_edit.bonus_flat = b; else if (f == F_BONUS_ALLY) s_edit.bonus_ally = b; else s_edit.bonus_enemy = b;
-        break;
-    }
     default: {
         if (!is_param(f) || param_kind(f) != 'a') return;
-        PsxCardFxBranch *sp = branch_ptr(f);
+        if (rule_bonus(f)) {
+            if (v < -9990 || v > 9990) { say("A bonus is -9990 to 9990"); return; }
+            rule_bonus(f)->amount = v / 10 * 10;
+            break;
+        }
+        PsxCardFxBranch *sp = rule_branch(f);
         const int e = sp->fx;
         if (e == PSX_CARD_FX_HEAL && (v < 0 || v > 25500)) { say("Heal is 0 to 25500, in steps of 100"); return; }
         if (e == PSX_CARD_FX_DAMAGE && (v < 0 || v > 2550)) { say("Damage is 0 to 2550, in steps of 10"); return; }
@@ -1257,15 +1385,16 @@ static void do_save(void)
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.level = s_edit.attribute = -1;
     }
     /* effect fields the card cannot use are dropped rather than saved blind */
-    if (!field_applies(F_EFFECT)) { s_edit.effect = s_edit.amount = s_edit.target = s_edit.terrain = -1; s_edit.ritual_set = 0; }
-    if (!field_applies(F_EQUIPS)) { s_edit.equip_bonus = -1; s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; }
-    if (!field_applies(F_BOOST))  s_edit.boost_set = 0;
-    if (!field_applies(F_TRAP_MAX)) s_edit.trap_atk_max = -1;
-    if (!field_applies(F_BATTLE)) {
+    if (!field_fits(F_EFFECT)) { s_edit.effect = s_edit.amount = s_edit.target = s_edit.terrain = -1; s_edit.ritual_set = 0; }
+    if (!field_fits(F_EQUIPS)) { s_edit.equip_bonus = -1; s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; }
+    if (!field_fits(F_BOOST))  s_edit.boost_set = 0;
+    if (!field_fits(F_TRAP_MAX)) s_edit.trap_atk_max = -1;
+    if (!is_monster()) {
         s_edit.battle = -1; s_edit.immune = -1;
-        for (int t = 0; t < 5; t++) memset(trig_at(t), 0, sizeof(PsxCardTrigger));
-        s_edit.bonus_flat = s_edit.bonus_ally = s_edit.bonus_enemy = PSX_CARD_PACK_BOOST_UNSET; s_edit.bonus_ally_filter = s_edit.bonus_enemy_filter = 0;
-    } else for (int t = 0; t < 5; t++) trigger_prune(trig_at(t));
+        for (int t = 0; t < 6; t++) memset(trig_at(t), 0, sizeof(PsxCardTrigger));
+        s_edit.bonus_n = 0;
+    } else for (int t = 0; t < 6; t++) trigger_prune(trig_at(t));
+    rules_build();
     int any = 0;
     for (int f = 0; f < F_COUNT; f++) any |= field_is_set(f);
     if (!any && !s_edit.has_art && !s_edit.has_thumb && !s_edit.has_title) {
@@ -1539,7 +1668,14 @@ static void draw_editor(void)
             text_centered(&chip, "edited", COL_EDITED, fs);
         }
     }
+    /* tabs */
+    for (int i = 0; i < 2; i++) {
+        const Rect *t = &L->tab[i];
+        psx_ui_round_rect(&s_cv, t->x, t->y, t->w, t->h, t->h * 0.5f, i == s_tab ? COL_BTN_ON : COL_BTN);
+        text_centered(t, TAB_LABEL[i], i == s_tab ? COL_TEXT : COL_DIM, fb);
+    }
     /* previews */
+    if (s_tab == 0) {
     psx_ui_round_rect(&s_cv, L->art.x - 2, L->art.y - 2, L->art.w + 4, L->art.h + 4, (float)px(U_R_BOX), COL_EDIT_BG);
     if (s_art_ok) psx_ui_blit_scaled(&s_cv, L->art.x, L->art.y, L->art.w, L->art.h, (float)px(4.0f), s_art_argb, 102, 96);
     psx_ui_round_rect(&s_cv, L->thumb.x - 2, L->thumb.y - 2, L->thumb.w + 4, L->thumb.h + 4, (float)px(4.0f), COL_EDIT_BG);
@@ -1554,13 +1690,14 @@ static void draw_editor(void)
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours" : "Title strip: from the name", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
         draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colours. The duel thumbnail is 40x32 in 64 colours and is made from the face unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
     }
+    }
     /* fields */
     for (int f = 0; f < F_COUNT; f++) {
         const Rect *v = &L->value[f];
         const int set = field_is_set(f);
         if (!field_applies(f)) {
             /* a spell, trap, ritual or equip card: the game never draws these */
-            if (f == F_ATK && !is_monster())
+            if (f == F_ATK && !is_monster() && s_tab == 0)
                 psx_ui_text(&s_cv, L->label[f].x, psx_ui_baseline_in(L->label[f].y, L->label[f].h, fs), "ATK, DEF, stars, level and attribute are not used by a Magic, Trap, Ritual or Equip card", 0x99C9CFDDu, fs);
             continue;
         }
@@ -1590,14 +1727,9 @@ static void draw_editor(void)
                     p = bar ? bar + 1 : NULL;
                 }
             } else {
-                if (is_bonus_num(f) && !set) text_in(v, px(6.0f), "0", COL_DIM, fb);
-                else if (is_per(f)) text_in(v, px(6.0f), t, *per_amount(f) != PSX_CARD_PACK_BOOST_UNSET ? COL_EDITED : COL_TEXT, fb);
-                else if (is_trigf(f)) text_in(v, px(6.0f), t, branch_live(f) ? COL_EDITED : COL_TEXT, fb);
+                if (is_trig(f) && rule_branch(f) && rule_branch(f)->fx < 0) text_in(v, px(6.0f), t, COL_ACCENT, fb);
+                else if (is_rulef(f)) text_in(v, px(6.0f), t, COL_TEXT, fb);
                 else text_in(v, px(6.0f), t, set ? COL_EDITED : COL_TEXT, fb);
-            }
-            if (f == F_BONUS_FLAT) {
-                const int hx = v->x + v->w + px(24.0f);
-                psx_ui_text_clip(&s_cv, hx, psx_ui_baseline_in(v->y, v->h, fs), "to ATK and DEF while on the field", COL_DIM, fs, right - hx);
             }
         }
         if (f == F_DESC) {
@@ -1636,21 +1768,35 @@ static void draw_editor(void)
         if (set) {
             const Rect *c = &L->clear[f];
             psx_ui_round_rect(&s_cv, c->x, c->y, c->w, c->h, c->h * 0.5f, COL_BTN); draw_cross(c, COL_TEXT);
-            if (f != F_DESC && !is_trigf(f) && !is_bonus_num(f)) {
+            if (f != F_DESC && !is_rulef(f)) {
                 char st[PSX_CARD_PACK_DESC_MAX + 8]; field_text(f, 1, st, sizeof st);
                 char s2[PSX_CARD_PACK_DESC_MAX + 16]; snprintf(s2, sizeof s2, "stock: %s", st);
                 const int sx = c->x + c->w + px(8.0f);
-                const int lim = (f < F_COL2_FIRST && is_monster()) ? L->fx_note_x - px(6.0f) : right;
+                const int lim = right;
                 if (lim - sx > px(30.0f)) psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs), s2, COL_DIM, fs, lim - sx);
             }
         }
     }
     if (L->fx_note_y) {
-        const char *note = psx_card_effects_note(s_sel, effective_type());
+        const char *note = (s_tab == 1 && is_monster())
+            ? (s_rule_n ? "One line per effect. \"Otherwise\" runs when the line above it fails its roll; face-up rules hold while the monster shows." : "This monster has no effects yet. Add one: a trigger, its odds and what happens, or a rule that holds while it is face-up.")
+            : psx_card_effects_note(s_sel, effective_type());
         psx_ui_text_clip(&s_cv, L->fx_note_x, L->fx_note_y + psx_ui_font_ascent(fs), note, COL_ACCENT, fs, right - L->fx_note_x);
     }
+    if (L->preview_y) {
+        /* the card text the rules make */
+        char fx[FTEXT];
+        if (psx_card_effects_describe(&s_edit, fx, sizeof fx)) {
+            for (char *q = fx; *q; q++) if (*q == '|') *q = ' ';
+            int lines = 0, longest = 0, wide = 0;
+            const int fits = psx_card_packs_desc_layout(fx, &lines, &longest, &wide);
+            char head[96]; snprintf(head, sizeof head, fits ? "Card text (%d of 6 lines):" : "Card text: %d lines, the card shows 6 (trim the description or the rules):", lines);
+            psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), head, fits ? COL_DIM : COL_WARN, fs);
+            draw_wrapped(ex, L->preview_y + psx_ui_font_line_height(fs), right - ex, fx, COL_TEXT, fs, 3);
+        } else psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), "Card text: none yet.", COL_DIM, fs);
+    }
     for (int b = 0; b < B_COUNT; b++)
-        draw_button_face(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b,
+        if (L->btn[b].w) draw_button_face(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b,
                          b >= B_BAR_FIRST ? face_small() : face_bold());
     /* status + help, wrapped to the panel */
     {
@@ -1663,44 +1809,98 @@ static void draw_editor(void)
             y = draw_wrapped(ex, y, w, p, COL_DIM, fs, 2);
         }
         y += px(3.0f);
-        draw_wrapped(ex, y, w, "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels. In the description a | starts a new line (20 columns, six lines); without one the text is wrapped for you. Export writes every edited card to one .ygocards file; Import reads one and shows what it will replace first.", COL_DIM, fs, 5);
+        draw_wrapped(ex, y, w, s_tab == 0
+            ? "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, six lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first."
+            : "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.", COL_DIM, fs, 5);
     }
 }
 
 /* Where the open dropdown's list sits: under its value box, or above when
  * the window has no room below. */
+/* The options the open list shows: every one, or those matching what was
+ * typed. */
+static int s_drop_items[CARDS];
+static int drop_items(void)
+{
+    const int n = enum_count(s_drop);
+    int m = 0;
+    for (int i = 0; i < n && m < CARDS; i++)
+        if (!s_drop_filter[0] || ci_contains(enum_label(s_drop, i), s_drop_filter)) s_drop_items[m++] = i;
+    return m;
+}
+static int drop_has_header(void) { return enum_count(s_drop) > DROP_ROWS || s_drop_filter[0]; }
+static void drop_open(int f)
+{
+    s_drop = f; s_drop_cards = 0; s_drop_filter[0] = 0; s_drop_hover = -1;
+    const int c = enum_current_index(f);
+    s_drop_scroll = c > DROP_ROWS / 2 ? c - DROP_ROWS / 2 : 0;
+    const int mx = enum_count(f) - DROP_ROWS;
+    if (s_drop_scroll > mx) s_drop_scroll = mx < 0 ? 0 : mx;
+    s_dirty = 1;
+}
+static void drop_open_cards(int f) { drop_open(f); s_drop_cards = 1; const int c = enum_current_index(f); s_drop_scroll = c > DROP_ROWS / 2 ? c - DROP_ROWS / 2 : 0; }
+static void drop_close(void) { s_drop = -1; s_drop_cards = 0; s_drop_filter[0] = 0; s_dirty = 1; }
 static Rect drop_rect(void)
 {
     const Layout *L = &s_L;
     const Rect *v = &L->value[s_drop];
+    const PsxUiFace *fb = face_body();
     const int rh = px(U_ROW_H) + px(2.0f);
-    const int n = enum_count(s_drop), shown = n < DROP_ROWS ? n : DROP_ROWS;
-    int w = v->w; if (w < px(150.0f)) w = px(150.0f);
-    Rect r = { v->x, v->y + v->h + px(2.0f), w, shown * rh + px(6.0f) };
+    const int n = drop_items(), shown = n < DROP_ROWS ? n : DROP_ROWS;
+    /* wide enough for the longest option, so nothing is cut short */
+    int w = v->w;
+    for (int k = 0; k < n; k++) { const int lw = psx_ui_font_text_w(fb, enum_label(s_drop, s_drop_items[k])) + px(28.0f); if (lw > w) w = lw; }
+    if (w < px(150.0f)) w = px(150.0f);
+    if (w > s_w - px(8.0f)) w = s_w - px(8.0f);
+    const int hdr = drop_has_header() ? rh : 0;
+    Rect r = { v->x, v->y + v->h + px(2.0f), w, hdr + shown * rh + px(6.0f) };
     if (r.y + r.h > s_h - px(4.0f)) r.y = v->y - px(2.0f) - r.h;
     if (r.x + r.w > s_w - px(4.0f)) r.x = s_w - px(4.0f) - r.w;
     return r;
+}
+/* the list row under a point, as an index into the shown items, or -1 */
+static int drop_row_at(int x, int y)
+{
+    const Rect r = drop_rect();
+    if (!in_rect(&r, x, y)) return -1;
+    const int rh = px(U_ROW_H) + px(2.0f);
+    const int hdr = drop_has_header() ? rh : 0;
+    const int k = (y - r.y - px(3.0f) - hdr) / rh;
+    if (y - r.y - px(3.0f) < hdr) return -1;
+    const int i = s_drop_scroll + k;
+    return (i >= 0 && i < drop_items()) ? i : -1;
 }
 
 static void draw_dropdown(void)
 {
     if (s_drop < 0) return;
     const Rect r = drop_rect();
-    const int rh = px(U_ROW_H) + px(2.0f), n = enum_count(s_drop);
+    const int rh = px(U_ROW_H) + px(2.0f), n = drop_items();
     const int shown = n < DROP_ROWS ? n : DROP_ROWS;
     const int cur = enum_current_index(s_drop);
     psx_ui_round_rect_shadow(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_PANEL, px(5.0f));
     psx_ui_round_rect(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_EDIT_BG);
     psx_ui_round_rect_line(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_ACCENT, 1.0f);
-    const PsxUiFace *fb = face_body();
+    const PsxUiFace *fb = face_body(), *fs = face_small();
+    int y0 = r.y + px(3.0f);
+    if (drop_has_header()) {
+        const Rect row = { r.x + px(3.0f), y0, r.w - px(6.0f), rh };
+        char h[64];
+        if (s_drop_filter[0]) snprintf(h, sizeof h, "%s%s  (%d)", s_drop_filter, s_caret_on ? "|" : " ", n);
+        else snprintf(h, sizeof h, "type to filter\xE2\x80\xA6  (%d)", n);
+        text_in(&row, px(8.0f), h, s_drop_filter[0] ? COL_TEXT : COL_DIM, fs);
+        y0 += rh;
+    }
     for (int k = 0; k < shown; k++) {
         const int i = s_drop_scroll + k;
         if (i >= n) break;
-        const Rect row = { r.x + px(3.0f), r.y + px(3.0f) + k * rh, r.w - px(6.0f), rh };
-        if (i == cur) psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, rh * 0.5f, COL_SEL_BG);
+        const int item = s_drop_items[i];
+        const Rect row = { r.x + px(3.0f), y0 + k * rh, r.w - px(6.0f), rh };
+        if (item == cur) psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, rh * 0.5f, COL_SEL_BG);
         else if (i == s_drop_hover) psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, rh * 0.5f, COL_HOVER);
-        text_in(&row, px(8.0f), enum_label(s_drop, i), i == cur ? COL_ACCENT : COL_TEXT, fb);
+        text_in(&row, px(8.0f), enum_label(s_drop, item), item == cur ? COL_ACCENT : COL_TEXT, fb);
     }
+    if (!n) { const Rect row = { r.x + px(3.0f), y0, r.w - px(6.0f), rh }; text_in(&row, px(8.0f), "nothing matches", COL_DIM, fb); }
     if (n > shown) {
         const int th = r.h * shown / n, ty = r.y + (r.h - th) * s_drop_scroll / (n - shown);
         psx_ui_round_rect(&s_cv, r.x + r.w - px(5.0f), ty, px(3.0f), th, px(1.5f), COL_THUMB);
@@ -1785,12 +1985,17 @@ static void click(int x, int y, int button, int clicks)
     }
     if (s_drop >= 0) {
         const Rect r = drop_rect();
-        if (in_rect(&r, x, y)) {
-            const int rh = px(U_ROW_H) + px(2.0f);
-            const int i = s_drop_scroll + (y - r.y - px(3.0f)) / rh;
-            if (i >= 0 && i < enum_count(s_drop)) enum_set(s_drop, i);
+        const int i = drop_row_at(x, y);
+        if (in_rect(&r, x, y) && i < 0) return;            /* the filter line, or a gap */
+        const int f = s_drop, was_cards = s_drop_cards;
+        if (i >= 0) {
+            const int item = s_drop_items[i];
+            /* keep the list mode while applying, so a card list stores a card */
+            s_drop = f; s_drop_cards = was_cards;
+            enum_set(f, item);
+            if (s_drop == f && s_drop_cards && !was_cards) return;   /* "a card…" opened the card list */
         }
-        s_drop = -1; s_dirty = 1;
+        drop_close();
         return;
     }
     if (s_focus >= 0 && in_rect(&L->value[s_focus], x, y)) {
@@ -1804,6 +2009,8 @@ static void click(int x, int y, int button, int clicks)
         return;
     }
     if (s_focus >= 0) focus_commit();
+    for (int i = 0; i < 2; i++)
+        if (in_rect(&L->tab[i], x, y)) { s_tab = i; s_dirty = 1; return; }
     if (in_rect(&L->list, x, y)) {
         if (s_order_n > L->rows && x >= L->sb.x - px(4.0f) && y >= L->sb.y && y < L->sb.y + L->sb.h) {
             int th = L->sb.h * L->rows / s_order_n; if (th < px(12.0f)) th = px(12.0f);
@@ -1816,7 +2023,7 @@ static void click(int x, int y, int button, int clicks)
         }
         if (in_rect(&L->list_rows, x, y)) {
             const int i = (y - L->list_rows.y) / L->row_h;
-            if (i >= 0 && i < L->rows && s_scroll + i < s_order_n) { if (s_pick >= 0) pick_card(s_order[s_scroll + i]); else select_card(s_order[s_scroll + i]); }
+            if (i >= 0 && i < L->rows && s_scroll + i < s_order_n) select_card(s_order[s_scroll + i]);
         }
         return;
     }
@@ -1824,8 +2031,8 @@ static void click(int x, int y, int button, int clicks)
         if (!field_applies(f)) continue;
         if (in_rect(&L->value[f], x, y)) {
             if (field_is_enum(f)) {
-                if (button == 3) field_step(f, -1);
-                else { s_drop = f; s_drop_hover = -1; const int c = enum_current_index(f); s_drop_scroll = c > DROP_ROWS / 2 ? c - DROP_ROWS / 2 : 0; const int mx = enum_count(f) - DROP_ROWS; if (s_drop_scroll > mx) s_drop_scroll = mx < 0 ? 0 : mx; s_dirty = 1; }
+                if (button == 3 && !no_steppers(f)) field_step(f, -1);
+                else drop_open(f);
             } else { focus_begin(f); s_car = text_index_at(x, y); s_anchor = -1; s_drag_text = 1; }
             return;
         }
@@ -1836,7 +2043,7 @@ static void click(int x, int y, int button, int clicks)
         if (field_is_set(f) && in_rect(&L->clear[f], x, y)) { field_clear(f); return; }
     }
     for (int b = 0; b < B_COUNT; b++) {
-        if (!in_rect(&L->btn[b], x, y)) continue;
+        if (!L->btn[b].w || !in_rect(&L->btn[b], x, y)) continue;
         switch (b) {
         case B_SAVE: do_save(); break;
         case B_RESTORE: do_restore(); break;
@@ -1845,6 +2052,7 @@ static void click(int x, int y, int button, int clicks)
         case B_THUMB: do_pick(2); break;
         case B_TITLE: do_pick(3); break;
         case B_EFFECT_TEXT: do_effect_text(); break;
+        case B_ADD_RULE: rule_add(); break;
         case B_EXPORT: do_export(); break;
         case B_IMPORT: do_import(); break;
         case B_DEV:
@@ -1902,9 +2110,7 @@ static int on_event(const void *evp)
         }
         int row = -1, btn = -1;
         if (s_drop >= 0) {
-            const Rect r = drop_rect();
-            int h = -1;
-            if (in_rect(&r, x, y)) { h = s_drop_scroll + (y - r.y - px(3.0f)) / (px(U_ROW_H) + px(2.0f)); if (h >= enum_count(s_drop)) h = -1; }
+            const int h = drop_row_at(x, y);
             if (h != s_drop_hover) { s_drop_hover = h; s_dirty = 1; }
             return 1;
         }
@@ -1929,7 +2135,7 @@ static int on_event(const void *evp)
         int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
 #endif
         if (s_drop >= 0) {
-            const int mxs = enum_count(s_drop) - DROP_ROWS;
+            const int mxs = drop_items() - DROP_ROWS;
             s_drop_scroll += ev->wheel.y > 0 ? -2 : 2;
             if (s_drop_scroll > mxs) s_drop_scroll = mxs;
             if (s_drop_scroll < 0) s_drop_scroll = 0;
@@ -1954,9 +2160,31 @@ static int on_event(const void *evp)
             return 1;
         }
         if (s_drop >= 0) {
-            if (key == SDLK_ESCAPE) { s_drop = -1; s_dirty = 1; }
-            else if (key == SDLK_DOWN || key == SDLK_UP) { field_step(s_drop, key == SDLK_DOWN ? 1 : -1); const int c = enum_current_index(s_drop); if (c < s_drop_scroll) s_drop_scroll = c; if (c >= s_drop_scroll + DROP_ROWS) s_drop_scroll = c - DROP_ROWS + 1; }
-            else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) { s_drop = -1; s_dirty = 1; }
+            const int n = drop_items();
+            if (key == SDLK_ESCAPE) { if (s_drop_filter[0]) { s_drop_filter[0] = 0; s_drop_scroll = 0; s_drop_hover = -1; s_dirty = 1; } else drop_close(); }
+            else if (key == SDLK_BACKSPACE) { const size_t l = strlen(s_drop_filter); if (l) { s_drop_filter[l - 1] = 0; s_drop_scroll = 0; s_drop_hover = -1; s_dirty = 1; } }
+            else if (key == SDLK_DOWN || key == SDLK_UP) {
+                /* move the highlight through the shown options */
+                int h = s_drop_hover;
+                if (h < 0) { const int c = enum_current_index(s_drop); h = 0; for (int i = 0; i < n; i++) if (s_drop_items[i] == c) h = i; }
+                h += key == SDLK_DOWN ? 1 : -1;
+                if (h < 0) h = 0;
+                if (h > n - 1) h = n - 1;
+                s_drop_hover = h;
+                if (h < s_drop_scroll) s_drop_scroll = h;
+                if (h >= s_drop_scroll + DROP_ROWS) s_drop_scroll = h - DROP_ROWS + 1;
+                s_dirty = 1;
+            }
+            else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+                int h = s_drop_hover;
+                if (h < 0 && s_drop_filter[0] && n > 0) h = 0;           /* Enter takes the first match */
+                if (h >= 0 && h < n) {
+                    const int f = s_drop, was_cards = s_drop_cards, item = s_drop_items[h];
+                    enum_set(f, item);
+                    if (s_drop == f && s_drop_cards && !was_cards) return 1;
+                }
+                drop_close();
+            }
             return 1;
         }
         if (s_focus >= 0) {
@@ -1967,8 +2195,7 @@ static int on_event(const void *evp)
             return 1;
         }
         if (key == SDLK_ESCAPE) {
-            if (s_pick >= 0) { s_pick = -1; say(""); }
-            else if (s_search[0]) { s_search[0] = 0; rebuild_order(); }
+            if (s_search[0]) { s_search[0] = 0; rebuild_order(); }
             else psx_card_manager_close();
         } else if (key == SDLK_BACKSPACE) {
             const size_t n = strlen(s_search);
@@ -1993,7 +2220,10 @@ static int on_event(const void *evp)
         for (const char *p = ev->text.text; *p; p++) {
             const unsigned char ch = (unsigned char)*p;
             if (ch < 32u || ch >= 127u) continue;
-            if (s_focus >= 0) {
+            if (s_drop >= 0) {
+                const size_t l = strlen(s_drop_filter);
+                if (l + 1 < sizeof s_drop_filter) { s_drop_filter[l] = (char)ch; s_drop_filter[l + 1] = 0; s_drop_scroll = 0; s_drop_hover = -1; }
+            } else if (s_focus >= 0) {
                 const char one[2] = { (char)ch, 0 };
                 text_insert(one);
             } else {
@@ -2211,12 +2441,14 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20],
         s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal);
     {
-        char tr[5][256], bo[256];
-        for (int i = 0; i < 5; i++) psx_card_packs_format_trigger(trig_at(i), tr[i], sizeof tr[i]);
+        char tr[6][256], bo[256];
+        for (int i = 0; i < 6; i++) psx_card_packs_format_trigger(trig_at(i), tr[i], sizeof tr[i]);
         psx_card_packs_format_bonus(&s_edit, bo, sizeof bo);
-        if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "\"monster\":{\"battle\":\"%s\",\"on_summon\":\"%s\",\"on_flip\":\"%s\",\"on_death\":\"%s\",\"on_attack\":\"%s\",\"each_turn\":\"%s\",\"bonus\":\"%s\",\"immune\":\"%s\"},"
-                                             "\"drop\":%d,\"pick\":%d,\"trig_first\":%d,\"branches\":%d,\"bonus_first\":%d,\"caret\":%d,\"anchor\":%d",
-                                             t[F_BATTLE], tr[0], tr[1], tr[2], tr[3], tr[4], bo, t[F_IMMUNE], s_drop, s_pick, F_TRIG_FIRST, PSX_CARD_BRANCHES, F_BONUS_FLAT, s_car, s_anchor);
+        if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "\"monster\":{\"battle\":\"%s\",\"on_summon\":\"%s\",\"on_flip\":\"%s\",\"on_death\":\"%s\",\"on_attack\":\"%s\",\"each_turn\":\"%s\",\"opp_turn\":\"%s\",\"bonus\":\"%s\",\"immune\":\"%s\"},"
+                                             "\"drop\":%d,\"drop_cards\":%d,\"drop_n\":%d,\"drop_filter\":\"%s\",\"tab\":%d,\"rule_first\":%d,\"rule_parts\":%d,\"rules\":%d,\"caret\":%d,\"anchor\":%d",
+                                             s_edit.battle > 0 ? psx_card_packs_battle_name(s_edit.battle) : "none", tr[0], tr[1], tr[2], tr[3], tr[4], tr[5], bo, t[F_IMMUNE],
+                                             s_drop, s_drop_cards, s_drop >= 0 ? drop_items() : 0, s_drop_filter, s_tab, F_RULE_FIRST, RP_N, s_rule_n, s_car, s_anchor);
+        if (n < cap) n += (unsigned)snprintf(out + n, cap - n, ",\"tabs\":[[%d,%d],[%d,%d]]", s_L.tab[0].x + s_L.tab[0].w / 2, s_L.tab[0].y + s_L.tab[0].h / 2, s_L.tab[1].x + s_L.tab[1].w / 2, s_L.tab[1].y + s_L.tab[1].h / 2);
     }
     if (s_win && n < cap) {
         n += (unsigned)snprintf(out + n, cap - n, ",\"rows\":[%d,%d,%d,%d],\"row_h\":%d,\"visible\":%d,\"sb\":[%d,%d,%d,%d],\"value\":[",

@@ -318,9 +318,12 @@ static void bonus_tick(void)
         if (m && !(fl & 0x1000u)) {
             const PsxCardPack *c = &m->cfg;
             const int s = side_of_row(row);
-            if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_flat;
-            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_ally * count_matching(s, c->bonus_ally_filter, row);
-            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) want += c->bonus_enemy * count_matching(s ^ 1, c->bonus_enemy_filter, -1);
+            for (int i = 0; i < c->bonus_n; i++) {
+                const PsxCardBonus *b = &c->bonus[i];
+                if (b->filter < 0) want += b->amount;
+                else if (b->enemy) want += b->amount * count_matching(s ^ 1, b->filter, -1);
+                else want += b->amount * count_matching(s, b->filter, row);
+            }
         }
         if (want != b->applied) {
             const uint32_t at = ROWS + (uint32_t)row * ROW_STRIDE + 0x12;
@@ -345,6 +348,14 @@ static void turn_tick(void)
             if (!(fl & 0x8000u) || (fl & 0x1000u)) continue;     /* on the field and face-up */
             const Mfx *m = mfx(row_id(row));
             if (m && m->cfg.each_turn.n > 0) enqueue(s, row_id(row), &m->cfg.each_turn);
+        }
+        /* the other side's face-up monsters: "each of the opponent's turns" */
+        for (int r = 5; r <= 9; r++) {
+            const int row = 15 * (s ^ 1) + r;
+            const unsigned fl = row_flags(row);
+            if (!(fl & 0x8000u) || (fl & 0x1000u)) continue;
+            const Mfx *m = mfx(row_id(row));
+            if (m && m->cfg.opp_turn.n > 0) enqueue(s ^ 1, row_id(row), &m->cfg.opp_turn);
         }
     }
 }

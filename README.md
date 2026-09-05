@@ -226,8 +226,31 @@ the opponent's side, the guardian-star wheel, and the granularity of heal
 
 #### Monster effects
 
-Stock monsters do nothing but fight. An edited monster can carry, in the
-same `card.ini` (and the manager's right-hand column):
+Stock monsters do nothing but fight. The manager's **Effects** tab shows a
+monster's effects as a list of rules, one sentence each:
+
+```
+When [Summoned face-up]  [50%]        do [Destroy all monsters (Raigeki)]
+When [Summoned face-up]  [Otherwise]  do [Destroy your own, lose half their ATK]
+When [While face-up]                  do [Gain ATK/DEF] [500] per [each Lava Battleguard you control]
+```
+
+`+ Add effect` adds a line; the x at its end removes it. **When** is one of
+Summoned face-up, Flipped face-up, Destroyed, Attacks, Your turn starts,
+Opponent's turn starts, or While face-up. A triggered line rolls its odds
+(Always, 90% … 5%); a line set to **Otherwise** runs only when the line
+above it, on the same trigger, failed its roll, so chains like "50%: this,
+otherwise: that, 25% on top" are three lines. A While face-up line either
+gains ATK/DEF (an amount, once or per each monster you or the opponent
+control, each card in a hand, a monster type, or one specific card picked
+from the full card list) or sets how the monster fights (never destroyed
+in battle, destroys its foe, destroys itself and its foe). Every list opens
+on a click and filters as you type, so "lava" finds Lava Battleguard in the
+722-card list. `Immune to` sits under the list, and the card text the rules
+would put on the card is previewed beneath it; `Effect text → description`
+writes it onto the card.
+
+The same rules in `card.ini`:
 
 ```
 battle    = indestructible      never destroyed in battle (its owner still takes the damage)
@@ -237,27 +260,15 @@ on_summon = damage 1000         cast a magic effect when it lands face-up (set f
 on_flip   = raigeki             ... when it is turned face-up: attacked, flipped, revealed
 on_death  = raigeki             ... when it is destroyed (battle, trap or magic)
 on_attack = heal 500            ... when it declares an attack
-each_turn = damage 200          ... at the start of its owner's turn, while on the field
+each_turn = damage 200          ... at the start of its owner's turn, while face-up on the field
+opp_turn  = heal 300            ... at the start of the opponent's turn
 on_summon = 50%: raigeki; else: destroy_own_lp  branches: each rolls its own odds, "else"
 on_death  = 25%: heal 1000; 25%: damage 500     fires only when the branch before it did not
-bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while on the field (face-up)
+bonus     = 500, 200 per ally, 100 per enemy    ATK and DEF while face-up on the field
             500 per Lava Battleguard            ... per face-up copy of a card, or a type
-            300 per enemy Dragon                ("per <card or type>" counts your side)
+            300 per enemy Dragon, 300 per hand  ("per <card or type>" counts your side)
 immune    = traps, magic        traps never fire on it; destruction magic passes it by
 ```
-
-A trigger holds up to four branches separated by `;`. A branch is
-`NN%: <effect>` (plain `<effect>` is 100%), and `else: <effect>` runs when
-the branch just before it failed its roll, so Time Wizard is
-`on_summon = 50%: raigeki; else: destroy_own_lp`. In the manager each
-trigger shows one row per branch, chance list first, effect list second,
-and an empty row under the last one to add another.
-
-The `Bonus` rows in the manager are a flat number, then `Per ally` and
-`Per enemy`: an amount and a list of what to count (each monster on that
-side, each card in that hand, a monster type, or "a card from the list…",
-which takes the next card you click on the left). Swamp Battleguard is
-`Per ally 500` + `Lava Battleguard`.
 
 A face-down monster has no effect: its bonus and each-turn effect start
 when it is turned over.
@@ -266,15 +277,14 @@ The cast effects are the same list a Magic card can be given (`heal`,
 `damage`, `destroy_type Dragon`, `destroy_atk 1500`, `raigeki`, `dark_hole`,
 `dragon_jar`, `stop_defense`, `flip`, `weaken 500`, `swords`, `cursebreaker`,
 `harpie`, `field Yami`), plus `gamble`, Time Wizard's coin: heads destroys
-the opponent's monsters, tails destroys your own and their total ATK comes
-off half their ATK from your LP, and `destroy_own` / `destroy_own_lp`, which
+the opponent's monsters, tails destroys your own and half their total ATK
+comes off your LP, and `destroy_own` / `destroy_own_lp`, which
 destroy your own monsters (the second also costs half their total ATK in
 LP), so the real Time Wizard is `on_summon = 50%: raigeki; else:
 destroy_own_lp`. They run through the game's own effect engine, with
 the popup and sound the matching spell would show, the moment the duel is
 idle after the trigger. A monster with any of these draws with the orange
-effect-monster frame unless `color` says otherwise, and `Effect text →
-description` writes the wording onto the card.
+effect-monster frame unless `color` says otherwise.
 
 #### The Card Effects mod
 
@@ -293,12 +303,18 @@ that fit an attribute (`equips = Dark`), and a bonus per card in your hand
 
 #### One file to share
 
-`Export…` writes every edited card — `card.ini` and PNGs — plus your
+`Export Config` (top right of the manager, beside `Dev Card Effects`)
+writes every edited card — `card.ini` and PNGs — plus your
 `drop_table_edits.ini` to a single `.ygocards` file (a plain zip with a
-manifest, so it opens anywhere). `Import…` reads one, first showing how many
-cards it holds, which of **your** edited cards it would replace and whether
-it carries drop table edits, and only then replaces them. A file re-zipped
-by hand, stored or deflated, imports too.
+manifest, so it opens anywhere). `Import Config` reads one, first showing
+how many cards it holds, which of **your** edited cards it would replace and
+whether it carries drop table edits, and only then replaces them. A file
+re-zipped by hand, stored or deflated, imports too.
+
+The text boxes edit like any other: click to place the caret, drag or
+shift+arrows to select, double-click a word, Home/End, Ctrl+A/C/X/V with
+the system clipboard. Pasted line breaks become the card's `|` break in
+the description.
 
 ### 🛒 Card shop — `MODS → CARD SHOP`
 

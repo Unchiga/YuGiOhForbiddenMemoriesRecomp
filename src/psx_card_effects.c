@@ -770,9 +770,9 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
     }
     /* monster effects */
     {
-        static const char *const when[5] = { "When summoned face-up", "When flipped face-up", "When destroyed", "When it attacks", "Each turn" };
-        const PsxCardTrigger *trigs[5] = { &c->on_summon, &c->on_flip, &c->on_death, &c->on_attack, &c->each_turn };
-        for (int i = 0; i < 5; i++) {
+        static const char *const when[6] = { "When summoned face-up", "When flipped face-up", "When destroyed", "When it attacks", "Each of your turns", "Each of the opponent's turns" };
+        const PsxCardTrigger *trigs[6] = { &c->on_summon, &c->on_flip, &c->on_death, &c->on_attack, &c->each_turn, &c->opp_turn };
+        for (int i = 0; i < 6; i++) {
             if (trigs[i]->n <= 0) continue;
             char e[FXCAP * 2]; unsigned n = (unsigned)snprintf(e, sizeof e, "%s", when[i]);
             for (int k = 0; k < trigs[i]->n; k++) {
@@ -799,11 +799,13 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
         case PSX_CARD_BATTLE_SLAYER: wrap_append(out, cap, "Destroys any monster it battles."); break;
         default: break;
         }
-        if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) {
-            char e[200] = ""; unsigned n = 0;
-            if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "ATK and DEF %+d on the field", c->bonus_flat);
-            if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per %s", n ? ", " : "ATK and DEF ", c->bonus_ally, psx_card_packs_filter_name(c->bonus_ally_filter, 0));
-            if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per %s", n ? ", " : "ATK and DEF ", c->bonus_enemy, psx_card_packs_filter_name(c->bonus_enemy_filter, 1));
+        if (c->bonus_n > 0) {
+            char e[400] = ""; unsigned n = 0;
+            for (int i = 0; i < c->bonus_n && n < sizeof e; i++) {
+                const PsxCardBonus *b = &c->bonus[i];
+                if (b->filter < 0) n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d on the field", n ? ", " : "ATK and DEF ", b->amount);
+                else n += (unsigned)snprintf(e + n, sizeof e - n, "%s%+d per %s", n ? ", " : "ATK and DEF ", b->amount, psx_card_packs_filter_name(b->filter, b->enemy));
+            }
             snprintf(e + n, sizeof e - n, ".");
             wrap_append(out, cap, e);
         }

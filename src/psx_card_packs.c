@@ -418,8 +418,8 @@ int psx_card_packs_parse_bonus(const char *v, PsxCardPack *c, char *err, unsigne
 {
     static char tok[8][48];
     const int n = split_list(v, tok, 8);
-    int flat = PSX_CARD_PACK_BOOST_UNSET, ally = PSX_CARD_PACK_BOOST_UNSET, enemy = PSX_CARD_PACK_BOOST_UNSET, fa = 0, fe = 0;
-    for (int i = 0; i < n; i++) {
+    PsxCardBonus rules[PSX_CARD_BONUSES]; int rn = 0;
+    for (int i = 0; i < n && rn < PSX_CARD_BONUSES; i++) {
         char *t = tok[i];
         const int val = atoi(t);
         if (val < -9990 || val > 9990) { seterr(err, errcap, "a bonus is -9990 to 9990"); return 0; }
@@ -431,34 +431,34 @@ int psx_card_packs_parse_bonus(const char *v, PsxCardPack *c, char *err, unsigne
             else if (!strncmp(what, "ally", 4) || !strncmp(what, "friend", 6) || !strncmp(what, "own", 3)) { while (*what && *what != ' ') what++; while (*what == ' ') what++; }
             const int f = parse_filter(what);
             if (f < 0) { char m[96]; snprintf(m, sizeof m, "'%s' is not a card name, id or monster type", what); seterr(err, errcap, m); return 0; }
-            if (is_enemy) { enemy = val / 10 * 10; fe = f; } else { ally = val / 10 * 10; fa = f; }
+            rules[rn].amount = val / 10 * 10; rules[rn].enemy = is_enemy; rules[rn].filter = f; rn++;
         }
-        else if ((t[0] >= '0' && t[0] <= '9') || t[0] == '-' || t[0] == '+') flat = val / 10 * 10;
+        else if ((t[0] >= '0' && t[0] <= '9') || t[0] == '-' || t[0] == '+') { rules[rn].amount = val / 10 * 10; rules[rn].enemy = 0; rules[rn].filter = -1; rn++; }
         else { char m[96]; snprintf(m, sizeof m, "'%s': use a number, 'N per ally', 'N per enemy' or 'N per <card or type>'", t); seterr(err, errcap, m); return 0; }
     }
-    c->bonus_flat = flat; c->bonus_ally = ally; c->bonus_enemy = enemy;
-    c->bonus_ally_filter = fa; c->bonus_enemy_filter = fe;
+    c->bonus_n = rn;
+    memcpy(c->bonus, rules, sizeof rules);
     return 1;
+}
+static const char *filter_word(int filter)
+{
+    return filter == PSX_CARD_PACK_FILTER_HAND ? "hand" : filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(filter) : "?");
 }
 void psx_card_packs_format_bonus(const PsxCardPack *c, char *out, unsigned cap)
 {
     unsigned n = 0; out[0] = 0;
-    if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET) n += (unsigned)snprintf(out + n, cap - n, "%d", c->bonus_flat);
-    if (c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET && n < cap) {
-        if (c->bonus_ally_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per %s", n ? ", " : "", c->bonus_ally, c->bonus_ally_filter == PSX_CARD_PACK_FILTER_HAND ? "hand" : c->bonus_ally_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_ally_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_ally_filter) : "?"));
-        else n += (unsigned)snprintf(out + n, cap - n, "%s%d per ally", n ? ", " : "", c->bonus_ally);
-    }
-    if (c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET && n < cap) {
-        if (c->bonus_enemy_filter > 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy %s", n ? ", " : "", c->bonus_enemy, c->bonus_enemy_filter == PSX_CARD_PACK_FILTER_HAND ? "hand" : c->bonus_enemy_filter >= PSX_CARD_PACK_FILTER_TYPE ? TYPE_NAMES[(c->bonus_enemy_filter - PSX_CARD_PACK_FILTER_TYPE) % 20] : (psx_card_db_ready() ? psx_card_db_name(c->bonus_enemy_filter) : "?"));
-        else n += (unsigned)snprintf(out + n, cap - n, "%s%d per enemy", n ? ", " : "", c->bonus_enemy);
+    for (int i = 0; i < c->bonus_n && n < cap; i++) {
+        const PsxCardBonus *b = &c->bonus[i];
+        if (b->filter < 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d", n ? ", " : "", b->amount);
+        else if (b->filter == 0) n += (unsigned)snprintf(out + n, cap - n, "%s%d per %s", n ? ", " : "", b->amount, b->enemy ? "enemy" : "ally");
+        else n += (unsigned)snprintf(out + n, cap - n, "%s%d per %s%s", n ? ", " : "", b->amount, b->enemy ? "enemy " : "", filter_word(b->filter));
     }
     if (!n) snprintf(out, cap, "none");
 }
 int psx_card_packs_has_monster_effect(const PsxCardPack *c)
 {
     return c->battle > 0 || c->on_summon.n > 0 || c->on_death.n > 0 || c->on_attack.n > 0 || c->each_turn.n > 0 || c->on_flip.n > 0 ||
-           c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET ||
-           c->immune > 0;
+           c->opp_turn.n > 0 || c->bonus_n > 0 || c->immune > 0;
 }
 const char *psx_card_packs_color_name(int slot) { return (slot >= 0 && slot < PSX_CARD_COLOR_COUNT) ? COLOR_NAMES[slot] : "?"; }
 int psx_card_packs_parse_color(const char *v)
@@ -895,9 +895,8 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->battle = -1;
     memset(&c->on_summon, 0, sizeof c->on_summon); memset(&c->on_flip, 0, sizeof c->on_flip);
     memset(&c->on_death, 0, sizeof c->on_death);   memset(&c->on_attack, 0, sizeof c->on_attack);
-    memset(&c->each_turn, 0, sizeof c->each_turn);
-    c->bonus_flat = c->bonus_ally = c->bonus_enemy = PSX_CARD_PACK_BOOST_UNSET;
-    c->bonus_ally_filter = c->bonus_enemy_filter = 0;
+    memset(&c->each_turn, 0, sizeof c->each_turn); memset(&c->opp_turn, 0, sizeof c->opp_turn);
+    c->bonus_n = 0; memset(c->bonus, 0, sizeof c->bonus);
     c->immune = -1;
 }
 
@@ -1108,6 +1107,8 @@ static int read_ini(int id, PsxCardPack *c)
             (void)psx_card_packs_parse_trigger(val, &c->on_attack, NULL, 0);
         } else if (!strcmp(key, "each_turn") || !strcmp(key, "turn")) {
             (void)psx_card_packs_parse_trigger(val, &c->each_turn, NULL, 0);
+        } else if (!strcmp(key, "opp_turn") || !strcmp(key, "opponent_turn")) {
+            (void)psx_card_packs_parse_trigger(val, &c->opp_turn, NULL, 0);
         } else if (!strcmp(key, "on_flip") || !strcmp(key, "flip")) {
             (void)psx_card_packs_parse_trigger(val, &c->on_flip, NULL, 0);
         } else if (!strcmp(key, "bonus") || !strcmp(key, "field_bonus")) {
@@ -1492,7 +1493,8 @@ int psx_card_packs_save(const PsxCardPack *c)
       if (c->on_death.n)  { psx_card_packs_format_trigger(&c->on_death, b, sizeof b);  fprintf(f, "on_death = %s\n", b); }
       if (c->on_attack.n) { psx_card_packs_format_trigger(&c->on_attack, b, sizeof b); fprintf(f, "on_attack = %s\n", b); }
       if (c->each_turn.n) { psx_card_packs_format_trigger(&c->each_turn, b, sizeof b); fprintf(f, "each_turn = %s\n", b); }
-      if (c->bonus_flat != PSX_CARD_PACK_BOOST_UNSET || c->bonus_ally != PSX_CARD_PACK_BOOST_UNSET || c->bonus_enemy != PSX_CARD_PACK_BOOST_UNSET) { psx_card_packs_format_bonus(c, b, sizeof b); fprintf(f, "bonus = %s\n", b); }
+      if (c->opp_turn.n)  { psx_card_packs_format_trigger(&c->opp_turn, b, sizeof b);  fprintf(f, "opp_turn = %s\n", b); }
+      if (c->bonus_n > 0) { psx_card_packs_format_bonus(c, b, sizeof b); fprintf(f, "bonus = %s\n", b); }
     }
     if (c->immune >= 0)    fprintf(f, "immune = %s\n", psx_card_packs_immune_name(c->immune));
     fclose(f);

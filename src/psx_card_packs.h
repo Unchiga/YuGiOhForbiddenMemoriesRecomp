@@ -32,6 +32,13 @@ const char *psx_card_packs_filter_name(int filter, int enemy);
 /* One triggered effect: a magic effect class and its number. */
 typedef struct { int fx, amount, target, terrain; } PsxCardFxSpec;
 
+/* One ATK/DEF bonus rule: `amount`, once (filter -1) or per matching
+ * monster on the owner's (enemy 0) or the opponent's (enemy 1) side; the
+ * filter is 0 any monster, PSX_CARD_PACK_FILTER_HAND each card in that
+ * hand, PSX_CARD_PACK_FILTER_TYPE+t a type, or 1..722 a card. */
+#define PSX_CARD_BONUSES 6
+typedef struct { int amount, enemy, filter; } PsxCardBonus;
+
 /* A trigger holds up to four branches, tried in order: each rolls its own
  * chance (100 = always), and an "else" branch fires only when the branch
  * before it did not. "50%: raigeki; else: destroy_own" is Time Wizard. */
@@ -77,9 +84,9 @@ typedef struct {
 
     /* ---- monster effects (see psx_monster_effects.c) ---------------------- */
     int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
-    PsxCardTrigger on_summon, on_flip, on_death, on_attack, each_turn;  /* n = 0 = none */
-    int  bonus_flat, bonus_ally, bonus_enemy;   /* ATK/DEF while on the field; PSX_CARD_PACK_BOOST_UNSET */
-    int  bonus_ally_filter, bonus_enemy_filter; /* which monsters count: 0 any, 1..722 that card, PSX_CARD_PACK_FILTER_TYPE+t that type */
+    PsxCardTrigger on_summon, on_flip, on_death, on_attack, each_turn, opp_turn;  /* n = 0 = none */
+    int  bonus_n;                               /* ATK/DEF while face-up on the field: a sum of rules */
+    PsxCardBonus bonus[PSX_CARD_BONUSES];
     int  immune;                          /* -1 unset; bit 1 traps, bit 2 magic destruction */
 } PsxCardPack;
 
