@@ -57,6 +57,7 @@ its answers are the game's answers.
 | `OFF` | stock behaviour |
 | `NUMBERS` | pick order marked on the cards themselves |
 | `NUMBERS + INFO` | pick order plus the name of the card it produces |
+| `HINT ONLY` | just `FUSION AVAILABLE`: no cards marked, no card named |
 
 `VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
 
@@ -143,9 +144,10 @@ cannot balance is refused rather than fudged.
 
 **Nothing is written until `Save`**, which persists your table as
 `drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
-stock. `Load… → Export the current table` writes a file in `drop_tables/` to
-send to someone. With `DROP MISSING CARDS` on, the manager shows and edits the
-table you will actually roll against.
+stock. `Export…` writes your table to a file to send to someone and `Import…`
+loads one back (unsaved, like any other edit), the same pair the Card and
+Fusion managers have. With `DROP MISSING CARDS` on, the manager shows and
+edits the table you will actually roll against.
 
 Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like

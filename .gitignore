@@ -131,3 +131,9 @@ assets/duelist_icons/*.png
 
 # --- PSXRecomp setup-host (project studio) ---
 /analysis/
+
+# Local research material (texture packs, experiments); not for the repo.
+/research/
+
+# Local issue-audit notes and probes.
+/tools/issue_audit/
