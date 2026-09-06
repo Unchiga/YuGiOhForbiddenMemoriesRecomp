@@ -144,7 +144,7 @@ static int          s_changed;
 static int          s_focus = -1;
 static char         s_buf[FTEXT];
 static int          s_caret_on = 1;
-static char         s_msg[128];
+static char         s_msg[256];
 static unsigned     s_msg_until;
 static unsigned     s_seen_gen;
 static int          s_hover_btn = -1;
@@ -156,6 +156,8 @@ static unsigned s_art_gen;
 
 static char s_pick_path[1024];
 static int  s_pick_kind;              /* 1 art, 2 thumb, 3 title, 4 export target, 5 import source, 6 descriptions out, 7 descriptions in */
+static char s_pick_err[256];          /* why the last file dialog failed to open, until tick() has said so */
+static int  s_pick_err_kind;
 static unsigned s_present_count;
 
 /* the import preview (1) or the Card Effects activation question (2) */
@@ -418,7 +420,7 @@ static const char *enum_label(int f, int i)
         if (is_trig(f)) return r->kind == RK_TRIG ? (v < 0 ? "Choose an effect\xE2\x80\xA6" : psx_card_packs_effect_label(v)) : PFX_LABEL[v];
         if (is_param(f)) return param_kind(f) == 'f' ? psx_card_packs_terrain_name(v) : psx_card_packs_type_name(v);
         if (is_per(f)) {
-            if (s_drop == f && s_drop_cards) { snprintf(b, sizeof b, "%d  %s", v, psx_card_db_name(v)); return b; }
+            if (s_drop == f && s_drop_cards) { snprintf(b, sizeof b, "%d  %s", v, psx_card_packs_display_name(v)); return b; }
             if (i == PER_PICK_OWN) return "a card you control\xE2\x80\xA6";
             if (i == PER_PICK_ENEMY) return "a card the opponent controls\xE2\x80\xA6";
             int e, fl; per_decode(i, &e, &fl);
@@ -472,6 +474,7 @@ static int enum_current_index(int f)
     return 0;
 }
 static void say(const char *m);
+static void export_default_path(char *out, size_t cap);
 static void drop_open_cards(int f);
 /* a rule's "When" moves it between the triggers' lists and the face-up rules */
 static void rule_set_when(int f, int when)
@@ -858,7 +861,7 @@ static void rebuild_order(void)
         if (numeric) {
             char idbuf[8]; snprintf(idbuf, sizeof idbuf, "%d", id);
             if (strncmp(idbuf, s_search, strlen(s_search)) != 0) continue;
-        } else if (!ci_contains(psx_card_db_name(id), s_search)) {
+        } else if (!ci_contains(psx_card_packs_display_name(id), s_search)) {
             continue;
         }
         s_order[s_order_n++] = id;
@@ -1462,12 +1465,23 @@ static int install_pick(const char *src, int kind)
 }
 
 #if defined(PSX_SDL3)
+/* SDL may call this from another thread: the kind goes first and the path
+ * last, since tick() takes a non-empty path as the signal to read both. A
+ * dialog that failed to open (no portal, no zenity, a D-Bus error) used to
+ * vanish here without a word; now it lands in s_pick_err for tick() to report. */
 static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int filter)
 {
     (void)filter;
-    if (!filelist || !filelist[0]) return;
+    const int kind = (int)(intptr_t)userdata;
+    if (!filelist) {
+        const char *e = SDL_GetError();
+        s_pick_err_kind = kind;
+        snprintf(s_pick_err, sizeof s_pick_err, "%s", e && e[0] ? e : "the file dialog could not open");
+        return;
+    }
+    if (!filelist[0]) return;                       /* cancelled */
+    s_pick_kind = kind;
     snprintf(s_pick_path, sizeof s_pick_path, "%s", filelist[0]);
-    s_pick_kind = (int)(intptr_t)userdata;
 }
 #endif
 
@@ -1512,7 +1526,7 @@ static void do_export(void)
 #if defined(PSX_SDL3)
     static const SDL_DialogFileFilter filters[] = { { "Edited cards", PSX_CARD_SHARE_EXT } };
     static char def[1200];
-    snprintf(def, sizeof def, "%s/edited-cards.%s", psx_mod_player_data_dir(), PSX_CARD_SHARE_EXT);
+    export_default_path(def, sizeof def);
     SDL_ShowSaveFileDialog(pick_cb, (void *)(intptr_t)4, s_win, filters, 1, def);
 #else
     say("No file dialog in this build");
@@ -1553,14 +1567,36 @@ static void do_import(void)
 
 /* The chosen file, once the dialog answers: export writes it, import shows
  * the preview and waits for the player. */
+/* The default file name, beside the player's other files. */
+static void export_default_path(char *out, size_t cap)
+{
+    snprintf(out, cap, "%s/edited-cards.%s", psx_mod_player_data_dir(), PSX_CARD_SHARE_EXT);
+}
+
 static void begin_export(const char *path)
 {
     char p[1200]; snprintf(p, sizeof p, "%s", path);
+    {
+        /* The KDE portal dialog has been seen to come up with the name field
+         * holding only ".ygocards"; a bare extension or an empty name means
+         * the player never chose one, so the default name goes in its place. */
+        char *slash = strrchr(p, '/');
+        const char *base = slash ? slash + 1 : p;
+        char ext[32]; snprintf(ext, sizeof ext, ".%s", PSX_CARD_SHARE_EXT);
+        if (!base[0] || !strcmp(base, ext)) {
+            if (slash) { const size_t n = (size_t)(slash + 1 - p); snprintf(p + n, sizeof p - n, "edited-cards%s", ext); }
+            else export_default_path(p, sizeof p);
+        }
+    }
     const char *dot = strrchr(p, '.'), *slash = strrchr(p, '/');
     if (!dot || (slash && dot < slash)) { const size_t n = strlen(p); snprintf(p + n, sizeof p - n, ".%s", PSX_CARD_SHARE_EXT); }
     char msg[160];
-    psx_card_share_export(p, msg, sizeof msg);
-    say(msg);
+    const int ok = psx_card_share_export(p, msg, sizeof msg);
+    if (ok) {
+        const char *base = strrchr(p, '/'); base = base ? base + 1 : p;
+        char full[256]; snprintf(full, sizeof full, "%s, saved as %.48s", msg, base);
+        say(full);
+    } else say(msg);
 }
 
 static void begin_import(const char *path)
@@ -1659,7 +1695,7 @@ static void draw_list(void)
         const int base = psx_ui_baseline_in(y, L->row_h, fb);
         const int idw = psx_ui_font_text_w(fb, b);
         psx_ui_text(&s_cv, hdr.x + px(22.0f) - idw, base, b, COL_DIM, fb);
-        psx_ui_text_clip(&s_cv, hdr.x + px(30.0f), base, psx_card_db_name(id), id == s_sel ? COL_ACCENT : COL_TEXT, fb,
+        psx_ui_text_clip(&s_cv, hdr.x + px(30.0f), base, psx_card_packs_display_name(id), id == s_sel ? COL_ACCENT : COL_TEXT, fb,
                          L->list.w - px(30.0f) - px(54.0f));
         if (psx_card_packs_get(id, NULL)) {
             const int cx = L->list.x + L->list.w - px(30.0f);
@@ -1685,7 +1721,7 @@ static void draw_editor(void)
         char h[96]; snprintf(h, sizeof h, "%sCard %03d", psx_card_packs_is_dev() ? "[Card Effects] " : "", s_sel);
         int x = psx_ui_text(&s_cv, ex, L->ed.y + px(U_PAD) + psx_ui_font_ascent(ft), h, COL_ACCENT, ft);
         x += px(8.0f);
-        psx_ui_text_clip(&s_cv, x, L->ed.y + px(U_PAD) + psx_ui_font_ascent(ft), psx_card_db_name(s_sel), COL_TEXT, ft, right - x - px(60.0f));
+        psx_ui_text_clip(&s_cv, x, L->ed.y + px(U_PAD) + psx_ui_font_ascent(ft), psx_card_packs_display_name(s_sel), COL_TEXT, ft, right - x - px(60.0f));
         if (s_has_pack) {
             const int cw = psx_ui_font_text_w(fs, "edited") + px(12.0f), ch = px(13.0f);
             Rect chip = { right - cw, L->ed.y + px(U_PAD) + px(2.0f), cw, ch };
@@ -1959,7 +1995,7 @@ static void draw_modal(void)
         unsigned n = (unsigned)snprintf(line, sizeof line, "%d replace%s a card you already edited: ", s_share.replace_n, s_share.replace_n == 1 ? "s" : "");
         for (int i = 0; i < s_share.replace_n && n + 48 < sizeof line; i++) {
             if (i == 12) { n += (unsigned)snprintf(line + n, sizeof line - n, " and %d more", s_share.replace_n - i); break; }
-            n += (unsigned)snprintf(line + n, sizeof line - n, "%s%d %s", i ? ", " : "", s_share.replace_ids[i], psx_card_db_name(s_share.replace_ids[i]));
+            n += (unsigned)snprintf(line + n, sizeof line - n, "%s%d %s", i ? ", " : "", s_share.replace_ids[i], psx_card_packs_display_name(s_share.replace_ids[i]));
         }
         y = draw_wrapped(ex, y, w, line, COL_WARN, fb, 4);
     } else {
@@ -2396,6 +2432,19 @@ static void tick(void)
         const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; s_dirty = 1; }
     }
+    if (s_pick_err[0]) {
+        char why[256]; snprintf(why, sizeof why, "%s", s_pick_err);
+        const int kind = s_pick_err_kind;
+        s_pick_err[0] = 0;
+        if (kind == 4) {
+            /* no dialog to ask with: the export still happens, at the default name */
+            char def[1200]; export_default_path(def, sizeof def);
+            begin_export(def);
+        } else {
+            char m[320]; snprintf(m, sizeof m, "The file dialog could not open: %.200s", why);
+            say(m);
+        }
+    }
     if (s_pick_path[0]) {
         const int kind = s_pick_kind;
         char src[1024]; snprintf(src, sizeof src, "%s", s_pick_path);
@@ -2424,6 +2473,7 @@ static void tick(void)
     if (gen != s_seen_gen) {
         s_seen_gen = gen;
         if (!s_changed && s_focus < 0) load_editor();
+        rebuild_order();                 /* the list prints and searches the edited names */
         s_dirty = 1;
     }
     refresh_preview();

@@ -56,7 +56,6 @@
 #include "psx_game_hooks.h"
 #include "psx_textfile.h"
 #include "psx_tool_window.h"
-#include "psx_video_menu.h"
 
 #define NCARDS      PSX_FUSION_TABLE_CARDS
 #define TBL_BYTES   PSX_FUSION_TABLE_BYTES
@@ -109,7 +108,6 @@ static int             s_equip_n, s_equip_cap, s_equip_groups;
 static int      s_wipe;
 
 static int      s_applied;
-static int      s_menu_row = -1;
 static unsigned s_gen = 1;
 
 /* --- little helpers ------------------------------------------------------ */
@@ -570,8 +568,6 @@ void psx_fusion_table_reset(void)
 
 /* --- installing ----------------------------------------------------------- */
 
-static void menu_sync(int on);
-
 int psx_fusion_table_apply(char *err, unsigned cap)
 {
     if (!psx_fusion_table_ready()) { if (err) snprintf(err, cap, "The disc's fusion table has not been read"); return 0; }
@@ -579,7 +575,6 @@ int psx_fusion_table_apply(char *err, unsigned cap)
     install_sectors();
     poke_ram();
     s_applied = 1;
-    menu_sync(1);
     psx_tool_log("Fusion table: %d edits installed, %d bytes of %d", s_edit_n, s_packed_bytes, CAP_BYTES);
     if (err) snprintf(err, cap, "Fusion edits are on: %d change%s, %d bytes of %d used",
                       s_edit_n, s_edit_n == 1 ? "" : "s", s_packed_bytes, CAP_BYTES);
@@ -592,7 +587,6 @@ void psx_fusion_table_revert(void)
         for (int s = 0; s < FUSION_SECTORS; s++)
             psx_mod_cd_override_clear(FUSION_LBA(k) + (uint32_t)s);
     s_applied = 0;
-    menu_sync(0);
     /* a duel in progress keeps the edited copy until it reloads; put the stock
      * bytes back so "off" means off right now as well as next duel */
     if (psx_fusion_db_ready() && s_have_stock) {
@@ -606,35 +600,18 @@ void psx_fusion_table_revert(void)
 
 int psx_fusion_table_applied(void) { return s_applied; }
 
-/* The MODS row is where the choice PERSISTS, so an apply that came from
- * anywhere else (the debug server, a script) has to move the row too or it
- * would be forgotten at the next launch. Setting a row fires its on_change,
- * hence the guard. */
-static int s_menu_sync;
-
-static void menu_changed(int value)
-{
-    char msg[256];
-    if (s_menu_sync) return;
-    if (value) (void)psx_fusion_table_apply(msg, sizeof msg);
-    else       psx_fusion_table_revert();
-}
-
-static void menu_sync(int on)
-{
-    if (s_menu_row < 0 || psx_video_menu_get_row(s_menu_row) == on) return;
-    s_menu_sync = 1;
-    psx_video_menu_set_row(s_menu_row, on);
-    s_menu_sync = 0;
-}
-
-void psx_fusion_table_register_menu(void)
-{
-    static const char *const CHOICES[2] = { "OFF", "ON" };
-    s_menu_row = psx_video_menu_add_option(PSX_VM_MENU_MODS, "Fusion edits",
-        "Play with the fusion recipes edited in the Fusion Manager. Off puts the game's own table back",
-        CHOICES, 2, "fusion_edits", 0, menu_changed);
-}
+/* The row is the PLAYER'S preference and nothing else writes it. Installing
+ * and removing the override used to move it in sympathy, which was wrong the
+ * moment edits started applying on their own: taking the override out because
+ * the last edit was deleted, or because Restore stock ran, would flip the row
+ * to OFF and quietly block the NEXT edit from applying. Mechanism does not get
+ * to edit the preference that drives it. */
+/* NO MENU ROW. Editing a recipe IS the request to use it -- a switch in a
+ * different menu that has to be found and thrown before your own change does
+ * anything is indistinguishable, from the player's side, from the feature
+ * being broken, and that is how two people read it. Restore stock and Delete
+ * all live in the Fusion Manager, beside the editing, and are the way back. */
+void psx_fusion_table_register_menu(void) { }
 
 /* --- the file ------------------------------------------------------------- */
 
@@ -703,15 +680,28 @@ int psx_fusion_table_export(const char *path, int edits_only, char *err, unsigne
 static void tick(void)
 {
     static int done;
-    if (done) return;
-    if (!psx_mod_game_started()) return;
-    if (!psx_fusion_table_refresh()) return;      /* no disc yet: try again */
-    done = 1;
     char msg[256];
-    if (psx_fusion_table_load(msg, sizeof msg) && s_edit_n)
-        psx_tool_log("Fusion table: %s", msg);
-    if (s_menu_row >= 0 && psx_video_menu_get_row(s_menu_row) == 1)
-        (void)psx_fusion_table_apply(msg, sizeof msg);
+    if (!done) {
+        if (!psx_mod_game_started()) return;
+        if (!psx_fusion_table_refresh()) return;      /* no disc yet: try again */
+        done = 1;
+        if (psx_fusion_table_load(msg, sizeof msg) && s_edit_n)
+            psx_tool_log("Fusion table: %s", msg);
+    }
+
+    /* RECONCILE every frame: the override is installed exactly when there is
+     * something to install. Keeping "are there edits" and "are the sectors
+     * in" as two pieces of state that someone remembers to move together is
+     * what produced a table that needed toggling off and on to take. */
+    if (s_have_stock) {
+        /* Having edits is what puts them in the game -- nobody should have to
+         * find a switch in another menu to make their own change take effect,
+         * which is the one failure mode that looks exactly like the feature
+         * being broken. The row only ever takes them back OUT. */
+        const int want = s_edit_n > 0 || s_wipe;
+        if (want && !s_applied)      (void)psx_fusion_table_apply(msg, sizeof msg);
+        else if (!want && s_applied) psx_fusion_table_revert();
+    }
 }
 
 PSX_MOD_CONSTRUCTOR(psx_fusion_table_install)

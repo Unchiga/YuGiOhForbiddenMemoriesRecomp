@@ -53,6 +53,8 @@
  * attic/, and its PNG quantiser and title renderer live on here. */
 
 #include "psx_card_packs.h"
+#include "psx_card_effects_set.h"
+#include "psx_textfile.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1416,6 +1418,13 @@ int psx_card_packs_get(int id, PsxCardPack *out)
     return 1;
 }
 
+const char *psx_card_packs_display_name(int id)
+{
+    if (id >= 1 && id <= CARD_COUNT && s_packs[id] && s_packs[id]->present && s_packs[id]->cfg.name[0])
+        return s_packs[id]->cfg.name;
+    return psx_card_db_name(id);
+}
+
 int psx_card_packs_stock(int id, PsxCardStock *out)
 {
     if (id < 1 || id > CARD_COUNT || !out || !psx_card_db_ready()) return 0;
@@ -1571,6 +1580,40 @@ int psx_card_packs_state_json(char *out, unsigned cap)
 }
 
 /* ---- card sets --------------------------------------------------------------- */
+/* Write the shipped Card Effects set into the player's folder, once.
+ *
+ * The switch used to point at a directory nothing ever filled, so turning it
+ * on showed every card stock -- the feature looking broken when it was merely
+ * empty. The set lands here the first time it is asked for, and the marker
+ * means it lands exactly once: after that these are the player's files, and a
+ * card they delete stays deleted. */
+static void seed_card_effects(const char *cards_dir)
+{
+    char marker[1200];
+    snprintf(marker, sizeof marker, "%s/.seeded", cards_dir);
+    FILE *m = psx_fopen_utf8(marker, "rb");
+    if (m) { fclose(m); return; }
+
+    int written = 0;
+    for (int i = 0; i < PSX_CARD_EFFECTS_SET_N; i++) {
+        const PsxCardEffectsSeed *c = &PSX_CARD_EFFECTS_SET[i];
+        char d[1200], f[1300];
+        snprintf(d, sizeof d, "%s/%d", cards_dir, c->id);
+        MKDIR(d);
+        snprintf(f, sizeof f, "%s/card.ini", d);
+        FILE *e = psx_fopen_utf8(f, "rb");
+        if (e) { fclose(e); continue; }          /* never overwrite */
+        FILE *o = psx_fopen_utf8(f, "wb");
+        if (!o) continue;
+        fprintf(o, "; card %d -- the shipped Card Effects set; yours to change\n%s", c->id, c->ini);
+        fclose(o);
+        written++;
+    }
+    m = psx_fopen_utf8(marker, "wb");
+    if (m) { fprintf(m, "the shipped set was written here once; delete this to get it back\n"); fclose(m); }
+    if (written) fprintf(stderr, "card effects: seeded %d card%s\n", written, written == 1 ? "" : "s");
+}
+
 static void set_dir_for(int dev)
 {
     const char *dir = psx_mod_player_data_dir();
@@ -1578,7 +1621,11 @@ static void set_dir_for(int dev)
         char mods[1200]; snprintf(mods, sizeof mods, "%s/mods", dir); MKDIR(mods);
         snprintf(mods, sizeof mods, "%s/mods/card_effects", dir); MKDIR(mods);
         snprintf(s_dir, sizeof s_dir, "%s/mods/card_effects/cards", dir);
-    } else snprintf(s_dir, sizeof s_dir, "%s/cards", dir);
+        MKDIR(s_dir);
+        seed_card_effects(s_dir);
+        return;
+    }
+    snprintf(s_dir, sizeof s_dir, "%s/cards", dir);
     MKDIR(s_dir);
 }
 
@@ -1628,14 +1675,12 @@ static void menu_changed(int value)
     host_osd_push(value ? "Card effects: on (the mod's card set)" : "Card effects: off (your own cards)", 1200);
 }
 
-void psx_card_packs_register_menu(void)
-{
-    static const char *const ONOFF[2] = { "OFF", "ON" };
-    if (s_menu_row >= 0) return;
-    s_menu_row = psx_video_menu_add_option(PSX_VM_MENU_MODS, "Card effects",
-        "The Card Effects set: original cards with their real effects, edited in the Card Manager as Dev Card Effects",
-        ONOFF, 2, "card_effects", 0, menu_changed);
-}
+/* NO MENU ROW. Which card set is live is a Card Manager question -- the
+ * manager's own "Dev Card Effects" button says which one you are looking at
+ * and switches it, so a second control for the same thing in another menu
+ * was only ever a way to flip the set without the window that shows you what
+ * flipped. Your own cards/ edits apply on their own, with nothing to enable. */
+void psx_card_packs_register_menu(void) { }
 
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)

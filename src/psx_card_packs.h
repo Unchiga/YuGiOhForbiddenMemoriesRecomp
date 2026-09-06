@@ -211,6 +211,10 @@ void psx_card_packs_register_menu(void);
 
 /* Pack for a card, or 0 when none is loaded. */
 int  psx_card_packs_get(int id, PsxCardPack *out);
+/* The name every window should print for a card: the pack's when one renames
+ * it, else the game's own. psx_card_db_name() stays the stock name, which is
+ * what "back to stock" and the stock snapshots need. */
+const char *psx_card_packs_display_name(int id);
 /* Stock values (the game's own tables and the disc). */
 int  psx_card_packs_stock(int id, PsxCardStock *out);
 /* Write card.ini for a pack (creating the folder) and apply it. Fields at

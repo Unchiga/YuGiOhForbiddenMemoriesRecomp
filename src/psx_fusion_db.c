@@ -118,6 +118,9 @@
  * with fusion records; these only exist so a garbage table cannot spin. */
 #define PSX_FUSION_MAX_EQUIP_GROUPS 256
 #define PSX_FUSION_MAX_PAIRS        1024
+/* the live part of the equip chunk: stage 2 copies 0x2800 bytes but the fusion
+ * chunk starts 0x2100 later in RAM, so the tail of it is dead */
+#define PSX_FUSION_EQUIP_BYTES      0x2100u
 
 /* Cached verdict, plus the cheap sentinel it is valid for. Both tables are
  * DUEL data loaded from disc, not part of the EXE image: outside a duel every
@@ -195,11 +198,33 @@ static int validate(void)
      * assistant the tables were missing rather than empty -- the one wrong
      * answer this module exists to avoid. */
 
-    const uint16_t key = psx_mod_read_half(PSX_FUSION_EQUIP_BASE);
-    const uint16_t cnt = psx_mod_read_half(PSX_FUSION_EQUIP_BASE + 2u);
-    if (key < 1 || key > PSX_FUSION_CARD_ID_MAX) return 0;
-    if (cnt < 1 || cnt > PSX_FUSION_CARD_ID_MAX) return 0;
-    return 1;
+    /* The EQUIP table takes over the job the population test used to do, and
+     * is walked end to end rather than sniffed at: a chain of length-prefixed
+     * groups that terminates on a zero key inside its 0x2100 bytes, with every
+     * key and count a plausible card id, is a shape random memory does not
+     * hold. Uninitialised RAM reads as a zero first key, which is no groups,
+     * which fails here.
+     *
+     * This is a garbage filter and nothing more. It is NOT what keeps the
+     * duel assistant off the other screens -- psx_fusion_overlay.c does that
+     * itself, refusing to compose unless the mode byte at 0x8009B26C reads
+     * 0xC3 (066f2b5, "Fusion overlay: only compose inside an actual duel").
+     * Do not talk yourself into thinking readiness is load-bearing for that;
+     * it is not, and the overlay's own gate is the thing to check. */
+    uint32_t p = PSX_FUSION_EQUIP_BASE;
+    const uint32_t end = PSX_FUSION_EQUIP_BASE + PSX_FUSION_EQUIP_BYTES;
+    int groups = 0;
+    for (;;) {
+        if (p + 4u > end) return 0;              /* ran off without a terminator */
+        const uint16_t key = psx_mod_read_half(p);
+        if (key == 0) break;
+        if (key > PSX_FUSION_CARD_ID_MAX) return 0;
+        const uint16_t cnt = psx_mod_read_half(p + 2u);
+        if (cnt < 1 || cnt > PSX_FUSION_CARD_ID_MAX) return 0;
+        p += 4u + (uint32_t)cnt * 2u;
+        if (++groups > PSX_FUSION_MAX_EQUIP_GROUPS) return 0;
+    }
+    return groups > 0;
 }
 
 /* Is the duel data plausibly resident? Three reads, no walk. */
