@@ -1,8 +1,8 @@
-# Yu-Gi-Oh! Forbidden Memories — Recompiled
+# Yu-Gi-Oh! Forbidden Memories Recompiled
 
 A static recompilation of **Yu-Gi-Oh! Forbidden Memories** (USA, SLUS-01411).
 The game's MIPS code is translated to C ahead of time and compiled into a native
-executable — it is not interpreted by an emulator.
+executable, not interpreted by an emulator.
 
 ![A duel in progress, with the overlay menu bar across the top of the window and the duel-rank meter reading S 99 beside the FIELD box.](media/duel.png)
 
@@ -11,12 +11,12 @@ box are this project's, drawn in the game's own art.*
 
 On top sits a set of quality-of-life features: a live duel-rank meter, a fusion
 assistant, a card-drop multiplier, managers for the drop tables, the cards and
-every fusion in the game, and a cheat menu — all toggleable at runtime.
+every fusion in the game, and a cheat menu. All toggleable at runtime.
 
 Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
 > **You bring your own disc.** Nothing in this repository, and nothing in the
-> download, contains any of the game's code or data — the screenshot above is
+> download, contains any of the game's code or data. The screenshot above is
 > just that, a screenshot. The C is generated on your machine, from your copy,
 > the first time you run it.
 
@@ -25,16 +25,16 @@ Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 | Serial | SLUS-01411 (USA / NTSC-U) |
 | Players | 2 |
 | Publisher | Konami, 1999 |
-| BIOS | OpenBIOS, bundled — nothing to supply |
+| BIOS | OpenBIOS, bundled. Nothing to supply |
 
 ---
 
 ## What this adds
 
 Everything below lives in the overlay menu on **`F10`**, and every setting takes
-effect immediately — no restart, no patched save.
+effect immediately. No restart, no patched save.
 
-### ⚔️ Duel rank meter — `VIEW → DUEL RANK`
+### ⚔️ Duel rank meter (`VIEW → DUEL RANK`)
 
 The game grades every duel you win but only tells you afterwards. This puts the
 grade on screen **while you play**, in the game's own HUD sprites.
@@ -43,10 +43,10 @@ grade on screen **while you play**, in the game's own HUD sprites.
 |---|---|
 | `OFF` | stock behaviour |
 | `IN GAME` | the game's POW/TEC badge and rank letter, beside the FIELD box |
-| `IN GAME + SCORE` | the same, plus the raw 0–99 score |
-| `OVERLAY TEXT` | plain text in the corner — never covered by a card view |
+| `IN GAME + SCORE` | the same, plus the raw 0-99 score |
+| `OVERLAY TEXT` | plain text in the corner, never covered by a card view |
 
-### 🧩 Fusion assistant — `VIEW → FUSION HINT`
+### 🧩 Fusion assistant (`VIEW → FUSION HINT`)
 
 Forbidden Memories has thousands of fusions and teaches you none of them. This
 reads your hand against the game's real tables in memory, not a copied list, so
@@ -60,14 +60,14 @@ its answers are the game's answers.
 
 `VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
 
-### 🔮 Fusion Manager — `VIEW → FUSION MANAGER`
+### 🔮 Fusion Manager (`VIEW → FUSION MANAGER`)
 
-> ⚠️ **Experimental — expect bugs.** Much newer than the rest of this list. It
+> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: every change is a file beside your saves, and `Restore
 > stock` undoes the lot.
 
 The assistant above answers "what can this hand make?" mid-duel. This answers
-the other question — **every fusion in the game, both ways round** — and lets
+the other question, **every fusion in the game, both ways round**, and lets
 you change any of them.
 
 ![The Fusion Manager: the card list on the left, FUSES WITH and MADE FROM beside it](docs/screenshots/fusion-manager.png)
@@ -78,7 +78,7 @@ makes it. Click a name to follow it, `Backspace` to go back. `Recipes` is all
 25 146 as one sortable list.
 
 **Right-click a row** to change, delete or add a fusion, picking the card off a
-searchable list — type `dragon`, take *Blue-eyes Ultimate Dragon*, never having
+searchable list: type `dragon`, take *Blue-eyes Ultimate Dragon*, never having
 to know it is card 380. `Delete all…` empties the table for designing a set from
 scratch; `Restore stock…` (or `Ctrl+Z`) puts the game's own back, keeping a copy
 in `fusion_edits_backup.txt`. `Export…` / `Import…` move a recipe list as plain
@@ -88,22 +88,22 @@ as you make them.
 **MODS → FUSION EDITS** replaces the fusion table's **disc sectors**, so the
 game's own loader brings your table in and everything reads it, the AI planners
 included; a duel already running is patched in memory too. The table is read off
-the disc rather than duel RAM, so the window works from boot with no duel — and
-it shows the fifteen *glitch fusions* the packed format produces by accident and
-the game really performs. The format holds 65 535 bytes and stock uses 65 002,
+the disc rather than duel RAM, so the window works from boot with no duel. It
+also shows the fifteen *glitch fusions* the packed format produces by accident
+and the game really performs. The format holds 65 535 bytes and stock uses 65 002,
 so there is room for about a hundred new recipes; an edit that would not fit is
 refused.
 
-### 🎴 Card drops — `MODS → CARD DROPS`
+### 🎴 Card drops (`MODS → CARD DROPS`)
 
-Stock, a won duel awards exactly one card. This makes it **1–99**. It comes with
+Stock, a won duel awards exactly one card. This makes it **1-99**. It comes with
 a results screen stock never had: the cards you won across three pages you flip
 with **D-pad Left/Right**, with the game's own yellow **New!** tag on anything
 you didn't already own.
 
-### 🃏 Drop missing cards — `MODS → DROP MISSING CARDS`
+### 🃏 Drop missing cards (`MODS → DROP MISSING CARDS`)
 
-**82 of the game's 722 cards are dropped by nobody** — both of Exodia's legs
+**82 of the game's 722 cards are dropped by nobody**, both of Exodia's legs
 among them, which is why the set cannot be completed in the stock game. This
 gives every one a source by rewriting the weights the duel loads into memory;
 your disc is untouched. Placement is yours, in **`drop_missing_cards.ini`**:
@@ -114,21 +114,21 @@ your disc is untouched. Placement is yours, in **`drop_missing_cards.ini`**:
 278 =  30,  20,   0   ; Petit Moth
 ```
 
-The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048 — 20 is
+The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048. 20 is
 about 1%. Each band totals 2048, so what you add comes off that duelist's normal
 drops in proportion. Delete the file for the defaults back.
 
-### 🗂️ Drop Table Manager — `VIEW → DROP TABLE MANAGER`
+### 🗂️ Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
 ![The Drop Table Manager](docs/screenshots/drop-table-manager.png)
 
 A **separate window** you can leave open on another monitor while you play. It
-knows every card and every duelist's drop table — and **you can rewrite any
+knows every card and every duelist's drop table, and **you can rewrite any
 duelist's drops and the game rolls what you wrote.**
 
 | View | What you get |
 |---|---|
-| `By card` | all 722 cards — id, name, type, ATK, DEF, how many tables drop it — sortable on any column, with every duelist that drops the selected one, the rank band needed, and the chance |
+| `By card` | all 722 cards (id, name, type, ATK, DEF, how many tables drop it), sortable on any column, with every duelist that drops the selected one, the rank band needed, and the chance |
 | `By duelist` | all 39 duelists, with everything they drop, the band, and the weight both raw and as a percentage |
 
 Type to search, click a heading to sort, click a row on the right to cross into
@@ -149,11 +149,11 @@ table you will actually roll against.
 
 Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
-everything here, **never shipped** — the manager reads them off your own disc.
+everything here, **never shipped**. The manager reads them off your own disc.
 
-### 🎨 Card Manager — `VIEW → CARD MANAGER`
+### 🎨 Card Manager (`VIEW → CARD MANAGER`)
 
-> ⚠️ **Experimental — expect bugs.** Much newer than the rest of this list. It
+> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: edits live in `cards/`, and `Restore stock` puts a card
 > back.
 
@@ -177,14 +177,14 @@ cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
                         price = 999999       password = 12345678
-cards/<id>/art.png      any size — becomes the 102x96 / 256-colour card face
+cards/<id>/art.png      any size, becomes the 102x96 / 256-colour card face
 cards/<id>/thumb.png    optional; the 40x32 / 64-colour duel card, made from art.png when absent
 cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
 ```
 
 Every key is optional and a missing one keeps the stock value. **Folders are
 watched**: edit a file or drop a new folder in and the game picks it up within
-seconds. Nothing on your disc or in your save is touched — the mod serves
+seconds. Nothing on your disc or in your save is touched. The mod serves
 replacement disc sectors and table entries to the running game, and removing the
 folder restores stock. Titles are rasterised in the game's own style when a
 `timesbd.ttf` sits in `cards/`.
@@ -211,16 +211,16 @@ trap_atk_max = 3000        a trap (House of Adhesive Tape..Widespread Ruin):
 Effects a Magic card can take: `none`, `heal`, `damage`, `destroy_type`,
 `destroy_atk`, `raigeki`, `dark_hole`, `dragon_jar`, `stop_defense`, `flip`,
 `weaken` (a negative amount strengthens), `swords`, `cursebreaker`, `harpie`,
-`field`, `ritual` — any Magic or Ritual card can take any of them, and the
+`field`, `ritual`. Any Magic or Ritual card can take any of them, and the
 game's own handler runs with your number. Equip compatibility, ritual recipes,
 field boosts and trap ceilings are the game's own tables, served edited. What
 stays fixed is what is code rather than data: which cards count as traps (only
-681–686), the four scripted traps, and the granularity of heal and damage.
+681-686), the four scripted traps, and the granularity of heal and damage.
 
 #### Monster effects
 
 Stock monsters do nothing but fight. The **Effects** tab shows a monster's rules
-as sentences — here is Time Wizard with the one it has in every other game:
+as sentences. Here is Time Wizard with the one it has in every other game:
 
 ![The Card Manager's Effects tab on Time Wizard: two When/odds/do rules making up its coin flip](docs/screenshots/card-effects-time-wizard.png)
 
@@ -253,9 +253,9 @@ default.
 
 #### Sharing and bulk edits
 
-`Export Config` writes every edited card — `card.ini` and PNGs — plus your
-`drop_table_edits.ini` to a single `.ygocards` file (a plain zip); `Import
-Config` shows what it holds and what it would replace before replacing it.
+`Export Config` writes every edited card (`card.ini` and PNGs) plus your
+`drop_table_edits.ini` to a single `.ygocards` file, a plain zip. `Import
+Config` shows what it holds and what it would replace, first.
 
 `Export Descriptions` writes all 722 names and descriptions to one text file,
 one block per card:
@@ -273,9 +273,9 @@ Edit it in any editor (a card shows six lines of twenty characters) and `Import
 Descriptions` reads it back: only the cards that differ are written. It shows
 live.
 
-### 💬 Dialogue Manager — `VIEW → DIALOGUE MANAGER`
+### 💬 Dialogue Manager (`VIEW → DIALOGUE MANAGER`)
 
-> ⚠️ **Experimental — expect bugs.** Much newer than the rest of this list. It
+> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: translations live in `dialogue/`, and `Back to
 > original` removes them.
 
@@ -300,19 +300,19 @@ long lines are wrapped and long pages split. The game's own codes show as `{1}`,
 player's name. An imported file lives on as `dialogue/dialogue.txt`, and one
 that fails to parse changes nothing.
 
-### 🛒 Card shop — `MODS → CARD SHOP`
+### 🛒 Card shop (`MODS → CARD SHOP`)
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
 
 The card shop has never sold a card. This makes it one: the shopkeeper's menu
 grows a fifth row that **buys card packs** with your starchips.
 
-Four pack types — monster, magic, equip, trap — across four rarities, priced
+Four pack types (monster, magic, equip, trap) across four rarities, priced
 20 / 80 / 200 / 800, with **all 722 cards in the pool**. A pack deals its cards
 one at a time: **X** turns over the next slot, **TRIANGLE** opens the game's own
 card viewer. Bought cards land in your trunk marked **New!**, like a duel drop.
 
-Prices, bands and where individual cards sit are yours — the shop writes
+Prices, bands and where individual cards sit are yours. The shop writes
 **`card_shop.ini`** next to your saves and re-reads it each time you leave the
 shop and come back:
 
@@ -330,21 +330,21 @@ legendary_atk = 2500   ; a monster lands in the highest band its ATK reaches
 Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 ```
 
-### 🖥️ Widescreen — `VIEW → WIDESCREEN` *(experimental)*
+### 🖥️ Widescreen (`VIEW → WIDESCREEN`, experimental)
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).
 The duel field renders genuinely wider; flat 2D screens stay 4:3 and are
 pillarboxed rather than stretched. Experimental: culling pop-in at the wide
 edges has not been fully checked for this title.
 
-### 💰 Cheats — `CHEATS`
+### 💰 Cheats (`CHEATS`)
 
 | Row | Range | Notes |
 |---|---|---|
-| `LIFE POINTS` | 1–9999 | 8000 is stock. Applies to both duellists |
+| `LIFE POINTS` | 1-9999 | 8000 is stock. Applies to both duellists |
 | `SHOW OPPONENT HAND` | on / off | their hand is drawn face-up, like yours |
-| `FORCE FACE UP` | on / off | their set cards play face-up — and stay face-up |
-| `STARCHIPS` | 0–999999 | written straight to your save |
+| `FORCE FACE UP` | on / off | their set cards play face-up, and stay face-up |
+| `STARCHIPS` | 0-999999 | written straight to your save |
 | `FREE SPENDING` | on / off | purchases succeed, the deduction is undone |
 | `ALL CARDS` | 1, 2 or 3 of each | fills the trunk. Apply with the chest closed |
 
@@ -365,7 +365,7 @@ to near-instant. That one ships **off**.
 
 ### Controller
 
-**Xbox controllers work out of the box** — plug one in, no setup. So do PS4 and
+**Xbox controllers work out of the box**, no setup. So do PS4 and
 PS5 pads (rumble on DualSense) and Steam Input. The game is a PS1 title, so it
 starts in **digital** pad mode and the sticks map to the d-pad.
 
@@ -390,7 +390,7 @@ Mostly you need **arrows** to move, **`X`** to confirm, **`S`** to cancel.
 
 | Key | Does |
 |---|---|
-| `F10` | Open the overlay menu — every feature on this page lives there |
+| `F10` | Open the overlay menu, where every feature on this page lives |
 | `F7` | Save / load state |
 | `F8` | Rewind |
 | `Tab` | Turbo (hold) |
@@ -405,7 +405,7 @@ the top. Each input takes a second binding after a comma: `cross = X, Mouse1`.
 
 ## First run
 
-The download is a **setup host** — a small executable plus the recompiler and
+The download is a **setup host**: a small executable plus the recompiler and
 the framework source. It has no game code in it until you supply a disc.
 
 1. Run `Yu_Gi_Oh_Forbidden_Memories_Recompiled.exe`.
@@ -415,10 +415,10 @@ the framework source. It has no game code in it until you supply a disc.
    copy, and compiles it.
 4. It builds into `build-release/` and starts the game.
 
-Nothing needs installing first — the setup brings its own compiler and Python,
+Nothing needs installing first. The setup brings its own compiler and Python,
 and uses yours if you already have them.
 
-> ### ⏳ The first run takes a few minutes — let it finish
+> ### ⏳ The first run takes a few minutes, let it finish
 >
 > A compiler download, a whole game translated to C and a real compile happen
 > before you see anything; the console working away is not hanging. **Every run
@@ -429,7 +429,7 @@ and uses yours if you already have them.
 `.cue` is preferred, with its `.bin` beside it; `.bin`, `.img`, `.iso` and
 `.car` also work.
 
-This build is compiled from the USA release, serial **SLUS-01411** — a PAL,
+This build is compiled from the USA release, serial **SLUS-01411**. A PAL,
 Japanese or Greatest Hits disc is a different program and cannot run here. The
 expected data-track CRC32 is recorded in `game.toml` as `disc_crc`. To repoint
 it, use `FILE → CHANGE GAME DISC`.
@@ -454,7 +454,7 @@ The framework is a submodule at `psxrecomp/`, so clone recursively:
 git clone --recurse-submodules https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp.git
 ```
 
-`generate` produces **both** the recompiled BIOS and the game's C — a fresh
+`generate` produces **both** the recompiled BIOS and the game's C. A fresh
 clone has no BIOS backend until this runs:
 
 ```bash
@@ -464,10 +464,10 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target psx-runtime
 ```
 
-(The setup host does exactly this for you — see [First run](#first-run).)
+(The setup host does exactly this for you, see [First run](#first-run).)
 
 `generated/` and the baked sprite and font sources come from **your** disc; they
-are gitignored and must not be published — see [NOTICE](NOTICE). CMake must know
+are gitignored and must not be published, see [NOTICE](NOTICE). CMake must know
 where your disc is: running `generate` first is enough, failing that
 `-DYGOFM_DISC=<path>`.
 
@@ -475,7 +475,7 @@ where your disc is: running `generate` first is enough, failing that
 
 Builds and runs natively on Apple Silicon with the commands above. Needs the
 Xcode Command Line Tools plus `brew install cmake ninja pkg-config sdl3`. Use
-`-j4` on an 8 GB machine — the generated C includes shards of 400k+ lines.
+`-j4` on an 8 GB machine, as the generated C includes shards of 400k+ lines.
 
 Add `-DPSX_DEBUG_TOOLS=ON` for a debug build with the TCP inspection server on
 `127.0.0.1:4370`.
@@ -511,13 +511,13 @@ Symbols: `symbols.toml` → `python3 tools/sync_symbols.py` → `psx_symbols.h`
 
 ## Licence and legal
 
-PolyForm Noncommercial License 1.0.0 — see [LICENSE](LICENSE). Noncommercial use
+PolyForm Noncommercial License 1.0.0, see [LICENSE](LICENSE). Noncommercial use
 only, and it cannot be sublicensed or swapped for a permissive one, because the
 framework it builds on is offered on the same terms (Copyright © 2026 Matthew
-Stan). It grants nothing in respect of the game, which is Konami's — use only a
+Stan). It grants nothing in respect of the game, which is Konami's. Use only a
 disc image you obtained legally.
 
-Read [NOTICE](NOTICE) before redistributing anything — particularly before
+Read [NOTICE](NOTICE) before redistributing anything, particularly before
 sharing a *compiled build*, which is not the same as sharing this repository.
 
 ## How to Help
