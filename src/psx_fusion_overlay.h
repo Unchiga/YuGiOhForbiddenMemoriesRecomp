@@ -21,10 +21,16 @@
 extern "C" {
 #endif
 
-/* VIEW > FUSION HINT. Off, the pick-order numbers on their own, or those plus
- * the card the line would make. */
+/* VIEW > FUSION HINT. Off, the pick-order numbers on their own, those plus the
+ * card the line would make, or HINT ONLY: one line saying a fusion is there,
+ * with neither the cards to pick nor what they make.
+ *
+ * HINT ONLY is last rather than second because the value is what
+ * menu_settings.ini stores, and renumbering the three that shipped would
+ * quietly move every existing player's setting. */
 enum { PSX_FUSION_HINT_OFF = 0, PSX_FUSION_HINT_NUMBERS = 1,
-       PSX_FUSION_HINT_FULL = 2 };
+       PSX_FUSION_HINT_FULL = 2, PSX_FUSION_HINT_ONLY = 3 };
+#define PSX_FUSION_HINT_MAX PSX_FUSION_HINT_ONLY
 
 /* Once a frame: re-reads the duel through psx_fusion_assist and re-rasterises
  * only when the line actually changes. Cheap to call always. */
@@ -56,7 +62,7 @@ void psx_fusion_overlay_tune_cards_get(int *card_x, int *card_dx, int *badge_dy,
 /* Fusion-assistant display modes. Owned here for the same reason as the rank
  * modes: they describe this game's duel, not the framework's menu. */
 enum { PSX_VM_FUSION_HINT_OFF = 0, PSX_VM_FUSION_HINT_NUMBERS = 1,
-       PSX_VM_FUSION_HINT_FULL = 2 };
+       PSX_VM_FUSION_HINT_FULL = 2, PSX_VM_FUSION_HINT_ONLY = 3 };
 
 void psx_fusion_overlay_set_mode(int mode);
 

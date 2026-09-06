@@ -379,6 +379,16 @@ static void compose(char *out, int cap, uint8_t *badges)
     uint16_t best = 0;
     const int nbest = psx_fusion_assist_best(&best, NULL, NULL, NULL, pick,
                                              PSX_FUSION_HAND_MAX);
+    /* HINT ONLY: that a fusion is there, and nothing else. No badges, no name,
+     * no stats, and no tracking colour while picking -- green for "still on
+     * the best line" would be the answer given away one pick at a time. The
+     * empty hand still says so, for the same reason the full line does. */
+    if (s_mode == PSX_FUSION_HINT_ONLY) {
+        s_track = FO_TRACK_NEUTRAL;
+        snprintf(out, (size_t)cap, "%s",
+                 best ? "Fusion available" : "No fusions in hand");
+        return;
+    }
     uint16_t show = 0;
     if (picked >= 2) {
         show = chain;                       /* the player's own running answer */
@@ -455,7 +465,7 @@ void psx_fusion_overlay_tune(int x, int y, int text_x, int mode)
     if (y      != PSX_FUSION_OVERLAY_KEEP) s_y      = y;
     if (text_x != PSX_FUSION_OVERLAY_KEEP) s_text_x = text_x;
     if (mode   != PSX_FUSION_OVERLAY_KEEP &&
-        mode >= PSX_FUSION_HINT_OFF && mode <= PSX_FUSION_HINT_FULL)
+        mode >= PSX_FUSION_HINT_OFF && mode <= PSX_FUSION_HINT_MAX)
         s_mode = mode;
     s_drawn[0] = 0;
     memset(s_badges_drawn, 0xFF, sizeof s_badges_drawn);
@@ -510,12 +520,13 @@ int psx_fusion_overlay_badges(uint8_t *out, int cap)
  * the row above -- on its own "SUGGEST BY" gives no clue which feature it
  * belongs to. */
 static const char *const FUSION_HINT_LABELS[] = {
-    "Off", "Numbers", "Numbers + info"
+    "Off", "Numbers", "Numbers + info", "Hint only"
 };
 static const char *const FUSION_HINT_HINTS[] = {
     "Show what your hand can fuse into",
     "Pick order on the cards only",
-    "Pick order plus the card it makes"
+    "Pick order plus the card it makes",
+    "Only that a fusion is there; work it out yourself"
 };
 static const char *const FUSION_BY_LABELS[] = { "Attack", "Defense" };
 static const char *const FUSION_BY_HINTS[]  = {
@@ -539,7 +550,7 @@ PSX_MOD_CONSTRUCTOR(psx_fusion_overlay_install) {
 void psx_fusion_overlay_register_menu(void) {
     int h = psx_video_menu_add_option(
         PSX_VM_MENU_VIEW, "Fusion hint", FUSION_HINT_HINTS[0],
-        FUSION_HINT_LABELS, 3, "fusion_hint",
+        FUSION_HINT_LABELS, 4, "fusion_hint",
         PSX_VM_FUSION_HINT_OFF, fusion_hint_changed);
     psx_video_menu_set_row_hints(h, FUSION_HINT_HINTS);
 
@@ -551,7 +562,7 @@ void psx_fusion_overlay_register_menu(void) {
 
 void psx_fusion_overlay_set_mode(int mode)
 {
-    if (mode < PSX_FUSION_HINT_OFF || mode > PSX_FUSION_HINT_FULL) return;
+    if (mode < PSX_FUSION_HINT_OFF || mode > PSX_FUSION_HINT_MAX) return;
     if (s_mode == mode) return;
     s_mode = mode;
     s_drawn[0] = 0;
