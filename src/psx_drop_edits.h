@@ -61,17 +61,19 @@ int psx_drop_edits_clear(int duelist);
 /* Write the ini. Returns 1 on success. */
 int psx_drop_edits_save(void);
 
-/* Sharing. Shared configurations live in <player-data>/drop_tables (created
- * on demand): export writes the current edit layer there as a timestamped
- * .ini and returns its bare name; list enumerates the .ini files there
- * (sorted, bare names); load_file REPLACES the whole edit layer with a
- * file's contents — a bare name resolves against drop_tables, a path is
- * used as given. Loading marks the layer dirty; nothing touches the live
- * drop_table_edits.ini until the player saves. load_file returns the entry
- * count, or -1 when the file cannot be read. */
-int psx_drop_edits_export(char *out_name, unsigned cap);
-int psx_drop_edits_list_shared(char names[][64], int max);
-int psx_drop_edits_load_file(const char *name_or_path);
+/* Sharing, the same shape as the Card and Fusion managers': the player picks
+ * a file. Export writes the current edit layer to path (a missing .ini is
+ * added); import REPLACES the whole layer with that file's contents. Both
+ * fill msg with the line the window shows. Importing marks the layer dirty;
+ * nothing touches the live drop_table_edits.ini until the player saves.
+ *
+ * share_dir is where the dialogs start: <player-data>/drop_tables, created
+ * on demand. load_file is the raw import a bare name resolves against that
+ * folder; it returns the entry count, or -1 when the file cannot be read. */
+int  psx_drop_edits_export_file(const char *path, char *msg, unsigned cap);
+int  psx_drop_edits_import_file(const char *path, char *msg, unsigned cap);
+void psx_drop_edits_share_dir(char *out, unsigned cap);
+int  psx_drop_edits_load_file(const char *name_or_path);
 
 /* Apply this duelist's edits to one tier, in place, over a plain 722-entry
  * weight array — the same contract as psx_drop_missing_transform: 1 means w

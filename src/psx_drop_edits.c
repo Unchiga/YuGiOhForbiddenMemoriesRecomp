@@ -20,11 +20,8 @@
 
 #include "psx_drop_edits.h"
 
-#include <dirent.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #ifdef _WIN32
 #include <direct.h>
 #else
@@ -251,54 +248,66 @@ static void share_dir(char *out, size_t cap)
 #endif
 }
 
-int psx_drop_edits_export(char *out_name, unsigned cap)
+void psx_drop_edits_share_dir(char *out, unsigned cap)
+{
+    if (out && cap) share_dir(out, cap);
+}
+
+/* The last path component, whichever slash the platform wrote. */
+static const char *base_name(const char *path)
+{
+    const char *b = path;
+    for (const char *q = path; *q; q++)
+        if (*q == '/' || *q == '\\') b = q + 1;
+    return b;
+}
+
+static int entry_total(void)
+{
+    int n = 0;
+    for (int d = 0; d < NDUEL; d++) n += g_n[d];
+    return n;
+}
+
+int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
 {
     psx_drop_edits_ensure_loaded();
-    char dir[1024], name[64], path[1200];
-    share_dir(dir, sizeof dir);
-    const time_t t = time(NULL);
-    const struct tm *tm = localtime(&t);
-    snprintf(name, sizeof name, "drops-%04d%02d%02d-%02d%02d%02d.ini",
-             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, tm->tm_sec);
-    snprintf(path, sizeof path, "%s/%s", dir, name);
-    if (!write_to(path)) {
-        snprintf(g_status, sizeof(g_status), "export FAILED");
+    if (!path || !path[0]) {
+        if (msg && cap) snprintf(msg, cap, "No file to export to");
         return 0;
     }
+    /* A dialog that came back without an extension still means an ini. */
+    char p[1200];
+    snprintf(p, sizeof p, "%s", path);
+    if (!strchr(base_name(p), '.')) {
+        const size_t n = strlen(p);
+        snprintf(p + n, sizeof p - n, ".ini");
+    }
+    if (!write_to(p)) {
+        snprintf(g_status, sizeof(g_status), "export FAILED");
+        if (msg && cap) snprintf(msg, cap, "Could not write that file");
+        return 0;
+    }
+    const char *base = base_name(p);
+    const int n = entry_total();
     /* Exporting is a copy for someone else; it neither saves the live ini
      * nor clears the unsaved-changes marker. */
-    snprintf(g_status, sizeof(g_status), "exported %s", name);
-    if (out_name && cap) snprintf(out_name, cap, "%s", name);
+    snprintf(g_status, sizeof(g_status), "exported %.60s", base);
+    if (msg && cap)
+        snprintf(msg, cap, "Exported %d entr%s as %.48s", n, n == 1 ? "y" : "ies", base);
     return 1;
 }
 
-static int name_cmp(const void *a, const void *b)
+int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
 {
-    return strcmp((const char *)a, (const char *)b);
-}
-
-int psx_drop_edits_list_shared(char names[][64], int max)
-{
-    char dir[1024];
-    share_dir(dir, sizeof dir);
-    DIR *d = opendir(dir);
-    if (!d) return 0;
-    int n = 0;
-    const struct dirent *e;
-    while (n < max && (e = readdir(d)) != NULL) {
-        const size_t l = strlen(e->d_name);
-        if (l < 5 || l >= 64) continue;
-        const char *ext = e->d_name + l - 4;
-        if ((ext[0] != '.')
-            || (ext[1] != 'i' && ext[1] != 'I')
-            || (ext[2] != 'n' && ext[2] != 'N')
-            || (ext[3] != 'i' && ext[3] != 'I')) continue;
-        snprintf(names[n++], 64, "%s", e->d_name);
+    const int n = psx_drop_edits_load_file(path);
+    if (n < 0) {
+        if (msg && cap) snprintf(msg, cap, "Could not read that file");
+        return 0;
     }
-    closedir(d);
-    qsort(names, (size_t)n, 64, name_cmp);
-    return n;
+    if (msg && cap)
+        snprintf(msg, cap, "Imported %d entr%s. Save to keep them.", n, n == 1 ? "y" : "ies");
+    return 1;
 }
 
 int psx_drop_edits_load_file(const char *name_or_path)

@@ -54,6 +54,13 @@ int  psx_drop_viewer_set(int view, int sort, int desc, int card, int duelist,
  * thread — the debug server cannot create SDL windows itself. */
 void psx_drop_viewer_request_open(int open);
 
+/* Import / Export without the file dialog, for the debug server: export
+ * writes the edit layer to path, import replaces it with that file's
+ * contents (unsaved, like any other edit). msg gets the line the window
+ * shows. Both work with the window closed. */
+int  psx_drop_viewer_export(const char *path, char *msg, unsigned cap);
+int  psx_drop_viewer_import(const char *path, char *msg, unsigned cap);
+
 /* Deliver mouse motion, clicks, a key press, or typed text — as real SDL
  * events carrying this window's id, so the debug server exercises the exact
  * event path a physical mouse and keyboard do. button: SDL numbering (1

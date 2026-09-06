@@ -283,17 +283,14 @@ static int  s_edit_len;
 static char     s_msg[80];
 static uint32_t s_msg_until;
 
-/* Right-click context menu (also the LOAD button's file list): a handful of
- * actions on whatever was under the pointer. One level, no submenus — band
- * choices are spelled out as items. */
-enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE,
-       CM_LOAD_FILE, CM_EXPORT };
+/* Right-click context menu: a handful of actions on whatever was under the
+ * pointer. One level, no submenus — band choices are spelled out as items. */
+enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE };
 #define CMENU_MAX 12
 static struct {
     char label[64];
     int  action;
     int  a, b, c;                  /* action args: duelist/card/band or row */
-    char s[64];                    /* CM_LOAD_FILE: the file's bare name    */
 } s_cmenu[CMENU_MAX];
 static int s_cmenu_n;              /* 0 = closed */
 static int s_cmenu_x, s_cmenu_y;
@@ -367,7 +364,7 @@ static int order_cmp(const void *pa, const void *pb)
     if (s_sort == SORT_ID) {
         r = ia - ib;
     } else if (s_sort == SORT_NAME) {
-        r = strcmp(psx_card_db_name(ia), psx_card_db_name(ib));
+        r = strcmp(psx_card_packs_display_name(ia), psx_card_packs_display_name(ib));
     } else if (s_sort == SORT_TYPE) {
         r = strcmp(type_of(ia), type_of(ib));
     } else if (s_sort == SORT_DROPS) {
@@ -431,7 +428,7 @@ static void rebuild_order(void)
     for (int id = 1; id <= NCARDS; id++) {
         char idbuf[8];
         snprintf(idbuf, sizeof idbuf, "%d", id);
-        if (s_search[0] && !ci_contains(psx_card_db_name(id), s_search)
+        if (s_search[0] && !ci_contains(psx_card_packs_display_name(id), s_search)
             && !ci_contains(idbuf, s_search))
             continue;
         s_order[s_order_n++] = id;
@@ -528,7 +525,7 @@ static void invalidate(void)
  */
 
 typedef struct {
-    Rect bar, tab_cards, tab_duel, search, btn_save, btn_load, btn_third;
+    Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export, btn_third;
     int  mod_x;                     /* left edge of the mod indicator        */
     Rect pane[2];                   /* the two panels                        */
     Rect title[2];                  /* what is listed, per panel             */
@@ -556,7 +553,7 @@ static void layout_compute(void)
     const int gap = px(U_GAP), pad = px(U_PAD), cg = px(12.0f);
 
     /* Top bar: title, the two view tabs, the search box; from the right the
-     * mod indicator, then the view-dependent button, Load and Save. */
+     * mod indicator, then the view-dependent button, Export, Import and Save. */
     L->bar = (Rect){ 0, 0, s_w, px(U_BAR_H) };
     const int bh = px(U_BTN_H), by = (L->bar.h - bh) / 2;
     int x = px(8.0f) + tw(ft, "Drop Table Manager") + px(14.0f);
@@ -569,8 +566,10 @@ static void layout_compute(void)
     rx = L->mod_x - px(14.0f);
     int w = tw(fb, s_view == VIEW_DUELISTS ? "Defaults" : "All CPU") + px(18.0f);
     L->btn_third = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
-    w = tw(fb, "Load" S_ELLIP) + px(18.0f);
-    L->btn_load = (Rect){ rx - w, by, w, bh };   rx -= w + px(4.0f);
+    w = tw(fb, "Export" S_ELLIP) + px(18.0f);
+    L->btn_export = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
+    w = tw(fb, "Import" S_ELLIP) + px(18.0f);
+    L->btn_import = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Save") + px(18.0f);
     L->btn_save = (Rect){ rx - w, by, w, bh };   rx -= w + px(10.0f);
     w = rx - x;
@@ -820,15 +819,7 @@ static void cmenu_add(const char *label, int action, int a, int b, int c)
     s_cmenu[s_cmenu_n].a = a;
     s_cmenu[s_cmenu_n].b = b;
     s_cmenu[s_cmenu_n].c = c;
-    s_cmenu[s_cmenu_n].s[0] = '\0';
     s_cmenu_n++;
-}
-
-static void cmenu_add_s(const char *label, int action, const char *s)
-{
-    if (s_cmenu_n >= CMENU_MAX) return;
-    cmenu_add(label, action, 0, 0, 0);
-    snprintf(s_cmenu[s_cmenu_n - 1].s, sizeof(s_cmenu[0].s), "%s", s);
 }
 
 static int cmenu_row_h(void) { return s_L.row_h + px(2.0f); }
@@ -861,61 +852,14 @@ static void cmenu_run(int i)
     if (i < 0 || i >= s_cmenu_n) return;
     const int action = s_cmenu[i].action;
     const int a = s_cmenu[i].a, b = s_cmenu[i].b, c = s_cmenu[i].c;
-    char sarg[64];
-    snprintf(sarg, sizeof sarg, "%s", s_cmenu[i].s);
     cmenu_close();
     switch (action) {
     case CM_ADD:         (void)add_card(a, b, c); break;
     case CM_EDIT_WEIGHT: edit_begin(a); break;
     case CM_MOVE_BAND:   move_row_band(a, b); break;
     case CM_REMOVE:      remove_row_band(a); break;
-    case CM_LOAD_FILE: {
-        const int n = psx_drop_edits_load_file(sarg);
-        if (n >= 0) {
-            invalidate();
-            char m[80];
-            snprintf(m, sizeof m, "Loaded %d entr%s. Save to keep them.", n, n == 1 ? "y" : "ies");
-            say(m);
-        } else {
-            say("Load failed");
-        }
-        break;
-    }
-    case CM_EXPORT: {
-        char name[64];
-        if (psx_drop_edits_export(name, sizeof name)) {
-            char m[80];
-            snprintf(m, sizeof m, "Exported %.40s", name);
-            say(m);
-        } else {
-            say("Export failed");
-        }
-        break;
-    }
     default: break;
     }
-}
-
-/* The LOAD button's menu: export the current table for sharing, or load a
- * shared one from <player-data>/drop_tables. */
-static void open_load_menu(int x, int y)
-{
-    char names[CMENU_MAX][64];
-    const int n = psx_drop_edits_list_shared(names, CMENU_MAX - 1);
-    edit_end();
-    s_cmenu_x = x;
-    s_cmenu_y = y;
-    s_cmenu_n = 0;
-    s_cmenu_hover = -1;
-    cmenu_add("Export the current table to drop_tables", CM_EXPORT, 0, 0, 0);
-    for (int i = 0; i < n; i++) {
-        char label[64];
-        snprintf(label, sizeof label, "Load %.56s", names[i]);
-        cmenu_add_s(label, CM_LOAD_FILE, names[i]);
-    }
-    if (!n)
-        cmenu_add("No .ini files in drop_tables yet", CM_NONE, 0, 0, 0);
-    s_dirty = 1;
 }
 
 /* --- scrollbars -----------------------------------------------------------
@@ -1044,14 +988,16 @@ static void draw_bar(void)
         psx_ui_fill(&s_cv, cx, L->search.y + px(3.0f), imax(1, px(1.2f)), L->search.h - px(6.0f), COL_ACCENT);
     }
 
-    /* Save is lit while there are unsaved edits; Load opens the drop_tables
-     * share menu. The last slot is view-dependent: Defaults scopes to the
-     * BY DUELIST selection, All CPU pads the BY CARD droppers list out to
-     * the whole roster for drag-and-drop. */
+    /* Save is lit while there are unsaved edits; Import and Export are the
+     * Card and Fusion managers' pair of file dialogs. The last slot is
+     * view-dependent: Defaults scopes to the BY DUELIST selection, All CPU
+     * pads the BY CARD droppers list out to the whole roster for
+     * drag-and-drop. */
     draw_button(&L->btn_save, "Save", psx_drop_edits_dirty(), s_hover_btn == 2);
-    draw_button(&L->btn_load, "Load" S_ELLIP, 0, s_hover_btn == 3);
-    if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 4);
-    else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 4);
+    draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
+    draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
+    if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 5);
+    else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 5);
 
     const int on = psx_drop_missing_enabled();
     Rect m = { L->mod_x, 0, s_w - px(8.0f) - L->mod_x, L->bar.h };
@@ -1137,7 +1083,7 @@ static void draw_drop_rows(int name_of_card)
             char idb[8];
             snprintf(idb, sizeof idb, "%d", d->card);
             text_right(L->r_id_r, base, idb, COL_DIM, fr);
-            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_db_name(d->card), COL_TEXT, fr, L->r_name_r - L->r_name_x);
+            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_packs_display_name(d->card), COL_TEXT, fr, L->r_name_r - L->r_name_x);
         } else {
             draw_icon(L->r_icon_x, y + (L->row_h - icon) / 2, icon, d->duelist, bg);
             psx_ui_text_clip(&s_cv, L->r_name_x, base, PSX_DROP_DB[d->duelist].name,
@@ -1211,7 +1157,7 @@ static void draw_cards_view(void)
     char title[80], sel[96], ls[32], rs[32];
     if (s_search[0]) snprintf(title, sizeof title, "%d of %d cards", s_order_n, NCARDS);
     else             snprintf(title, sizeof title, "%d cards", NCARDS);
-    snprintf(sel, sizeof sel, "Card %03d " S_DASH " %s", s_sel_card, psx_card_db_name(s_sel_card));
+    snprintf(sel, sizeof sel, "Card %03d " S_DASH " %s", s_sel_card, psx_card_packs_display_name(s_sel_card));
     uint32_t rcol = COL_DIM;
     const char *rside = right_side(rs, sizeof rs, &rcol);
     draw_panel(0, title, COL_TEXT, left_side(ls, sizeof ls), COL_DIM);
@@ -1238,7 +1184,7 @@ static void draw_cards_view(void)
         char buf[16];
         snprintf(buf, sizeof buf, "%d", id);
         text_right(L->c_id_r, base, buf, COL_DIM, fr);
-        psx_ui_text_clip(&s_cv, L->c_name_x, base, psx_card_db_name(id), selected ? COL_ACCENT : COL_TEXT, fr, L->c_name_r - L->c_name_x);
+        psx_ui_text_clip(&s_cv, L->c_name_x, base, psx_card_packs_display_name(id), selected ? COL_ACCENT : COL_TEXT, fr, L->c_name_r - L->c_name_x);
         int atk = 0, def = 0, ty = 0;
         if (psx_card_db_stats(id, &atk, &def, &ty)) {
             psx_ui_text_clip(&s_cv, L->c_type_x, base, psx_card_db_type_name(ty), COL_DIM, fr, L->c_type_r - L->c_type_x);
@@ -1317,10 +1263,10 @@ static void draw_ghost(void)
     char buf[80];
     if (!s_drag_live) return;
     if (s_drag_kind == DRAG_CARD) {
-        snprintf(buf, sizeof buf, "%d  %.32s", s_drag_card, psx_card_db_name(s_drag_card));
+        snprintf(buf, sizeof buf, "%d  %.32s", s_drag_card, psx_card_packs_display_name(s_drag_card));
     } else if (s_drag_row >= 0 && s_drag_row < s_rows_n) {
         snprintf(buf, sizeof buf, "%.28s " S_DASH " drop outside the table to remove",
-                 psx_card_db_name(s_rows[s_drag_row].card));
+                 psx_card_packs_display_name(s_rows[s_drag_row].card));
     } else {
         return;
     }
@@ -1369,6 +1315,83 @@ static void draw(void)
     draw_ghost();
 }
 
+/* --- import / export ------------------------------------------------------
+ *
+ * The same pair the Card and Fusion managers have: the player picks a file
+ * with the OS dialog, and the answer comes back on whatever thread SDL feels
+ * like, so it is parked here and read on the emulation thread in tick().
+ * Save still writes drop_table_edits.ini; these two are the copies that
+ * travel. An import is unsaved like any other edit until Save.
+ */
+static char s_pick_path[1200];
+static int  s_pick_kind;            /* 1 export, 2 import */
+static char s_pick_err[200];        /* why the dialog would not open */
+static int  s_pick_err_kind;
+
+/* Where the dialogs start, and the name an export defaults to: the
+ * drop_tables folder beside the player's saves, created on demand. */
+static void export_default_path(char *out, unsigned cap)
+{
+    char dir[1024];
+    psx_drop_edits_share_dir(dir, sizeof dir);
+    snprintf(out, cap, "%s/drop-table.ini", dir);
+}
+
+#if defined(PSX_SDL3)
+/* A dialog that cannot open (no portal, no zenity) used to vanish without a
+ * word; the reason lands here for tick() to report or fall back on. */
+static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int filter)
+{
+    (void)filter;
+    const int kind = (int)(intptr_t)userdata;
+    if (!filelist) {
+        const char *e = SDL_GetError();
+        s_pick_err_kind = kind;
+        snprintf(s_pick_err, sizeof s_pick_err, "%s", e && e[0] ? e : "the file dialog could not open");
+        return;
+    }
+    if (!filelist[0]) return;                       /* cancelled */
+    s_pick_kind = kind;
+    snprintf(s_pick_path, sizeof s_pick_path, "%s", filelist[0]);
+}
+#endif
+
+static void do_export(void)
+{
+#if defined(PSX_SDL3)
+    static const SDL_DialogFileFilter filters[] = { { "Drop tables", "ini" } };
+    static char def[1200];
+    export_default_path(def, sizeof def);
+    SDL_ShowSaveFileDialog(pick_cb, (void *)(intptr_t)1, s_win, filters, 1, def);
+#else
+    say("No file dialog in this build: use the debug command drop_viewer_set with export:<path>");
+#endif
+}
+
+static void do_import(void)
+{
+#if defined(PSX_SDL3)
+    static const SDL_DialogFileFilter filters[] = { { "Drop tables", "ini" } };
+    static char dir[1024];
+    psx_drop_edits_share_dir(dir, sizeof dir);
+    SDL_ShowOpenFileDialog(pick_cb, (void *)(intptr_t)2, s_win, filters, 1, dir, false);
+#else
+    say("No file dialog in this build: use the debug command drop_viewer_set with import:<path>");
+#endif
+}
+
+/* The chosen file, once the dialog answers. */
+static void finish_pick(int kind, const char *path)
+{
+    char msg[160];
+    if (kind == 1) {
+        (void)psx_drop_edits_export_file(path, msg, sizeof msg);
+    } else {
+        if (psx_drop_edits_import_file(path, msg, sizeof msg)) invalidate();
+    }
+    say(msg);
+}
+
 /* --- input --------------------------------------------------------------- */
 
 static void set_sort(int col)
@@ -1409,16 +1432,17 @@ static void set_view(int view)
     s_dirty = 1;
 }
 
-/* Which top-bar button the point is on: 0/1 the tabs, 2 Save, 3 Load, 4 the
- * view-dependent slot; -1 none. */
+/* Which top-bar button the point is on: 0/1 the tabs, 2 Save, 3 Import,
+ * 4 Export, 5 the view-dependent slot; -1 none. */
 static int button_at(int x, int y)
 {
     const Layout *L = &s_L;
-    if (in_rect(&L->tab_cards, x, y)) return 0;
-    if (in_rect(&L->tab_duel, x, y))  return 1;
-    if (in_rect(&L->btn_save, x, y))  return 2;
-    if (in_rect(&L->btn_load, x, y))  return 3;
-    if (in_rect(&L->btn_third, x, y)) return 4;
+    if (in_rect(&L->tab_cards, x, y))  return 0;
+    if (in_rect(&L->tab_duel, x, y))   return 1;
+    if (in_rect(&L->btn_save, x, y))   return 2;
+    if (in_rect(&L->btn_import, x, y)) return 3;
+    if (in_rect(&L->btn_export, x, y)) return 4;
+    if (in_rect(&L->btn_third, x, y))  return 5;
     return -1;
 }
 
@@ -1436,8 +1460,9 @@ static void click(int x, int y)
         case 0: set_view(VIEW_CARDS); break;
         case 1: set_view(VIEW_DUELISTS); break;
         case 2: say(psx_drop_edits_save() ? "Saved" : "Save failed"); break;
-        case 3: open_load_menu(L->btn_load.x, L->bar.h); break;
-        case 4:
+        case 3: do_import(); break;
+        case 4: do_export(); break;
+        case 5:
             if (s_view == VIEW_DUELISTS) {
                 /* Return to default, scoped to the duelist on screen. The
                  * default is whatever the layers underneath produce: stock,
@@ -1583,7 +1608,7 @@ static void rclick(int x, int y)
              * is selected in the BY CARD view. */
             for (int t = 0; t < NTIER; t++) {
                 snprintf(buf, sizeof buf, "Add %d %.24s (%s)", s_sel_card,
-                         psx_card_db_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
+                         psx_card_packs_display_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_sel_duelist, s_sel_card, t);
             }
         }
@@ -1606,7 +1631,7 @@ static void rclick(int x, int y)
             const int d = s_duel_order[i];
             for (int t = 0; t < NTIER; t++) {
                 snprintf(buf, sizeof buf, "Add %d %.24s (%s)", s_sel_card,
-                         psx_card_db_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
+                         psx_card_packs_display_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, d, s_sel_card, t);
             }
         }
@@ -2023,9 +2048,29 @@ static void tick(void)
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_drop_viewer_close(); return; }
     }
+    /* A file dialog answered, or could not open at all. */
+    if (s_pick_err[0]) {
+        char why[200]; snprintf(why, sizeof why, "%s", s_pick_err);
+        const int kind = s_pick_err_kind;
+        s_pick_err[0] = 0;
+        if (kind == 1) {
+            /* no dialog to ask with: the export still happens, at the default name */
+            char def[1200]; export_default_path(def, sizeof def);
+            finish_pick(1, def);
+        } else {
+            char m[280]; snprintf(m, sizeof m, "The file dialog could not open: %.200s", why);
+            say(m);
+        }
+    }
+    if (s_pick_path[0]) {
+        const int kind = s_pick_kind;
+        char path[1200]; snprintf(path, sizeof path, "%s", s_pick_path);
+        s_pick_path[0] = 0;
+        finish_pick(kind, path);
+    }
     /* A card renamed in the Card Manager (or a card set switched) shows
-     * here at once: names come live from the card table, so a resort and a
-     * redraw are all it takes. */
+     * here at once: names come through psx_card_packs_display_name(), so a
+     * resort and a redraw are all it takes. */
     {
         static unsigned seen_gen = (unsigned)-1;
         const unsigned gen = psx_card_packs_generation();
@@ -2139,6 +2184,24 @@ int psx_drop_viewer_set(int view, int sort, int desc, int card, int duelist,
 void psx_drop_viewer_request_open(int open)
 {
     s_open_req = open ? 1 : -1;
+}
+
+/* The two file actions without the dialog, for the debug server — the same
+ * pair the Card and Fusion managers expose. They work with the window
+ * closed, because the edit layer is not the window's. */
+int psx_drop_viewer_export(const char *path, char *msg, unsigned cap)
+{
+    const int ok = psx_drop_edits_export_file(path, msg, cap);
+    if (s_win) { say(msg); }
+    return ok;
+}
+
+int psx_drop_viewer_import(const char *path, char *msg, unsigned cap)
+{
+    const int ok = psx_drop_edits_import_file(path, msg, cap);
+    if (ok && s_win) invalidate();
+    if (s_win) say(msg);
+    return ok;
 }
 
 /* The injected events go through SDL's queue with this window's id, so they
@@ -2280,7 +2343,8 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "tab_duelists", &L->tab_duel);
     if (n < cap) n += rect_json(out + n, cap - n, "search", &L->search);
     if (n < cap) n += rect_json(out + n, cap - n, "save", &L->btn_save);
-    if (n < cap) n += rect_json(out + n, cap - n, "load", &L->btn_load);
+    if (n < cap) n += rect_json(out + n, cap - n, "import", &L->btn_import);
+    if (n < cap) n += rect_json(out + n, cap - n, "export", &L->btn_export);
     if (n < cap) n += rect_json(out + n, cap - n, "third", &L->btn_third);
     if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
     if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);
