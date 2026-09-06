@@ -215,7 +215,7 @@ static void handle_fusion_list(int id, const char *json)
 /* fusion_manager -- the window: state, open/close (open:1/0), pick a view
  * (view:0 by card, 1 recipes), select a card (card:id), sort (sort/desc,
  * applied to whichever table the view shows), filter (search), synthetic
- * click/move/key/text, a canvas dump (shot: path, binary PPM) and an export
+ * click/move/press/release/key/text, a canvas dump (shot: path, binary PPM) and an export
  * (export: path, edits_only:1 for just the changes) or an import
  * (import: path). Editing: {"b":partner,"result":id} changes a pair of the
  * selected card ("a" names another), result 0 removes it; "undo_all":1 drops
@@ -272,9 +272,14 @@ static void handle_fusion_manager(int id, const char *json)
     if (x >= 0 && y >= 0) {
         const int moved = json_get_int(json, "move", 0);
         const int dbl = json_get_int(json, "double", 0);
-        const int ok = moved ? psx_fusion_manager_move(x, y)
-                     : dbl   ? psx_fusion_manager_double_click(x, y)
-                             : psx_fusion_manager_click(x, y, json_get_int(json, "button", 0));
+        const int btn = json_get_int(json, "button", 0);
+        /* press / release are the halves of a drag -- the scrollbar thumb
+         * needs them; click alone cannot express one. */
+        const int ok = moved                          ? psx_fusion_manager_move(x, y)
+                     : dbl                            ? psx_fusion_manager_double_click(x, y)
+                     : json_get_int(json, "press", 0) ? psx_fusion_manager_press(x, y, btn)
+                     : json_get_int(json, "release", 0) ? psx_fusion_manager_release(x, y, btn)
+                                                      : psx_fusion_manager_click(x, y, btn);
         if (!ok) { send_err(id, "window is closed"); return; }
     }
     const int k = json_get_int(json, "keycode", 0);
@@ -392,7 +397,11 @@ static void handle_drop_missing_state(int id, const char *json)
 /* card_packs — which cards are replaced and how. */
 static void handle_card_packs(int id, const char *json)
 {
-    (void)json;
+    /* dev:1/0 switches card set, the same call the Card Manager's own
+     * "Dev Card Effects" button makes -- the set switch is otherwise only
+     * reachable by clicking that button, which a script cannot do. */
+    const int dev = json_get_int(json, "dev", -1);
+    if (dev >= 0) psx_card_packs_set_dev(dev);
     char buf[8192];
     if (!psx_card_packs_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
@@ -625,7 +634,9 @@ static void handle_drop_viewer(int id, const char *json)
 }
 
 /* drop_viewer_set — point the window at something, so the two views and the
- * search can be checked without a mouse. */
+ * search can be checked without a mouse; also the Import / Export pair
+ * ("export":path writes the edit layer, "import":path replaces it), which is
+ * the way past the file dialog, like fusion_manager's. */
 static void handle_drop_viewer_set(int id, const char *json)
 {
     /* open lands on the main thread next frame — window creation is not this
@@ -633,6 +644,17 @@ static void handle_drop_viewer_set(int id, const char *json)
      * is closed" for those; send the open alone, then the rest. */
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_drop_viewer_request_open(open);
+    {   /* the file pair answers with its own message, window or no window */
+        char path[1024], msg[256];
+        const int imp = json_get_str(json, "import", path, sizeof path) != NULL;
+        if (imp || json_get_str(json, "export", path, sizeof path)) {
+            const int ok = imp ? psx_drop_viewer_import(path, msg, sizeof msg)
+                               : psx_drop_viewer_export(path, msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+            return;
+        }
+    }
     char search[32];
     /* json_get_str returns the string, or NULL when the key is absent — which
      * is exactly the "leave it alone" the setter wants. */
