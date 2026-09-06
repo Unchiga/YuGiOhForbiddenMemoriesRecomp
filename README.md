@@ -34,7 +34,7 @@ Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 Everything below lives in the overlay menu on **`F10`**, and every setting takes
 effect immediately. No restart, no patched save.
 
-### ⚔️ Duel rank meter (`VIEW → DUEL RANK`)
+### Duel rank meter (`VIEW → DUEL RANK`)
 
 The game grades every duel you win but only tells you afterwards. This puts the
 grade on screen **while you play**, in the game's own HUD sprites.
@@ -46,7 +46,7 @@ grade on screen **while you play**, in the game's own HUD sprites.
 | `IN GAME + SCORE` | the same, plus the raw 0-99 score |
 | `OVERLAY TEXT` | plain text in the corner, never covered by a card view |
 
-### 🧩 Fusion assistant (`VIEW → FUSION HINT`)
+### Fusion assistant (`VIEW → FUSION HINT`)
 
 Forbidden Memories has thousands of fusions and teaches you none of them. This
 reads your hand against the game's real tables in memory, not a copied list, so
@@ -60,9 +60,9 @@ its answers are the game's answers.
 
 `VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
 
-### 🔮 Fusion Manager (`VIEW → FUSION MANAGER`)
+### Fusion Manager (`VIEW → FUSION MANAGER`)
 
-> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
+> **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: every change is a file beside your saves, and `Restore
 > stock` undoes the lot.
 
@@ -94,14 +94,14 @@ and the game really performs. The format holds 65 535 bytes and stock uses 65 00
 so there is room for about a hundred new recipes; an edit that would not fit is
 refused.
 
-### 🎴 Card drops (`MODS → CARD DROPS`)
+### Card drops (`MODS → CARD DROPS`)
 
 Stock, a won duel awards exactly one card. This makes it **1-99**. It comes with
 a results screen stock never had: the cards you won across three pages you flip
 with **D-pad Left/Right**, with the game's own yellow **New!** tag on anything
 you didn't already own.
 
-### 🃏 Drop missing cards (`MODS → DROP MISSING CARDS`)
+### Drop missing cards (`MODS → DROP MISSING CARDS`)
 
 **82 of the game's 722 cards are dropped by nobody**, both of Exodia's legs
 among them, which is why the set cannot be completed in the stock game. This
@@ -118,7 +118,7 @@ The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048. 20 is
 about 1%. Each band totals 2048, so what you add comes off that duelist's normal
 drops in proportion. Delete the file for the defaults back.
 
-### 🗂️ Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
+### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
 ![The Drop Table Manager](docs/screenshots/drop-table-manager.png)
 
@@ -151,9 +151,9 @@ Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
 everything here, **never shipped**. The manager reads them off your own disc.
 
-### 🎨 Card Manager (`VIEW → CARD MANAGER`)
+### Card Manager (`VIEW → CARD MANAGER`)
 
-> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
+> **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: edits live in `cards/`, and `Restore stock` puts a card
 > back.
 
@@ -273,9 +273,9 @@ Edit it in any editor (a card shows six lines of twenty characters) and `Import
 Descriptions` reads it back: only the cards that differ are written. It shows
 live.
 
-### 💬 Dialogue Manager (`VIEW → DIALOGUE MANAGER`)
+### Dialogue Manager (`VIEW → DIALOGUE MANAGER`)
 
-> ⚠️ **Experimental, expect bugs.** Much newer than the rest of this list. It
+> **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: translations live in `dialogue/`, and `Back to
 > original` removes them.
 
@@ -300,7 +300,7 @@ long lines are wrapped and long pages split. The game's own codes show as `{1}`,
 player's name. An imported file lives on as `dialogue/dialogue.txt`, and one
 that fails to parse changes nothing.
 
-### 🛒 Card shop (`MODS → CARD SHOP`)
+### Card shop (`MODS → CARD SHOP`)
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
 
@@ -330,14 +330,14 @@ legendary_atk = 2500   ; a monster lands in the highest band its ATK reaches
 Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 ```
 
-### 🖥️ Widescreen (`VIEW → WIDESCREEN`, experimental)
+### Widescreen (`VIEW → WIDESCREEN`, experimental)
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).
 The duel field renders genuinely wider; flat 2D screens stay 4:3 and are
 pillarboxed rather than stretched. Experimental: culling pop-in at the wide
 edges has not been fully checked for this title.
 
-### 💰 Cheats (`CHEATS`)
+### Cheats (`CHEATS`)
 
 | Row | Range | Notes |
 |---|---|---|
@@ -418,7 +418,7 @@ the framework source. It has no game code in it until you supply a disc.
 Nothing needs installing first. The setup brings its own compiler and Python,
 and uses yours if you already have them.
 
-> ### ⏳ The first run takes a few minutes, let it finish
+> ### The first run takes a few minutes, let it finish
 >
 > A compiler download, a whole game translated to C and a real compile happen
 > before you see anything; the console working away is not hanging. **Every run
