@@ -32,6 +32,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_db.h"
+#include "psx_card_packs.h"
 #include "psx_fusion_db.h"
 #include "psx_fusion_table.h"
 #include "psx_game_hooks.h"
@@ -204,7 +205,7 @@ static void stats_refresh(void)
     }
 }
 
-static const char *nm(int id) { return (id >= 1 && id <= MAXID) ? psx_card_db_name(id) : ""; }
+static const char *nm(int id) { return (id >= 1 && id <= MAXID) ? psx_card_packs_display_name(id) : ""; }   /* the Card Manager's name when it renamed the card */
 static const char *ty(int id) { return (id >= 1 && id <= MAXID && s_type[id] >= 0) ? psx_card_db_type_name(s_type[id]) : ""; }
 static int index_have(void) { return s_rec_n > 0; }
 static const char *waiting_line(void)
@@ -809,17 +810,104 @@ static void draw_col(const Col *c, const Rect *band, const char *label, int hot,
     else       psx_ui_text_clip(&s_cv, c->x, base, buf, col, fs, c->r - c->x);
 }
 
-static void draw_scrollbar(int p)
+/* --- scrollbars -----------------------------------------------------------
+ *
+ * Four lists here can overflow: the three panes and the card chooser. Each
+ * has a bar in its right gutter, and the bar is a control, not a picture --
+ * the thumb drags and the track pages, the same as the Drop Table Manager's.
+ * SB_PICK addresses the chooser, which keeps its own scroll because it is
+ * modal over whichever pane is underneath.
+ */
+static int pick_total(void);
+static int pick_visible(void);
+
+#define SB_PICK PANE_COUNT
+
+static const Rect *sb_rect(int t)  { return t == SB_PICK ? &s_L.pick_sb : pane_sb(t); }
+static int         sb_total(int t) { return t == SB_PICK ? pick_total() : pane_total(t); }
+static int         sb_visible(int t) { return t == SB_PICK ? pick_visible() : pane_visible(t); }
+static int        *sb_scroll(int t) { return t == SB_PICK ? &s_pick_scroll : pane_scroll(t); }
+
+static void sb_set_scroll(int t, int v)
 {
-    const Rect *sb = pane_sb(p);
-    const int total = pane_total(p), vis = pane_visible(p);
-    if (sb->h <= 0 || total <= vis) return;
-    psx_ui_round_rect(&s_cv, sb->x, sb->y, sb->w, sb->h, sb->w * 0.5f, COL_TRACK);
+    if (t != SB_PICK) { set_scroll(t, v); return; }
+    const int max = pick_total() - pick_visible();
+    if (v > max) v = max;
+    if (v < 0) v = 0;
+    if (v != s_pick_scroll) { s_pick_scroll = v; s_dirty = 1; }
+}
+
+/* Where the thumb sits, or 0 when the list fits and there is no bar. Drawing
+ * and hit-testing both come through here, so the two cannot drift apart. */
+static int sb_thumb(int t, int *out_y, int *out_h)
+{
+    const Rect *sb = sb_rect(t);
+    const int total = sb_total(t), vis = sb_visible(t);
+    if (sb->h <= 0 || total <= vis) return 0;
     int th = sb->h * vis / total;
     const int minh = px(10.0f);
     if (th < minh) th = minh;
-    const int ty = sb->y + (sb->h - th) * *pane_scroll(p) / (total - vis);
-    psx_ui_round_rect(&s_cv, sb->x, ty, sb->w, th, sb->w * 0.5f, COL_THUMB);
+    if (th > sb->h) th = sb->h;
+    *out_h = th;
+    *out_y = sb->y + (int)((long long)(sb->h - th) * *sb_scroll(t) / (total - vis));
+    return 1;
+}
+
+static int s_sb_drag;              /* 0 none, else the target + 1 */
+static int s_sb_grab;              /* pointer offset inside the thumb */
+
+static void draw_scrollbar(int t)
+{
+    int ty, th;
+    if (!sb_thumb(t, &ty, &th)) return;
+    const Rect *sb = sb_rect(t);
+    psx_ui_round_rect(&s_cv, sb->x, sb->y, sb->w, sb->h, sb->w * 0.5f, COL_TRACK);
+    psx_ui_round_rect(&s_cv, sb->x, ty, sb->w, th, sb->w * 0.5f,
+                      s_sb_drag == t + 1 ? COL_ACCENT : COL_THUMB);
+}
+
+/* A press on a bar: the thumb starts a drag, the track pages. Only the
+ * chooser's bar is live while the chooser is up, since it is modal. Returns
+ * 1 when the press was consumed. */
+static int sb_press(int x, int y)
+{
+    const int first = s_pick_mode ? SB_PICK : 0;
+    const int last  = s_pick_mode ? SB_PICK : PANE_COUNT - 1;
+    for (int t = first; t <= last; t++) {
+        int ty, th;
+        if (!sb_thumb(t, &ty, &th)) continue;
+        const Rect *sb = sb_rect(t);
+        /* The bar is a few pixels wide, so a whisker either side counts as
+         * on it -- otherwise it is a pixel-hunt with a mouse. */
+        const int slack = px(4.0f);
+        if (x < sb->x - slack || x >= sb->x + sb->w + slack) continue;
+        if (y < sb->y || y >= sb->y + sb->h) continue;
+        if (y >= ty && y < ty + th) {
+            s_sb_drag = t + 1;
+            s_sb_grab = y - ty;
+        } else {
+            const int page = sb_visible(t);
+            sb_set_scroll(t, *sb_scroll(t) + (y < ty ? -page : page));
+        }
+        s_dirty = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static void sb_drag_to(int y)
+{
+    const int t = s_sb_drag - 1;
+    int ty, th;
+    if (t < 0 || !sb_thumb(t, &ty, &th)) return;
+    const Rect *sb = sb_rect(t);
+    const int span = sb->h - th;
+    if (span <= 0) return;
+    int top = y - s_sb_grab - sb->y;
+    if (top < 0) top = 0;
+    if (top > span) top = span;
+    sb_set_scroll(t, (int)(((long long)top * (sb_total(t) - sb_visible(t))
+                            + span / 2) / span));
 }
 
 /* One id + name pair, the shape every table here repeats. */
@@ -1124,10 +1212,6 @@ static void pick_choose(int row)
         rebuild_sel();
         if (r) snprintf(err, sizeof err, "%s + %s " S_ARROW " %s", nm(a), nm(b), nm(r));
         else   snprintf(err, sizeof err, "%s + %s now makes nothing", nm(a), nm(b));
-        if (!psx_fusion_table_applied()) {
-            const size_t n = strlen(err);
-            snprintf(err + n, sizeof err - n, "   " S_DASH "   turn MODS " S_ARROW " Fusion edits ON to play with it");
-        }
         say(err);
     }
 }
@@ -1184,16 +1268,7 @@ static void draw_picker(void)
         Rect r = { L->pick_rows.x + px(6.0f), L->pick_rows.y, L->pick_rows.w, L->row_h };
         text_in(&r, 0, "No card matches that", COL_DIM, fb);
     }
-    /* scrollbar */
-    if (pick_total() > vis) {
-        const Rect *sb = &L->pick_sb;
-        psx_ui_round_rect(&s_cv, sb->x, sb->y, sb->w, sb->h, sb->w * 0.5f, COL_TRACK);
-        int th = sb->h * vis / pick_total();
-        const int minh = px(10.0f);
-        if (th < minh) th = minh;
-        const int ty = sb->y + (sb->h - th) * s_pick_scroll / (pick_total() - vis);
-        psx_ui_round_rect(&s_cv, sb->x, ty, sb->w, th, sb->w * 0.5f, COL_THUMB);
-    }
+    draw_scrollbar(SB_PICK);
 }
 
 /* --- the right-click menu -------------------------------------------------- */
@@ -1370,7 +1445,7 @@ static void draw_dialog(void)
     int y = L->dlg.y + px(12.0f);
 
     char head[192], l1[224], l2[224];
-    const char *okl = "Restore stock";
+    const char *okl = "Restore stock", *cancell = "Cancel";
     if (s_dlg == DLG_CLEAR) {
         okl = "Delete all";
         snprintf(head, sizeof head, "Delete every fusion in the game?");
@@ -1400,7 +1475,7 @@ static void draw_dialog(void)
     text_in(&a, 0, l1, COL_WARN, face_small());
     if (l2[0]) { Rect b = { x, y + px(15.0f), wmax, px(14.0f) }; text_in(&b, 0, l2, COL_DIM, face_small()); }
 
-    draw_button(&L->dlg_cancel, "Cancel", 0, s_hover_dlg == 0);
+    draw_button(&L->dlg_cancel, cancell, 0, s_hover_dlg == 0);
     draw_button(&L->dlg_ok, okl, s_hover_dlg == 1, s_hover_dlg == 1);
 }
 
@@ -1449,12 +1524,15 @@ static void ed_commit(void)
     if (!psx_fusion_table_edit(sel, partner, result, err, sizeof err)) { say(err); return; }
     refresh_index(1);
     rebuild_sel();
-    size_t n;
     if (result == 0) snprintf(err, sizeof err, "%s + %s now makes nothing", nm(sel), nm(partner));
     else             snprintf(err, sizeof err, "%s + %s " S_ARROW " %s", nm(sel), nm(partner), nm(result));
-    n = strlen(err);
-    if (!psx_fusion_table_applied())
-        snprintf(err + n, sizeof err - n, "   " S_DASH "   turn MODS > Fusion edits ON to play with it");
+    /* Edits apply on their own now, so this can only mean the player has
+     * deliberately switched them off -- worth saying, since the change they
+     * just made will not show in a duel until they switch them back on. */
+    if (!psx_fusion_table_applied()) {
+        const size_t n = strlen(err);
+        snprintf(err + n, sizeof err - n, "   " S_DASH "   MODS " S_ARROW " Fusion edits is OFF, so the game is still rolling its own table");
+    }
     say(err);
     ed_clear();
     s_ed_focus = ED_PARTNER;
@@ -1670,14 +1748,20 @@ static int on_event(const void *evp)
             return 1;
         }
         if (ev->button.button != SDL_BUTTON_LEFT) return 1;
+        /* the bars first: a press on one is never a click on the row behind */
+        if (!s_cm_open && !s_dlg && sb_press((int)ev->button.x, (int)ev->button.y))
+            return 1;
         click((int)ev->button.x, (int)ev->button.y, (int)ev->button.clicks);
         return 1;
     case SDL_MOUSEBUTTONUP:
-        return ev->button.windowID == id;
+        if (ev->button.windowID != id) return 0;
+        if (s_sb_drag) { s_sb_drag = 0; s_dirty = 1; }
+        return 1;
     case SDL_MOUSEMOTION: {
         if (ev->motion.windowID != id) return 0;
         layout_compute();
         const int mx = (int)ev->motion.x, my = (int)ev->motion.y;
+        if (s_sb_drag) { sb_drag_to(my); return 1; }
         if (s_cm_open) {
             const int h = cm_at(mx, my);
             if (h != s_cm_hover) { s_cm_hover = h; s_dirty = 1; }
@@ -1972,6 +2056,7 @@ void psx_fusion_manager_close(void)
     s_dlg = DLG_NONE;
     s_cm_open = 0;
     s_pick_mode = PICK_NONE;
+    s_sb_drag = 0;
 }
 
 int psx_fusion_manager_is_open(void) { return s_win != NULL; }
@@ -2009,6 +2094,13 @@ static void tick(void)
     /* the table module reads the disc on the first frame it can, so the
      * window may well be open before there is anything to show */
     refresh_index(0);
+    /* A card renamed in the Card Manager shows here at once: the lists are
+     * filtered by name, so they are rebuilt, then redrawn. */
+    {
+        static unsigned seen_gen = (unsigned)-1;
+        const unsigned gen = psx_card_packs_generation();
+        if (gen != seen_gen) { seen_gen = gen; rebuild_cards(); rebuild_recipes(); s_dirty = 1; }
+    }
     if (s_scroll_pending) { s_scroll_pending = 0; scroll_to_selection(); }
     clamp_scrolls();
     /* the card table comes up with the EXE, which may be after the window */
@@ -2124,6 +2216,22 @@ int psx_fusion_manager_click(int x, int y, int button)
     return inject_button(x, y, button, 0, 1);
 }
 
+/* The halves of a drag: press, then move waypoints, then release -- what the
+ * scrollbar thumb needs and a click cannot express. */
+int psx_fusion_manager_press(int x, int y, int button)
+{
+    if (!s_win) return 0;
+    if (button <= 0) button = SDL_BUTTON_LEFT;
+    return inject_button(x, y, button, 1, 1);
+}
+
+int psx_fusion_manager_release(int x, int y, int button)
+{
+    if (!s_win) return 0;
+    if (button <= 0) button = SDL_BUTTON_LEFT;
+    return inject_button(x, y, button, 0, 1);
+}
+
 int psx_fusion_manager_double_click(int x, int y)
 {
     if (!s_win) return 0;
@@ -2236,13 +2344,15 @@ int psx_fusion_manager_state_json(char *out, unsigned cap)
         "\"view\":%d,\"search\":\"%s\",\"listed\":%d,\"scroll\":%d,\"sel\":%d,\"sel_name\":\"%s\","
         "\"makes\":%d,\"made_from\":%d,\"sort\":%d,\"desc\":%d,\"rsort\":%d,\"rdesc\":%d,"
         "\"ed_focus\":%d,\"ed_partner\":\"%s\",\"ed_result\":\"%s\",\"dialog\":%d,\"menu\":%d,\"picker\":%d,\"pick_listed\":%d,\"pick_search\":\"%s\","
-        "\"canvas\":[%d,%d],\"unit\":%.3f,\"list_rows\":%d,\"hover_pane\":%d,\"hover_row\":%d,\"hover_btn\":%d,\"msg\":\"%s\"",
+        "\"canvas\":[%d,%d],\"unit\":%.3f,\"list_rows\":%d,\"hover_pane\":%d,\"hover_row\":%d,\"hover_btn\":%d,\"msg\":\"%s\","
+        "\"mk_scroll\":%d,\"fr_scroll\":%d,\"pick_scroll\":%d,\"sb_drag\":%d",
         s_win != NULL, psx_fusion_table_ready(), psx_fusion_db_ready(), s_rec_n, s_eq_groups, s_eq_n,
         psx_fusion_table_edit_count(), psx_fusion_table_cleared(), psx_fusion_table_applied(), used, bcap, pairs,
         s_view, s_search, list_count(), s_scroll, s_sel, nm(s_sel),
         s_mk_n, s_fr_n, s_sort, s_desc, s_rsort, s_rdesc,
         s_ed_focus, s_ed_partner, s_ed_result, s_dlg, s_cm_open ? s_cm_n : 0, s_pick_mode, pick_total(), s_pick_search,
-        s_w, s_h, s_u, s_win ? pane_visible(PANE_LIST) : 0, s_hover_pane, s_hover_row, s_hover_btn, s_msg);
+        s_w, s_h, s_u, s_win ? pane_visible(PANE_LIST) : 0, s_hover_pane, s_hover_row, s_hover_btn, s_msg,
+        s_mk_scroll, s_fr_scroll, s_pick_scroll, s_sb_drag);
     if (!s_win || n >= cap) return n < cap;
     n += (unsigned)snprintf(out + n, cap - n,
         ",\"geom\":{\"row_h\":%d,\"search\":[%d,%d,%d,%d],\"list_hdr\":[%d,%d,%d,%d],\"rows\":[%d,%d,%d,%d]",
@@ -2266,6 +2376,14 @@ int psx_fusion_manager_state_json(char *out, unsigned cap)
         n += (unsigned)snprintf(out + n, cap - n, ",\"cm\":[%d,%d,%d,%d],\"pick_rows\":[%d,%d,%d,%d]",
             L->cm.x, L->cm.y, L->cm.w, L->cm.h,
             L->pick_rows.x, L->pick_rows.y, L->pick_rows.w, L->pick_rows.h);
+    /* The scrollbars, so a script can drag a thumb the way a mouse does. */
+    if (n < cap)
+        n += (unsigned)snprintf(out + n, cap - n,
+            ",\"list_sb\":[%d,%d,%d,%d],\"makes_sb\":[%d,%d,%d,%d],\"from_sb\":[%d,%d,%d,%d],\"pick_sb\":[%d,%d,%d,%d]",
+            L->list_sb.x, L->list_sb.y, L->list_sb.w, L->list_sb.h,
+            L->mk_sb.x, L->mk_sb.y, L->mk_sb.w, L->mk_sb.h,
+            L->fr_sb.x, L->fr_sb.y, L->fr_sb.w, L->fr_sb.h,
+            L->pick_sb.x, L->pick_sb.y, L->pick_sb.w, L->pick_sb.h);
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "}");
     return n < cap;
 }

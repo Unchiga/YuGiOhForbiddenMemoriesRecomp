@@ -89,6 +89,9 @@ int  psx_fusion_manager_card_json(char *out, unsigned cap, int card);
  * button: SDL numbering (<=0 means left). Return 0 when closed. */
 int  psx_fusion_manager_click(int x, int y, int button);
 int  psx_fusion_manager_double_click(int x, int y);
+/* The halves of a drag: press, move waypoints, release. */
+int  psx_fusion_manager_press(int x, int y, int button);
+int  psx_fusion_manager_release(int x, int y, int button);
 int  psx_fusion_manager_move(int x, int y);
 int  psx_fusion_manager_inject_key(int keycode);
 int  psx_fusion_manager_inject_text(const char *text);
