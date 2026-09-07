@@ -1062,7 +1062,19 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
     /* remember the previous state so a failed import leaves it alone */
     Run *snap = (Run *)malloc(sizeof(Run) * (size_t)s_nruns);
     memcpy(snap, s_runs, sizeof(Run) * (size_t)s_nruns);
-    for (int i = 0; i < s_nruns; i++) { s_runs[i].enc = NULL; s_runs[i].cur_text = NULL; s_runs[i].enc_len = 0; s_runs[i].reloc = 0; }
+    /* The snapshot is a shallow copy, so it now owns every pointer the live
+     * runs held: hand ALL of them over, plain_cur included. Leaving that one
+     * behind meant the first run_clear() of this import freed a string the
+     * snapshot would free again at the end -- a double free that landed on
+     * the second import of an already-translated script (found with a host
+     * harness over a dump of the bank, under AddressSanitizer). */
+    for (int i = 0; i < s_nruns; i++) {
+        s_runs[i].enc = NULL;
+        s_runs[i].cur_text = NULL;
+        s_runs[i].plain_cur = NULL;
+        s_runs[i].enc_len = 0;
+        s_runs[i].reloc = 0;
+    }
     for (int b = 0; b < nb; b++) {
         Run *r = run_by_key(blocks[b].key);
         if (!r) { unknown++; if (unknown <= 3) WARN("line %d: no text at [@%04X]; ", blocks[b].line, blocks[b].key); continue; }
