@@ -14,21 +14,64 @@
  * being drawn (Data Crystal's RAM map calls this "Selected card ID"; this
  * repo's psx_card_shop.c also uses it, as SHOP_SIG_A).
  *
- * Telling the name apart from the rest needs the glyphs themselves.
- * func_80036C14 delivers one decoded character at a time; matching it
- * position-by-position against the card's already-known name (never
- * searching for it) is safe, since no type line or description can equal a
- * card's full name character for character.
+ * Which of the four a run is, is in the stream itself. func_80038B4C is the
+ * text interpreter: it reads one opcode byte from the live cursor at
+ * obj[obj[0x58] * 4], advances it, and calls D_80090EAC[op](obj) — and
+ * CARD_NAME_CALLER is precisely that jalr's return address. func_80037DA4
+ * is the card-field handler behind several of those opcodes, and its FIRST
+ * act is to read one more byte, the mode byte, which says what to draw:
+ *
+ *     mode & 0x10   set the widget's colour from D_8009B320, then return
+ *     mode & 0x20   the card's NAME        (string id  gDuel_wSelectedCardID + 0x8000)
+ *     mode & 0x40   the description        (string id  gDuel_wSelectedCardID + 0xD100)
+ *     mode & 0x0F   0 type, 1 attribute, 2 Guardian Star — small label ids
+ *                   built out of gDuel_adwCardStats[id - 1]
+ *
+ * tested in that order, 0x10 first. The hook runs before any of the
+ * function's own instructions, so the cursor is still on that byte and
+ * reading it costs nothing:
+ *
+ *     mode = [ obj[ obj[0x58] * 4 ] ]
+ *     name = !(mode & 0x10) && (mode & 0x20)
+ *
+ * That is exact and needs no guesswork about the text's content.
  *
  * THE COLOUR IS STICKY
  * ----------------------
- * func_80036C14's a0 is the glyph record; byte +84 is its colour index, and
- * it stays applied to every later glyph on that widget until overwritten
- * again. So each CARD_NAME_CALLER entry first reverts the widget to white
- * and arms an unconfirmed match against the card's name; the glyph hook
- * then re-applies the rarity colour only while that match keeps holding. A
- * type line or description is never touched, because a match against it
- * never starts succeeding.
+ * func_80036C14's a0 is the glyph record; byte +84 is its colour index,
+ * copied into every primitive it emits, so it stays applied to every later
+ * glyph on that widget until overwritten. The name's colour therefore has to
+ * be taken back off once the name is done.
+ *
+ * A name command does not draw anything itself: it resolves the string id to
+ * 0x801D0000 + u16[0x801D5800 + id*2], PUSHES that address as a new cursor
+ * (obj[0x58]++), and lets the interpreter run the name as a nested stream.
+ * So the name is exactly the glyphs emitted while obj[0x58] is deeper than it
+ * was when the command was entered; the first glyph back at that depth is
+ * past the name, and the colour byte goes back to the value the game had in
+ * it. Any later card-field command restores it too, as a backstop.
+ *
+ * The restore only fires if the byte still holds what this mod wrote — if the
+ * game issued its own mode 0x10 colour command in between, that one wins and
+ * there is nothing to undo.
+ *
+ * TWO WAYS THIS WENT WRONG FIRST
+ * -------------------------------
+ * The first version had no mode byte. It matched the incoming glyphs against
+ * the card's already-known name and let the colour go on as long as the match
+ * held, on the theory that no other run could equal the name. But a run only
+ * had to START like the name: a Guardian Star or a description opening on the
+ * same letter was granted the colour on that one glyph, and the mismatch that
+ * followed merely stopped the match — it never put the sticky byte back, so
+ * the whole rest of the line drew tinted. That is the bug this file was
+ * rewritten to fix.
+ *
+ * The second version tried to settle it by comparing the cursor against the
+ * name's known address, and coloured NOTHING. The address is real, but it is
+ * written into the slot the command PUSHES, at the very end of the handler;
+ * while the hook runs, the live cursor is still the OUTER stream, sitting on
+ * the mode byte. The byte the cursor points at was the answer all along —
+ * not the address it points with.
  *
  * THE PALETTE
  * ------------
@@ -542,82 +585,90 @@ static void build_colors(void)
 /* On by default: purely cosmetic, nothing to opt into. */
 static int s_enabled = 1;
 
-/* ---- confirming a run of glyphs actually IS the card's name ---------------
- * CARD_NAME_CALLER fires for every piece of text a card-info widget draws
- * (name, type, Guardian Stars, description), not just the name. The id
- * from PSX_SELECTED_CARD says which card; telling the name apart from the
- * rest needs the glyphs, matched against the one already-known target
- * (s_name[id]) rather than searched for — a type line or description can
- * never coincidentally equal a card's full name.
- *
- * func_80036C14 delivers one decoded character at a time: space=0x00,
- * 'A'-'Z'=0x60-0x79, 'a'-'z'=0x81-0x9A. This is a different cipher from the
- * frequency code s_name[] was decoded from, but resolves to the same ASCII
- * either way, so comparing them works. Apostrophe's code in this cipher is
- * not known; names containing one (e.g. "Fiend's Hand") only colour up to
- * the apostrophe. */
-static char glyph_ascii(unsigned code)
+/* ---- which card field this command draws -----------------------------------
+ * See the header comment: at the hook the live cursor is still sitting on the
+ * command's mode byte, and that byte says which of the four fields follows. */
+#define TEXT_STACK_OFF   0x58u   /* s8: which of the widget's cursors is live */
+#define TEXT_SLOTS       12
+#define MODE_SET_COLOR   0x10u   /* tested first by the handler, so it wins */
+#define MODE_CARD_NAME   0x20u
+
+/* The address the interpreter is about to read, and how deep the cursor stack
+ * is. Returns 0 when the live slot is not a real cursor. */
+static uint32_t text_cursor(uint32_t obj, int *depth)
 {
-    if (code == 0x00u) return ' ';
-    if (code >= 0x60u && code <= 0x79u) return (char)('A' + (int)(code - 0x60u));
-    if (code >= 0x81u && code <= 0x9Au) return (char)('a' + (int)(code - 0x81u));
-    return 0;   /* not a name-stream code: an escape, a digit run, etc. */
+    const int slot = (int8_t)psx_mod_read_byte(obj + TEXT_STACK_OFF);
+    *depth = slot;
+    if (slot < 0 || slot >= TEXT_SLOTS)
+        return 0u;
+    return psx_mod_read_word(obj + (uint32_t)slot * 4u);
 }
 
-/* State for matching one widget's incoming glyphs against s_match_target.
- * Reset at every CARD_NAME_CALLER entry; consumed glyph by glyph below. */
-static uint32_t    s_match_obj;
-static int         s_match_active;
-static int         s_match_pos;
-static const char *s_match_target;   /* == s_name[id]; owned by s_name[] */
-static uint8_t      s_match_color;
+/* The widget currently carrying this mod's colour, and what it displaced. */
+static uint32_t s_tint_obj;      /* 0 when nothing is tinted */
+static int      s_tint_depth;    /* obj[0x58] as the name command was entered */
+static uint8_t  s_tint_color;    /* what was written */
+static uint8_t  s_tint_prev;     /* what was there before */
+
+/* Put the widget's colour byte back, so the name's colour does not carry on
+ * into the type line, the Guardian Stars or the description. */
+static void tint_restore(uint32_t obj)
+{
+    if (!s_tint_obj || obj != s_tint_obj)
+        return;
+    /* Only ever undo this mod's own byte. If the game has run a mode 0x10
+     * colour command since, that value is current and must stand. */
+    if (psx_mod_read_byte(obj + GLYPH_COLOR_OFF) == s_tint_color)
+        psx_mod_write_byte(obj + GLYPH_COLOR_OFF, s_tint_prev);
+    s_tint_obj = 0u;
+}
 
 static void card_name_text(CPUState *cpu, uint32_t address)
 {
-    if (!cpu || address != PSX_TEXT_FN)
+    if (!cpu || address != PSX_TEXT_FN || cpu->gpr[31] != CARD_NAME_CALLER)
         return;
 
     const uint32_t obj = cpu->gpr[4];
+    int depth = -1;
+    const uint32_t cursor = text_cursor(obj, &depth);
+    if (!cursor)
+        return;
 
-    if (s_enabled && cpu->gpr[31] == CARD_NAME_CALLER) {
-        const int id = (int)psx_mod_read_half(PSX_SELECTED_CARD);
-        build_colors();
-        if (s_color_built && id >= 1 && id <= CARD_COUNT && s_name[id][0]) {
-            /* Revert first: this run has not been confirmed as the name
-             * yet, so start from the stock colour and let the glyph hook
-             * re-apply the rarity colour only while the match holds. */
-            psx_mod_write_byte(obj + GLYPH_COLOR_OFF, COL_WHITE);
-            s_match_obj    = obj;
-            s_match_active = 1;
-            s_match_pos    = 0;
-            s_match_target = s_name[id];
-            s_match_color  = s_card_color[id];
-            return;
-        }
-    }
+    const unsigned mode = psx_mod_read_byte(cursor);
 
-    /* Any other widget entry: nothing here is a candidate name run. */
-    if (s_match_obj == obj)
-        s_match_active = 0;
+    /* Every card-field command that is not the name ends the previous one's
+     * colour — and so does the name's own command, before it re-tints. */
+    tint_restore(obj);
+
+    if (!s_enabled || (mode & MODE_SET_COLOR) || !(mode & MODE_CARD_NAME))
+        return;
+
+    const int id = (int)psx_mod_read_half(PSX_SELECTED_CARD);
+    build_colors();
+    if (!s_color_built || id < 1 || id > CARD_COUNT)
+        return;
+
+    s_tint_prev  = psx_mod_read_byte(obj + GLYPH_COLOR_OFF);
+    s_tint_color = s_card_color[id];
+    psx_mod_write_byte(obj + GLYPH_COLOR_OFF, s_tint_color);
+    s_tint_obj   = obj;
+    s_tint_depth = depth;
 }
 
 static void card_name_glyph(CPUState *cpu, uint32_t address)
 {
-    if (!cpu || address != PSX_GLYPH_FN)
-        return;
-    if (!s_match_active || cpu->gpr[4] != s_match_obj)
+    if (!cpu || address != PSX_GLYPH_FN || !s_tint_obj)
         return;
 
-    const char c = glyph_ascii((unsigned)(cpu->gpr[5] & 0xFFu));
-    if (c && c == s_match_target[s_match_pos]) {
-        psx_mod_write_byte(cpu->gpr[4] + GLYPH_COLOR_OFF, s_match_color);
-        s_match_pos++;
-        if (!s_match_target[s_match_pos])
-            s_match_active = 0;   /* full name matched; nothing more to do */
-    } else {
-        s_match_active = 0;      /* mismatch, or ran past the name's length:
-                                   * this run is not the name after all */
-    }
+    const uint32_t obj = cpu->gpr[4];
+    if (obj != s_tint_obj)
+        return;
+
+    /* The name runs as a stream the command pushed, one level deeper than the
+     * command was entered at. A glyph emitted back at that depth is already
+     * past the name, so the colour comes off before it is drawn. */
+    if ((int)(int8_t)psx_mod_read_byte(obj + TEXT_STACK_OFF) <= s_tint_depth)
+        tint_restore(obj);
 }
 
 static const char *const ONOFF[] = { "Off", "On" };
