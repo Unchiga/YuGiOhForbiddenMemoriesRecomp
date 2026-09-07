@@ -18,10 +18,13 @@
  * place. It is written to the save struct in RAM, so it counts as a save
  * edit, not a preference -- the window says so when no save is loaded.
  *
- * The PORTRAIT on the title line is the grid's 48x48 tile; click it to
- * replace it (right-click for the disc's own). The footer says what a click
- * does while the pointer is on either control, because neither looks like
- * a button and the tile's size is nothing a player could guess.
+ * The right pane opens with a HEADER: the portrait, large, the name, a line
+ * saying what is the player's, and buttons for Change portrait, Stock
+ * portrait and Rename. The first cut had the portrait as a right-click item
+ * on the list and nobody found it; the footer still says what each control
+ * does while the pointer is on it, with the tile's 48x48 size, which is
+ * nothing a player could guess. Back to stock on the bar resets all four
+ * things of the selected duelist.
  *
  * The NAME on the title line is the one the FREE DUEL grid prints; click it
  * (or right-click the duelist, Rename) and type. It is a cpu_manager.ini
@@ -78,6 +81,8 @@
 #define U_PAD       10.0f
 #define U_ROW_H     14.0f
 #define U_TITLE_H   18.0f
+#define U_HEAD_H    70.0f      /* the right pane's header: portrait, name, buttons */
+#define U_PORTRAIT  54.0f      /* the header's portrait, big enough to judge a picture by */
 #define U_HDR_H     16.0f
 #define U_BTN_H     17.0f
 #define U_FOOT_H    14.0f
@@ -275,8 +280,10 @@ typedef struct {
     int  d_icon_x, d_name_x, d_name_r, d_rec_x, d_rec_r, d_deck_x, d_deck_r;
     int  r_id_x, r_id_r, r_name_x, r_name_r, r_weight_x, r_weight_r, r_share_x, r_share_r;
     Rect rec_win, rec_loss;              /* the editable record cells */
-    Rect name_box;                       /* the title line's name, click to rename */
-    Rect portrait;                       /* the title line's portrait, click to replace */
+    Rect name_box;                       /* the header's name, click to rename */
+    Rect portrait;                       /* the header's portrait, click to replace */
+    Rect btn_portrait, btn_portrait_stock, btn_rename;   /* the header's buttons */
+    Rect status;                         /* the header's line under the name */
 } Layout;
 static Layout s_L;
 
@@ -292,11 +299,11 @@ static void layout_compute(void)
 
     L->bar = (Rect){ 0, 0, s_w, px(U_BAR_H) };
     const int bh = px(U_BTN_H), by = (L->bar.h - bh) / 2;
-    int x = px(8.0f) + tw(ft, "CPU Manager") + px(14.0f);
+    int x = px(8.0f) + tw(ft, "CPU Manager") + px(6.0f) + tw(fs, "experimental") + px(14.0f);
     L->tab_decks = (Rect){ x, by, tw(fb, "Decks") + px(18.0f), bh };  x += L->tab_decks.w + px(4.0f);
     L->tab_ai    = (Rect){ x, by, tw(fb, "AI") + px(18.0f), bh };     x += L->tab_ai.w + px(12.0f);
     int rx = s_w - px(8.0f);
-    int w = tw(fb, "Defaults") + px(18.0f);
+    int w = tw(fb, "Back to stock") + px(18.0f);
     L->btn_default = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "All cards") + px(18.0f);
     L->btn_all = (Rect){ rx - w, by, w, bh };     rx -= w + px(4.0f);
@@ -324,12 +331,14 @@ static void layout_compute(void)
     L->row_h = px(U_ROW_H);
     for (int p = 0; p < 2; p++) {
         const Rect *P = &L->pane[p];
-        L->title[p] = (Rect){ P->x + pad, P->y + px(3.0f), P->w - 2 * pad, px(U_TITLE_H) };
+        L->title[p] = (Rect){ P->x + pad, P->y + px(3.0f), P->w - 2 * pad, px(p ? U_HEAD_H : U_TITLE_H) };
         L->cols[p]  = (Rect){ P->x + pad, L->title[p].y + L->title[p].h, P->w - 2 * pad, px(U_HDR_H) };
         const int ry = L->cols[p].y + L->cols[p].h;
         L->rows[p]  = (Rect){ P->x + px(4.0f), ry, P->w - px(4.0f) - px(10.0f), P->y + P->h - ry - px(4.0f) };
     }
-    L->nrows = L->rows[0].h / L->row_h;
+    /* one row count for both panes, so the shorter (right) pane never draws
+     * past its bottom; the left list just ends a little above its edge */
+    L->nrows = (L->rows[1].h < L->rows[0].h ? L->rows[1].h : L->rows[0].h) / L->row_h;
     if (L->nrows < 1) L->nrows = 1;
     for (int p = 0; p < 2; p++)
         L->sb[p] = (Rect){ L->pane[p].x + L->pane[p].w - px(8.0f), L->rows[p].y, px(U_SB_W), L->nrows * L->row_h };
@@ -353,19 +362,30 @@ static void layout_compute(void)
         L->r_weight_r = L->r_share_x - cg;     L->r_weight_x = L->r_weight_r - cw;
         L->r_name_x = L->r_id_r + px(10.0f);   L->r_name_r = L->r_weight_x - cg;
     }
-    {   /* The record cells sit in the right pane's title line, each with its
-         * label to the left of it: WIN [n]   LOSS [n]. */
-        const int h = L->title[1].h;
+    {   /* The right pane's header: the portrait, big, on the left; beside it
+         * the name line (with the record cells WIN [n] LOSS [n] at its right
+         * end), a status line, and a row of buttons for the things a player
+         * could not find before: Change portrait, Stock portrait, Rename. */
+        const Rect *H = &L->title[1];
+        const int ps = px(U_PORTRAIT);
+        L->portrait = (Rect){ H->x, H->y + (H->h - ps) / 2, ps, ps };
+        const int nx = L->portrait.x + L->portrait.w + px(12.0f);
+        const int lh = px(U_TITLE_H);
         const int cw = imax(tw(fb, "999"), tw(fb, "000")) + px(12.0f);
         const int lw = tw(fs, "LOSS") + px(6.0f);
-        L->rec_loss = (Rect){ L->title[1].x + L->title[1].w - cw, L->title[1].y, cw, h };
-        L->rec_win  = (Rect){ L->rec_loss.x - lw - cw - px(12.0f), L->title[1].y, cw, h };
-        /* the name takes what is left of the line, a gap short of WIN's label */
+        L->rec_loss = (Rect){ H->x + H->w - cw, L->portrait.y, cw, lh };
+        L->rec_win  = (Rect){ L->rec_loss.x - lw - cw - px(12.0f), L->portrait.y, cw, lh };
         const int nr = L->rec_win.x - lw - px(12.0f);
-        /* the portrait first, a square the height of the line, then the name */
-        L->portrait = (Rect){ L->title[1].x, L->title[1].y, h, h };
-        const int nx = L->portrait.x + L->portrait.w + px(8.0f);
-        L->name_box = (Rect){ nx, L->title[1].y, imax(px(40.0f), nr - nx), h };
+        L->name_box = (Rect){ nx, L->portrait.y, imax(px(40.0f), nr - nx), lh };
+        L->status   = (Rect){ nx, L->name_box.y + lh, H->x + H->w - nx, px(U_ROW_H) };
+        const int by = L->portrait.y + L->portrait.h - bh;
+        int bx = nx;
+        int w = tw(fb, "Change portrait" S_ELLIP) + px(18.0f);
+        L->btn_portrait = (Rect){ bx, by, w, bh };        bx += w + px(4.0f);
+        w = tw(fb, "Stock portrait") + px(18.0f);
+        L->btn_portrait_stock = (Rect){ bx, by, w, bh };  bx += w + px(4.0f);
+        w = tw(fb, "Rename" S_ELLIP) + px(18.0f);
+        L->btn_rename = (Rect){ bx, by, w, bh };
     }
 }
 
@@ -462,6 +482,8 @@ static void draw_bar(void)
     psx_ui_fill(&s_cv, 0, L->bar.h - 1, s_w, 1, 0x40FFFFFFu);
     Rect t = { px(8.0f), 0, L->tab_decks.x - px(8.0f), L->bar.h };
     text_in(&t, 0, "CPU Manager", COL_ACCENT, ft);
+    psx_ui_text(&s_cv, px(8.0f) + tw(ft, "CPU Manager") + px(6.0f), psx_ui_baseline_in(0, L->bar.h, fs),
+                "experimental", COL_WARN, fs);
     draw_button(&L->tab_decks, "Decks", s_view == VIEW_DECKS, s_hover_btn == 0);
     draw_button(&L->tab_ai, "AI", s_view == VIEW_AI, s_hover_btn == 1);
 
@@ -476,8 +498,7 @@ static void draw_bar(void)
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
     draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
     draw_button(&L->btn_all, "All cards", s_all_cards, s_hover_btn == 6);
-    draw_button(&L->btn_default, "Defaults", 0, s_hover_btn == 5);
-    (void)fs;
+    draw_button(&L->btn_default, "Back to stock", 0, s_hover_btn == 5);
 }
 
 static void draw_panel(int p, const char *title, uint32_t col, const char *side, uint32_t side_col)
@@ -585,31 +606,45 @@ static void draw_record_cells(void)
 
 /* The right pane's title line: the duelist's name (an edit box while it is
  * being typed), a note on what is edited, and the record cells. */
-static void draw_right_title(const char *note, uint32_t col)
+/* The right pane's header: portrait, name, what is edited, and the buttons. */
+static void draw_right_header(const char *note, uint32_t col)
 {
     const Layout *L = &s_L;
+    const PsxUiFace *fs = face_small();
     draw_panel(1, "", col, NULL, COL_DIM);
-    {   /* the portrait is a control: it lights on hover and a click replaces it */
+    {   /* the portrait, big, and a control: lit on hover, a click replaces it */
         const Rect *P = &L->portrait;
-        if (s_hover_btn == 8)
-            psx_ui_round_rect(&s_cv, P->x - px(3.0f), P->y - px(2.0f), P->w + px(6.0f), P->h + px(4.0f), (float)px(U_R_BOX), COL_HOVER);
+        psx_ui_round_rect(&s_cv, P->x - px(3.0f), P->y - px(3.0f), P->w + px(6.0f), P->h + px(6.0f),
+                          (float)px(U_R_BOX), s_hover_btn == 8 ? COL_BTN_ON : COL_BTN);
         draw_icon(P->x, P->y, P->w, s_sel, COL_PANEL);
         if (psx_cpu_portrait_edited(s_sel)) {
-            const int m = px(3.0f);
+            const int m = px(4.0f);
             psx_ui_fill(&s_cv, P->x + P->w - m, P->y, m, m, COL_EDITED);
         }
     }
     if (s_edit_kind == ED_NAME) { draw_number_box(&L->name_box); }
     else {
         char title[80];
-        snprintf(title, sizeof title, "%s%s%s", psx_cpu_display_name(s_sel),
-                 psx_cpu_name_edited(s_sel) ? " " S_DASH " renamed" : "", note);
+        snprintf(title, sizeof title, "%s%s", psx_cpu_display_name(s_sel), note);
         if (s_hover_btn == 7)
             psx_ui_round_rect(&s_cv, L->name_box.x - px(4.0f), L->name_box.y, L->name_box.w + px(8.0f), L->name_box.h,
                               (float)px(U_R_BOX), COL_HOVER);
-        psx_ui_text_clip(&s_cv, L->name_box.x, psx_ui_baseline_in(L->name_box.y, L->name_box.h, face_bold()),
-                         title, col, face_bold(), L->name_box.w);
+        psx_ui_text_clip(&s_cv, L->name_box.x, psx_ui_baseline_in(L->name_box.y, L->name_box.h, face_title()),
+                         title, col, face_title(), L->name_box.w);
     }
+    {   /* what is the player's and what is the disc's, in one line */
+        char st[160];
+        const int pe = psx_cpu_portrait_edited(s_sel), ne = psx_cpu_name_edited(s_sel);
+        const int de = psx_cpu_deck_edited(s_sel), ae = psx_cpu_ai_edit(s_sel, NULL);
+        if (!pe && !ne && !de && !ae) snprintf(st, sizeof st, "Everything is the disc's own.");
+        else snprintf(st, sizeof st, "Yours: %s%s%s%s. The rest is the disc's own.",
+                      pe ? "portrait" : "", ne ? (pe ? ", name" : "name") : "",
+                      de ? ((pe || ne) ? ", deck" : "deck") : "", ae ? ((pe || ne || de) ? ", AI" : "AI") : "");
+        text_in(&L->status, 0, st, (pe || ne || de || ae) ? COL_EDITED : COL_DIM, fs);
+    }
+    draw_button(&L->btn_portrait, "Change portrait" S_ELLIP, 0, s_hover_btn == 9);
+    draw_button(&L->btn_portrait_stock, "Stock portrait", 0, s_hover_btn == 10);
+    draw_button(&L->btn_rename, "Rename" S_ELLIP, 0, s_hover_btn == 11);
     draw_record_cells();
 }
 
@@ -618,8 +653,7 @@ static void draw_deck(void)
     const Layout *L = &s_L;
     const PsxUiFace *fr = face_body();
     const Rect *C = &L->cols[1], *R = &L->rows[1];
-    draw_right_title(psx_cpu_deck_edited(s_sel) ? " " S_DASH " edited deck" : "",
-                     psx_cpu_deck_edited(s_sel) || psx_cpu_name_edited(s_sel) ? COL_EDITED : COL_ACCENT);
+    draw_right_header("", duelist_edited(s_sel) ? COL_EDITED : COL_ACCENT);
     draw_col(L->r_id_x, 0, C->y, C->h, "ID", 0);
     draw_col(L->r_name_x, 0, C->y, C->h, "Card", 0);
     draw_col(0, L->r_weight_r, C->y, C->h, "Weight", 1);
@@ -664,8 +698,7 @@ static void draw_ai(void)
     const int have_live = psx_cpu_ai_live(s_sel, live);
     const int have_stock = psx_cpu_ai_stock(s_sel, stock);
     const int edited = psx_cpu_ai_edit(s_sel, NULL);
-    draw_right_title(edited ? " " S_DASH " edited AI" : "",
-                     edited || psx_cpu_name_edited(s_sel) ? COL_EDITED : COL_ACCENT);
+    draw_right_header("", duelist_edited(s_sel) ? COL_EDITED : COL_ACCENT);
     draw_col(L->r_id_x, 0, C->y, C->h, "#", 0);
     draw_col(L->r_name_x, 0, C->y, C->h, "Field", 0);
     draw_col(0, L->r_weight_r, C->y, C->h, "Value", 1);
@@ -710,12 +743,20 @@ static void draw_footer(void)
     if (s_msg[0]) { text_in(&f, 0, s_msg, COL_WARN, fs); return; }
     /* what the two title-line controls do, while the pointer is on them:
      * neither looks like a button, and the portrait's size is not guessable */
-    if (s_hover_btn == 8) {
-        text_in(&f, 0, "Click to replace the portrait: any PNG, JPG or BMP becomes this duelist's 48x48 tile in 64 colors, so a small square picture looks best. Right-click it for the disc's own.", COL_TEXT, fs);
+    if (s_hover_btn == 8 || s_hover_btn == 9) {
+        text_in(&f, 0, "Replace the portrait: any PNG, JPG or BMP becomes this duelist's 48x48 tile in 64 colors, so a small square picture looks best.", COL_TEXT, fs);
         return;
     }
-    if (s_hover_btn == 7) {
-        text_in(&f, 0, "Click to rename: what the Free Duel grid prints under the portrait, up to 20 characters from the game's own font.", COL_TEXT, fs);
+    if (s_hover_btn == 10) {
+        text_in(&f, 0, "Put the disc's own portrait back; your picture file is removed from the duelists folder.", COL_TEXT, fs);
+        return;
+    }
+    if (s_hover_btn == 7 || s_hover_btn == 11) {
+        text_in(&f, 0, "Rename: what the Free Duel grid prints under the portrait, up to 20 characters from the game's own font. Empty puts the disc's name back.", COL_TEXT, fs);
+        return;
+    }
+    if (s_hover_btn == 5) {
+        text_in(&f, 0, "Everything of this duelist's back to the disc's own: deck, AI, name and portrait. Save to keep it.", COL_TEXT, fs);
         return;
     }
     if (psx_cpu_dirty()) {
@@ -726,7 +767,7 @@ static void draw_footer(void)
             ? "Click a value to type a new one, Enter keeps it. Right-click for the menu. These nine bytes are what the duel AI reads about this opponent."
             : (s_all_cards
                ? "Every card: type a weight on one at 0 to add it to the deck, or right-click it. Weights are out of 2048."
-               : "Click the portrait or the name above to change them. Click a weight to type a new one, Enter keeps it. Right-click a row for more, or turn on All cards to add one."),
+               : "Click a weight to type a new one, Enter keeps it. Right-click a row for more, or turn on All cards to add one. At most three copies of a card are ever dealt."),
             COL_DIM, fs);
 }
 
@@ -943,6 +984,9 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_all, x, y))     return 6;
     if (in_rect(&L->name_box, x, y))    return 7;
     if (in_rect(&L->portrait, x, y))    return 8;
+    if (in_rect(&L->btn_portrait, x, y))       return 9;
+    if (in_rect(&L->btn_portrait_stock, x, y)) return 10;
+    if (in_rect(&L->btn_rename, x, y))         return 11;
     return -1;
 }
 
@@ -1083,8 +1127,11 @@ static void click(int x, int y, int button)
         case 4: do_export(); break;
         case 6: s_all_cards = !s_all_cards; s_scroll_right = 0; invalidate(); break;
         case 5: {
+            /* deck, AI, name AND portrait: "Defaults" once left the portrait
+             * alone, which read as the button not working */
             const int a = psx_cpu_deck_clear(s_sel), b = psx_cpu_ai_clear(s_sel);
-            if (a || b) { invalidate(); say("Back to the disc's own deck and AI. Save to keep it."); }
+            const int c = psx_cpu_name_clear(s_sel), d = psx_cpu_portrait_clear(s_sel);
+            if (a || b || c || d) { invalidate(); say("Deck, AI, name and portrait are the disc's own again. Save to keep it."); }
             else say("This duelist is already stock");
             break;
         }
@@ -1094,8 +1141,13 @@ static void click(int x, int y, int button)
     }
     if (in_rect(&L->rec_win, x, y))  { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_WINS, 0, w); else say("No save is loaded"); return; }
     if (in_rect(&L->rec_loss, x, y)) { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_LOSSES, 0, l); else say("No save is loaded"); return; }
-    if (in_rect(&L->name_box, x, y)) { edit_begin(ED_NAME, 0, 0); return; }
-    if (in_rect(&L->portrait, x, y)) { do_portrait(); return; }
+    if (in_rect(&L->name_box, x, y) || in_rect(&L->btn_rename, x, y)) { edit_begin(ED_NAME, 0, 0); return; }
+    if (in_rect(&L->portrait, x, y) || in_rect(&L->btn_portrait, x, y)) { do_portrait(); return; }
+    if (in_rect(&L->btn_portrait_stock, x, y)) {
+        if (psx_cpu_portrait_clear(s_sel)) { s_dirty = 1; say("Portrait back to the disc's own"); }
+        else say("This portrait is already the disc's own");
+        return;
+    }
 
     const int p = pane_at(x, y);
     const int r = row_at(p, x, y);
@@ -1203,8 +1255,8 @@ static void row_activate(void) { psx_cpu_manager_open(); }
 
 void psx_cpu_manager_register_menu(void)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "CPU manager",
-                                    "Decks, AI and records for every opponent", row_activate);
+    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "CPU manager (experimental)",
+                                    "EXPERIMENTAL, may have bugs. Decks, AI, names, portraits and records for every opponent", row_activate);
 }
 
 static void tick(void)
@@ -1423,6 +1475,9 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "rec_loss", &L->rec_loss);
     if (n < cap) n += rect_json(out + n, cap - n, "name_box", &L->name_box);
     if (n < cap) n += rect_json(out + n, cap - n, "portrait", &L->portrait);
+    if (n < cap) n += rect_json(out + n, cap - n, "btn_portrait", &L->btn_portrait);
+    if (n < cap) n += rect_json(out + n, cap - n, "btn_portrait_stock", &L->btn_portrait_stock);
+    if (n < cap) n += rect_json(out + n, cap - n, "btn_rename", &L->btn_rename);
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
         ",\"weight_col\":[%d,%d],\"name_col\":[%d,%d]}",
         L->r_weight_x, L->r_weight_r, L->r_name_x, L->r_name_r);

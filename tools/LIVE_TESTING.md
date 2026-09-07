@@ -279,10 +279,13 @@ the right is decoration. Cells 1 and 2 (Simon, Teana) are empty on this
 box's save, so RIGHT from Build Deck shows no caption; RIGHT x3 is Jono.
 
 Export writes an .ini, or a .ygoduelists zip (cpu-duelists.ini plus
-duelists/<id>/portrait.png) once any portrait is edited; the geom has a
-`portrait` rect on the title line (hover_btn 8) that opens the picture
-dialog, and `name_box` is hover_btn 7. Import reads the first four bytes to
-tell the two apart, and a zip import removes portraits it does not carry.
+duelists/<id>/portrait.png) once any portrait is edited. The right pane's
+header carries the geom rects `portrait` (hover_btn 8, click opens the
+picture dialog), `name_box` (7), `btn_portrait` (9), `btn_portrait_stock`
+(10) and `btn_rename` (11); `defaults` is the bar's Back to stock, which
+resets deck, AI, name and portrait. Give a synthetic move half a second
+before reading `hover_btn`. Import reads the first four bytes to tell the
+two file kinds apart, and a zip import removes portraits it does not carry.
 
 An import REPLACES the edits: a duelist whose section is missing from the
 file loses the deck override too (verified 2026-09-06 by dueling Jono after

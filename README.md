@@ -183,9 +183,9 @@ Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
 everything here, **never shipped**. The manager reads them off your own disc.
 
-### CPU Manager (`VIEW → CPU MANAGER`)
+### CPU Manager (`VIEW → CPU MANAGER (EXPERIMENTAL)`)
 
-> **Experimental, expect bugs.** The newest window here.
+> **Experimental, expect bugs.** The newest window here; the menu row says so.
 
 Every opponent, and the four things that make them: their portrait, their
 `WIN`/`LOSS` record, the pool their deck is drawn from, and the nine bytes the
@@ -233,9 +233,10 @@ back, and the grid shows the new name at once. The Drop Table Manager and
 this window's list print it too; the ini keeps the disc's name as the
 section header so a renamed duelist can still be found.
 
-**Portraits.** Click the portrait on the title line (or right-click a
-duelist and `Replace the portrait…`): any PNG, JPG or BMP becomes their 48x48
-tile, scaled and quantised to the 64 colours the tile holds, so a small square
+**Portraits.** The header above the deck shows the portrait large, with
+`Change portrait…`, `Stock portrait` and `Rename…` under it (the portrait and
+the name are clickable too): any PNG, JPG or BMP becomes their 48x48 tile,
+scaled and quantised to the 64 colours the tile holds, so a small square
 picture looks best, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
 `duelists/<id>/portrait.png`, so it comes back at the next launch and can be
 replaced by hand; `Portrait back to stock` removes it.
@@ -247,7 +248,7 @@ and the deck and the portrait go back to the game through sector overrides
 of that duelist's disc record and portrait tile, so the game loads them with
 its own loader. Nothing on your disc is touched.
 
-`Defaults` puts one duelist's deck and AI back. `Export…` writes the ini, or,
+`Back to stock` puts one duelist's deck, AI, name and portrait back. `Export…` writes the ini, or,
 once any portrait is replaced, a `.ygoduelists` file (a zip, like
 `.ygocards`) with the ini and the portrait PNGs inside, so a set travels
 whole; `Import…` takes either, is kept straight away and replaces what was
