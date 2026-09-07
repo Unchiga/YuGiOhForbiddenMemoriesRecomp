@@ -554,33 +554,32 @@ jobs:
           scripts/package_setup_release.sh build-ci "${{ matrix.zip_tag }}" build-recompiler
           ls -la dist/
 
-      # A published run wants the zip itself: the release job downloads it
-      # and attaches it as the asset. A test build (publish=false) is handed
-      # out AS the artifact download, and GitHub zips whatever is uploaded,
-      # so uploading the zip shipped a zip inside a zip. The test build
-      # uploads the unpacked tree instead and the download is one zip.
+      # Two artifacts. GitHub zips whatever a job uploads, so the artifact
+      # a person downloads from the run page must be the UNPACKED tree or
+      # they get a zip inside a zip (it happened, more than once). The
+      # release job wants the packaged zip itself, exec bits and all, which
+      # an unpacked artifact would lose; a published run uploads that too,
+      # under a name the run page reader will not reach for first.
       - name: Upload artifact (release zip)
         if: needs.prepare.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
         with:
-          # Artifact name uses the title zip prefix (e.g. bpe, motk).
-          name: ygofm-${{ matrix.zip_tag }}
+          name: release-ygofm-${{ matrix.zip_tag }}
           path: dist/ygofm-*-${{ matrix.zip_tag }}.zip
           if-no-files-found: error
           retention-days: 30
 
-      - name: Unpack for a test build
-        if: needs.prepare.outputs.publish != 'true'
+      - name: Unpack for the run page
         run: |
           set -euo pipefail
           mkdir -p dist/unpacked
           unzip -q dist/ygofm-*-${{ matrix.zip_tag }}.zip -d dist/unpacked
           ls -la dist/unpacked
 
-      - name: Upload artifact (test build, unpacked)
-        if: needs.prepare.outputs.publish != 'true'
+      - name: Upload artifact (unpacked, one zip when downloaded)
         uses: actions/upload-artifact@v4
         with:
+          # Artifact name uses the title zip prefix (e.g. bpe, motk).
           name: ygofm-${{ matrix.zip_tag }}
           path: dist/unpacked
           if-no-files-found: error
@@ -597,10 +596,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download all artifacts
+      - name: Download the release zips
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: release-ygofm-*
           merge-multiple: false
 
       - name: Flatten zips
