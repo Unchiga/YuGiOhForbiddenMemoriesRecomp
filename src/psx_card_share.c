@@ -207,10 +207,7 @@ fail:
 }
 
 /* ---- zip reader ------------------------------------------------------------- */
-typedef struct {
-    char name[64];
-    uint32_t method, csize, usize, offset, crc;
-} Entry;
+typedef PsxZipEntry Entry;
 
 static uint32_t rd16(const unsigned char *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8); }
 static uint32_t rd32(const unsigned char *p) { return rd16(p) | (rd16(p + 2) << 16); }
@@ -377,4 +374,45 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
     if (msg) snprintf(msg, cap, "Imported %d card%s (%d file%s)%s%s", info.card_n, info.card_n == 1 ? "" : "s", files, files == 1 ? "" : "s",
                       info.has_drops ? " and the drop table edits" : "", bad ? "; some entries were damaged and skipped" : "");
     return bad == 0;
+}
+
+/* ---- the container, for other share files ------------------------------- */
+struct PsxZipWriter { Zip z; };
+
+PsxZipWriter *psx_zip_writer_open(const char *path)
+{
+    PsxZipWriter *w = (PsxZipWriter *)calloc(1, sizeof *w);
+    if (!w) return NULL;
+    w->z.f = psx_fopen_utf8(path, "wb");
+    if (!w->z.f) { free(w); return NULL; }
+    const time_t t = time(NULL);
+    const struct tm *tm = localtime(&t);
+    w->z.dos_time = (uint16_t)((tm->tm_hour << 11) | (tm->tm_min << 5) | (tm->tm_sec / 2));
+    w->z.dos_date = (uint16_t)(((tm->tm_year - 80) << 9) | ((tm->tm_mon + 1) << 5) | tm->tm_mday);
+    return w;
+}
+int psx_zip_writer_add(PsxZipWriter *w, const char *name, const void *data, size_t n)
+{
+    return w ? zip_add(&w->z, name, data, n) : 0;
+}
+int psx_zip_writer_close(PsxZipWriter *w)
+{
+    if (!w) return 0;
+    const int ok = zip_finish(&w->z);      /* closes the file, frees the entries */
+    free(w);
+    return ok;
+}
+void psx_zip_writer_abandon(PsxZipWriter *w)
+{
+    if (!w) return;
+    fclose(w->z.f); free(w->z.ents); free(w);
+}
+unsigned char *psx_zip_read_file(const char *path, long *size) { return read_file(path, size); }
+int psx_zip_list(const unsigned char *b, long n, PsxZipEntry *out, int max, char *err, unsigned errcap)
+{
+    return zip_entries(b, n, out, max, err, errcap);
+}
+unsigned char *psx_zip_extract(const unsigned char *b, long n, const PsxZipEntry *e, long *size)
+{
+    return zip_extract(b, n, e, size);
 }

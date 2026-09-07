@@ -89,6 +89,7 @@
 
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
+#include "psx_card_share.h"      /* the zip container a .ygoduelists file is */
 #include "psx_drop_db.h"
 #include "psx_duelist_portraits.h"
 #include "psx_drop_missing.h"
@@ -446,6 +447,14 @@ int psx_cpu_portrait_edited(int duelist)
     return (duelist >= 0 && duelist < NDUEL) ? g_edit[duelist].portrait_set : 0;
 }
 
+int psx_cpu_portraits_count(void)
+{
+    psx_cpu_ensure_loaded();
+    int n = 0;
+    for (int d = 0; d < NDUEL; d++) n += g_edit[d].portrait_set != 0;
+    return n;
+}
+
 /* Rebuild the whole tile block from stock, paint every replaced portrait into
  * it, and override the sectors. Returns how many portraits were painted, or
  * -1 when the stock sectors could not be read. */
@@ -724,10 +733,26 @@ static char *trim(char *s)
     return s;
 }
 
+/* -1 unreadable, -2 readable but with no duelist section in it (a wrong
+ * file picked in the dialog: nothing is touched), else the entry count. */
 static int read_ini(const char *path)
 {
     FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return -1;
+    {   /* a first pass for a section we know, before anything is reset */
+        char line[256];
+        int known = 0;
+        while (!known && fgets(line, sizeof line, f)) {
+            char *s = trim(line);
+            if (*s != '[') continue;
+            char *e = strchr(s, ']');
+            if (!e) continue;
+            *e = 0;
+            for (int d = 0; d < NDUEL; d++) if (!strcmp(PSX_DROP_DB[d].name, s + 1)) { known = 1; break; }
+        }
+        if (!known) { fclose(f); return -2; }
+        rewind(f);
+    }
     for (int d = 0; d < NDUEL; d++) {
         g_edit[d].deck_set = 0;
         g_edit[d].ai_set = 0;
@@ -871,32 +896,192 @@ int psx_cpu_save(void)
 int      psx_cpu_dirty(void)      { return g_dirty; }
 unsigned psx_cpu_generation(void) { return g_gen; }
 
+static const char *base_name(const char *p)
+{
+    const char *base = p;
+    for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') base = q + 1;
+    return base;
+}
+
+static int ends_with_ci(const char *s, const char *suffix)
+{
+    const size_t n = strlen(s), m = strlen(suffix);
+    if (m > n) return 0;
+    for (size_t i = 0; i < m; i++) {
+        const char a = s[n - m + i], b = suffix[i];
+        if ((a | 32) != (b | 32)) return 0;
+    }
+    return 1;
+}
+
+static void counts(int *decks, int *ai, int *names, int *portraits)
+{
+    *decks = *ai = *names = *portraits = 0;
+    for (int d = 0; d < NDUEL; d++) {
+        *decks += g_edit[d].deck_set != 0; *ai += g_edit[d].ai_set != 0;
+        *names += g_edit[d].name_set != 0; *portraits += g_edit[d].portrait_set != 0;
+    }
+}
+
+/* The share file. A plain ini carries decks, AI and names, which is all
+ * there was until portraits; a portrait is a PNG, so a file with portraits
+ * in it is a zip (.ygoduelists, the .ygocards container) holding the same
+ * ini as cpu-duelists.ini and duelists/<id>/portrait.png for each one. The
+ * name the player picked decides: .ini writes the ini alone and says the
+ * portraits stayed behind; anything else with portraits present is the
+ * zip; no extension gets the right one added. */
 int psx_cpu_export_file(const char *path, char *msg, unsigned cap)
 {
     psx_cpu_ensure_loaded();
     if (!path || !path[0]) { if (msg && cap) snprintf(msg, cap, "No file to export to"); return 0; }
+    int decks, ai, names, portraits;
+    counts(&decks, &ai, &names, &portraits);
     char p[1200];
     snprintf(p, sizeof p, "%s", path);
-    const char *base = p;
-    for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') base = q + 1;
-    if (!strchr(base, '.')) { const size_t n = strlen(p); snprintf(p + n, sizeof p - n, ".ini"); }
-    if (!write_to(p)) { if (msg && cap) snprintf(msg, cap, "Could not write that file"); return 0; }
-    int decks = 0, ai = 0, names = 0;
-    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; names += g_edit[d].name_set != 0; }
-    base = p;
-    for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') base = q + 1;
+    if (!strchr(base_name(p), '.')) {
+        const size_t n = strlen(p);
+        snprintf(p + n, sizeof p - n, portraits ? ".ygoduelists" : ".ini");
+    }
+    const int as_zip = portraits && !ends_with_ci(p, ".ini");
+    if (!as_zip) {
+        if (!write_to(p)) { if (msg && cap) snprintf(msg, cap, "Could not write that file"); return 0; }
+        if (msg && cap)
+            snprintf(msg, cap, "Exported %d deck%s, %d AI profile%s and %d name%s as %.40s%s",
+                     decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s",
+                     base_name(p), portraits ? "; an .ini cannot carry the portraits, export as .ygoduelists for those" : "");
+        return 1;
+    }
+    /* the ini rides inside: written beside the share folder, read back, removed */
+    char dir[1024], tmp[1200];
+    psx_cpu_share_dir(dir, sizeof dir);
+    snprintf(tmp, sizeof tmp, "%s/.cpu-export.ini", dir);
+    if (!write_to(tmp)) { if (msg && cap) snprintf(msg, cap, "Could not write that file"); return 0; }
+    long isz = 0;
+    unsigned char *ini = psx_zip_read_file(tmp, &isz);
+    (void)psx_remove_utf8(tmp);
+    if (!ini) { if (msg && cap) snprintf(msg, cap, "Could not write that file"); return 0; }
+    PsxZipWriter *z = psx_zip_writer_open(p);
+    if (!z) { free(ini); if (msg && cap) snprintf(msg, cap, "Could not create %.40s", base_name(p)); return 0; }
+    int ok = psx_zip_writer_add(z, "cpu-duelists.ini", ini, (size_t)isz);
+    free(ini);
+    int packed = 0;
+    for (int d = 0; ok && d < NDUEL; d++) {
+        if (!g_edit[d].portrait_set) continue;
+        char png[1200]; portrait_png(d, png, sizeof png);
+        long sz = 0; unsigned char *b = psx_zip_read_file(png, &sz);
+        if (!b) continue;                      /* the PNG went missing: the ini still travels */
+        char name[64]; snprintf(name, sizeof name, "duelists/%d/portrait.png", d + 1);
+        ok = psx_zip_writer_add(z, name, b, (size_t)sz);
+        free(b);
+        packed += ok;
+    }
+    if (!ok) { psx_zip_writer_abandon(z); if (msg && cap) snprintf(msg, cap, "Writing %.40s failed", base_name(p)); return 0; }
+    if (!psx_zip_writer_close(z)) { if (msg && cap) snprintf(msg, cap, "Writing %.40s failed", base_name(p)); return 0; }
     if (msg && cap)
-        snprintf(msg, cap, "Exported %d deck%s, %d AI profile%s and %d name%s as %.40s",
-                 decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s", base);
+        snprintf(msg, cap, "Exported %d deck%s, %d AI profile%s, %d name%s and %d portrait%s as %.40s",
+                 decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s",
+                 packed, packed == 1 ? "" : "s", base_name(p));
     return 1;
+}
+
+/* "duelists/<id>/portrait.png" -> duelist index, else -1 */
+static int portrait_entry(const char *name)
+{
+    int id = 0;
+    if (strncmp(name, "duelists/", 9)) return -1;
+    const char *q = name + 9;
+    while (*q >= '0' && *q <= '9') id = id * 10 + (*q++ - '0');
+    if (id < 1 || id > NDUEL || strcmp(q, "/portrait.png")) return -1;
+    return id - 1;
+}
+
+static void ensure_dir(const char *d)
+{
+#ifdef _WIN32
+    (void)_mkdir(d);
+#else
+    (void)mkdir(d, 0755);
+#endif
 }
 
 int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
 {
     psx_cpu_ensure_loaded();
-    if (!path || !path[0] || read_ini(path) < 0) {
-        if (msg && cap) snprintf(msg, cap, "Could not read that file");
-        return 0;
+    if (!path || !path[0]) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
+    int with_portraits = 0, portraits_in = 0, bad = 0;
+    {   /* zip or ini: the bytes say, not the name */
+        FILE *f = psx_fopen_utf8(path, "rb");
+        unsigned char sig[4] = {0};
+        if (!f) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
+        const size_t got = fread(sig, 1, 4, f);
+        fclose(f);
+        with_portraits = got == 4 && sig[0] == 'P' && sig[1] == 'K' && sig[2] == 3 && sig[3] == 4;
+    }
+    if (!with_portraits) {
+        const int r = read_ini(path);
+        if (r == -2) { if (msg && cap) snprintf(msg, cap, "That file has no duelist section in it; nothing changed"); return 0; }
+        if (r < 0) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
+    } else {
+        long n = 0;
+        unsigned char *b = psx_zip_read_file(path, &n);
+        if (!b) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
+        static PsxZipEntry ents[128];
+        char err[160];
+        const int k = psx_zip_list(b, n, ents, 128, err, sizeof err);
+        if (k < 0) { free(b); if (msg && cap) snprintf(msg, cap, "%s", err); return 0; }
+        /* the ini first: it is the edits; without one the file is not ours */
+        int have_ini = 0;
+        char dir[1024], tmp[1200];
+        psx_cpu_share_dir(dir, sizeof dir);
+        snprintf(tmp, sizeof tmp, "%s/.cpu-import.ini", dir);
+        for (int i = 0; i < k && !have_ini; i++) {
+            if (!ends_with_ci(ents[i].name, ".ini") || strchr(ents[i].name, '/')) continue;
+            long sz = 0; unsigned char *d = psx_zip_extract(b, n, &ents[i], &sz);
+            if (!d) continue;
+            FILE *f = psx_fopen_utf8(tmp, "wb");
+            if (f) { have_ini = fwrite(d, 1, (size_t)sz, f) == (size_t)sz; fclose(f); }
+            free(d);
+        }
+        if (!have_ini || read_ini(tmp) < 0) {
+            (void)psx_remove_utf8(tmp); free(b);
+            if (msg && cap) snprintf(msg, cap, "That file has no CPU duelists ini in it; nothing changed");
+            return 0;
+        }
+        (void)psx_remove_utf8(tmp);
+        /* the portraits: the file's replace the player's, and the ones it
+         * does not carry go, the same way its ini replaces every edit */
+        uint8_t in_file[NDUEL]; memset(in_file, 0, sizeof in_file);
+        char base[1100];
+        {
+            const char *pd = psx_mod_player_data_dir();
+            snprintf(base, sizeof base, "%s/duelists", pd && pd[0] ? pd : ".");
+        }
+        ensure_dir(base);
+        for (int i = 0; i < k; i++) {
+            const int d = portrait_entry(ents[i].name);
+            if (d < 0) continue;
+            long sz = 0; unsigned char *px = psx_zip_extract(b, n, &ents[i], &sz);
+            if (!px) { bad++; continue; }
+            char ddir[1024], png[1200];
+            portrait_dir(d, ddir, sizeof ddir); ensure_dir(ddir);
+            portrait_png(d, png, sizeof png);
+            FILE *f = psx_fopen_utf8(png, "wb");
+            const int ok = f && fwrite(px, 1, (size_t)sz, f) == (size_t)sz;
+            if (f) fclose(f);
+            free(px);
+            if (!ok) { bad++; continue; }
+            in_file[d] = 1; portraits_in++;
+        }
+        free(b);
+        for (int d = 0; d < NDUEL; d++) {
+            if (in_file[d]) { g_edit[d].portrait_set = 1; continue; }
+            if (!g_edit[d].portrait_set) continue;
+            char png[1200]; portrait_png(d, png, sizeof png);
+            (void)psx_remove_utf8(png);
+            g_edit[d].portrait_set = 0;
+            psx_duelist_portraits_override(d, NULL);
+        }
+        (void)portraits_install();
     }
     /* The file REPLACES the edits, so a deck that was installed before the
      * import and is not in the file must come off the disc too: the sector
@@ -912,13 +1097,18 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
     g_gen++;
     /* An import sticks, the way every other manager's does. */
     const int kept = psx_cpu_save();
-    int decks = 0, ai = 0, names = 0;
-    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; names += g_edit[d].name_set != 0; }
+    int decks, ai, names, portraits;
+    counts(&decks, &ai, &names, &portraits);
     if (msg && cap) {
         if (!kept) snprintf(msg, cap, "Imported, but %s could not be written", INI_NAME);
+        else if (with_portraits)
+            snprintf(msg, cap, "Imported %d deck%s, %d AI profile%s, %d name%s and %d portrait%s, and kept them%s",
+                     decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s",
+                     portraits_in, portraits_in == 1 ? "" : "s", bad ? " (some portraits were damaged and skipped)" : "");
         else snprintf(msg, cap, "Imported %d deck%s, %d AI profile%s and %d name%s, and kept them",
                       decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s");
     }
+    (void)portraits;
     return 1;
 }
 

@@ -76,6 +76,7 @@ int  psx_cpu_record_set(int duelist, int wins, int losses);
 int  psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned cap);
 int  psx_cpu_portrait_clear(int duelist);
 int  psx_cpu_portrait_edited(int duelist);
+int  psx_cpu_portraits_count(void);
 
 /* ---- the name ------------------------------------------------------------
  * What the FREE DUEL grid prints under the portrait, and what the campaign
@@ -98,7 +99,9 @@ const char *psx_cpu_display_name(int duelist);
 /* ---- persistence ---------------------------------------------------------
  * One file for the window, cpu_manager.ini, the same way the Drop Table
  * Manager keeps drop_table_edits.ini. Import replaces every edit with the
- * file's and keeps it, like the other managers. */
+ * file's and keeps it, like the other managers. Export writes that ini, or,
+ * when any portrait is edited, a .ygoduelists zip (the .ygocards container)
+ * with the ini and the portrait PNGs inside; import takes either. */
 int  psx_cpu_dirty(void);
 int  psx_cpu_save(void);
 unsigned psx_cpu_generation(void);

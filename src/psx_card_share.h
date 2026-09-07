@@ -7,6 +7,9 @@
 #ifndef PSX_CARD_SHARE_H
 #define PSX_CARD_SHARE_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,6 +31,27 @@ typedef struct {
     long bytes;
     char title[96];           /* the manifest's title line, if any */
 } PsxCardShareInfo;
+
+/* The zip reader and writer behind .ygocards, for any other share file that
+ * wants the same container (the CPU Manager's .ygoduelists carries its ini
+ * and the portrait PNGs). Stored entries, names under 64 bytes, sizes
+ * bounded; the reader also inflates deflated entries so a hand re-zipped
+ * file loads. */
+typedef struct PsxZipWriter PsxZipWriter;
+PsxZipWriter *psx_zip_writer_open(const char *path);
+int  psx_zip_writer_add(PsxZipWriter *z, const char *name, const void *data, size_t n);
+int  psx_zip_writer_close(PsxZipWriter *z);              /* writes the directory; frees z */
+void psx_zip_writer_abandon(PsxZipWriter *z);            /* on a failed add: closes and frees */
+typedef struct {
+    char name[64];
+    uint32_t method, csize, usize, offset, crc;
+} PsxZipEntry;
+/* The whole file (malloc'd, NUL-terminated past the end) or NULL. */
+unsigned char *psx_zip_read_file(const char *path, long *size);
+/* Entries of an archive already in memory; the count, or -1 with err set. */
+int  psx_zip_list(const unsigned char *b, long n, PsxZipEntry *out, int max, char *err, unsigned errcap);
+/* One entry, malloc'd and NUL-terminated, checked against its crc; NULL when damaged. */
+unsigned char *psx_zip_extract(const unsigned char *b, long n, const PsxZipEntry *e, long *size);
 
 /* Write every edited card (and drop table edits) to path. */
 int  psx_card_share_export(const char *path, char *msg, unsigned cap);

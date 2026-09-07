@@ -233,9 +233,10 @@ back, and the grid shows the new name at once. The Drop Table Manager and
 this window's list print it too; the ini keeps the disc's name as the
 section header so a renamed duelist can still be found.
 
-**Portraits.** Right-click a duelist and `Replace the portrait…`: any picture
-becomes their 48x48 tile, scaled and quantised to the 64 colours the tile
-holds, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
+**Portraits.** Click the portrait on the title line (or right-click a
+duelist and `Replace the portrait…`): any PNG, JPG or BMP becomes their 48x48
+tile, scaled and quantised to the 64 colours the tile holds, so a small square
+picture looks best, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
 `duelists/<id>/portrait.png`, so it comes back at the next launch and can be
 replaced by hand; `Portrait back to stock` removes it.
 
@@ -246,9 +247,11 @@ and the deck and the portrait go back to the game through sector overrides
 of that duelist's disc record and portrait tile, so the game loads them with
 its own loader. Nothing on your disc is touched.
 
-`Defaults` puts one duelist's deck and AI back, `Import…`/`Export…` share the
-lot, and an import is kept straight away and replaces what was there,
-overrides included.
+`Defaults` puts one duelist's deck and AI back. `Export…` writes the ini, or,
+once any portrait is replaced, a `.ygoduelists` file (a zip, like
+`.ygocards`) with the ini and the portrait PNGs inside, so a set travels
+whole; `Import…` takes either, is kept straight away and replaces what was
+there, overrides and portraits included.
 
 ### Card Manager (`VIEW → CARD MANAGER`)
 

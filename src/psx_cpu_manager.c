@@ -18,6 +18,11 @@
  * place. It is written to the save struct in RAM, so it counts as a save
  * edit, not a preference -- the window says so when no save is loaded.
  *
+ * The PORTRAIT on the title line is the grid's 48x48 tile; click it to
+ * replace it (right-click for the disc's own). The footer says what a click
+ * does while the pointer is on either control, because neither looks like
+ * a button and the tile's size is nothing a player could guess.
+ *
  * The NAME on the title line is the one the FREE DUEL grid prints; click it
  * (or right-click the duelist, Rename) and type. It is a cpu_manager.ini
  * edit like the deck and the AI, and psx_cpu_data.c puts it in the game's
@@ -271,6 +276,7 @@ typedef struct {
     int  r_id_x, r_id_r, r_name_x, r_name_r, r_weight_x, r_weight_r, r_share_x, r_share_r;
     Rect rec_win, rec_loss;              /* the editable record cells */
     Rect name_box;                       /* the title line's name, click to rename */
+    Rect portrait;                       /* the title line's portrait, click to replace */
 } Layout;
 static Layout s_L;
 
@@ -356,7 +362,10 @@ static void layout_compute(void)
         L->rec_win  = (Rect){ L->rec_loss.x - lw - cw - px(12.0f), L->title[1].y, cw, h };
         /* the name takes what is left of the line, a gap short of WIN's label */
         const int nr = L->rec_win.x - lw - px(12.0f);
-        L->name_box = (Rect){ L->title[1].x, L->title[1].y, imax(px(40.0f), nr - L->title[1].x), h };
+        /* the portrait first, a square the height of the line, then the name */
+        L->portrait = (Rect){ L->title[1].x, L->title[1].y, h, h };
+        const int nx = L->portrait.x + L->portrait.w + px(8.0f);
+        L->name_box = (Rect){ nx, L->title[1].y, imax(px(40.0f), nr - nx), h };
     }
 }
 
@@ -580,6 +589,16 @@ static void draw_right_title(const char *note, uint32_t col)
 {
     const Layout *L = &s_L;
     draw_panel(1, "", col, NULL, COL_DIM);
+    {   /* the portrait is a control: it lights on hover and a click replaces it */
+        const Rect *P = &L->portrait;
+        if (s_hover_btn == 8)
+            psx_ui_round_rect(&s_cv, P->x - px(3.0f), P->y - px(2.0f), P->w + px(6.0f), P->h + px(4.0f), (float)px(U_R_BOX), COL_HOVER);
+        draw_icon(P->x, P->y, P->w, s_sel, COL_PANEL);
+        if (psx_cpu_portrait_edited(s_sel)) {
+            const int m = px(3.0f);
+            psx_ui_fill(&s_cv, P->x + P->w - m, P->y, m, m, COL_EDITED);
+        }
+    }
     if (s_edit_kind == ED_NAME) { draw_number_box(&L->name_box); }
     else {
         char title[80];
@@ -689,6 +708,16 @@ static void draw_footer(void)
     const PsxUiFace *fs = face_small();
     const Rect f = { L->pane[0].x + px(4.0f), L->foot_y, s_w - 2 * L->pane[0].x - px(8.0f), L->foot_h };
     if (s_msg[0]) { text_in(&f, 0, s_msg, COL_WARN, fs); return; }
+    /* what the two title-line controls do, while the pointer is on them:
+     * neither looks like a button, and the portrait's size is not guessable */
+    if (s_hover_btn == 8) {
+        text_in(&f, 0, "Click to replace the portrait: any PNG, JPG or BMP becomes this duelist's 48x48 tile in 64 colors, so a small square picture looks best. Right-click it for the disc's own.", COL_TEXT, fs);
+        return;
+    }
+    if (s_hover_btn == 7) {
+        text_in(&f, 0, "Click to rename: what the Free Duel grid prints under the portrait, up to 20 characters from the game's own font.", COL_TEXT, fs);
+        return;
+    }
     if (psx_cpu_dirty()) {
         text_in(&f, 0, "Unsaved edits. Save writes cpu_manager.ini in your player-data folder; a deck goes back to the disc through a sector override.", COL_WARN, fs);
         return;
@@ -697,7 +726,7 @@ static void draw_footer(void)
             ? "Click a value to type a new one, Enter keeps it. Right-click for the menu. These nine bytes are what the duel AI reads about this opponent."
             : (s_all_cards
                ? "Every card: type a weight on one at 0 to add it to the deck, or right-click it. Weights are out of 2048."
-               : "Click a weight to type a new one, Enter keeps it. Right-click a row for more, or turn on All cards to add one. At most three copies of a card are ever dealt."),
+               : "Click the portrait or the name above to change them. Click a weight to type a new one, Enter keeps it. Right-click a row for more, or turn on All cards to add one."),
             COL_DIM, fs);
 }
 
@@ -913,14 +942,16 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_default, x, y)) return 5;
     if (in_rect(&L->btn_all, x, y))     return 6;
     if (in_rect(&L->name_box, x, y))    return 7;
+    if (in_rect(&L->portrait, x, y))    return 8;
     return -1;
 }
 
+/* An .ini until a portrait is edited; then the zip that can carry PNGs. */
 static void export_default_path(char *out, unsigned cap)
 {
     char dir[1024];
     psx_cpu_share_dir(dir, sizeof dir);
-    snprintf(out, cap, "%s/cpu-duelists.ini", dir);
+    snprintf(out, cap, "%s/cpu-duelists.%s", dir, psx_cpu_portraits_count() ? "ygoduelists" : "ini");
 }
 
 #if defined(PSX_SDL3)
@@ -943,7 +974,7 @@ static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int fil
 static void do_export(void)
 {
 #if defined(PSX_SDL3)
-    static const SDL_DialogFileFilter filters[] = { { "CPU duelists", "ini" } };
+    static const SDL_DialogFileFilter filters[] = { { "CPU duelists (ini, or ygoduelists with portraits)", "ygoduelists;ini" } };
     static char def[1200];
     export_default_path(def, sizeof def);
     SDL_ShowSaveFileDialog(pick_cb, (void *)(intptr_t)1, s_win, filters, 1, def);
@@ -955,7 +986,7 @@ static void do_export(void)
 static void do_portrait(void)
 {
 #if defined(PSX_SDL3)
-    static const SDL_DialogFileFilter filters[] = { { "Pictures", "png;jpg;jpeg;bmp" } };
+    static const SDL_DialogFileFilter filters[] = { { "Pictures (shown at 48x48)", "png;jpg;jpeg;bmp" } };
     SDL_ShowOpenFileDialog(pick_cb, (void *)(intptr_t)3, s_win, filters, 1, NULL, false);
 #else
     say("No file dialog in this build: use the debug command cpu_data with portrait:<path>");
@@ -965,7 +996,7 @@ static void do_portrait(void)
 static void do_import(void)
 {
 #if defined(PSX_SDL3)
-    static const SDL_DialogFileFilter filters[] = { { "CPU duelists", "ini" } };
+    static const SDL_DialogFileFilter filters[] = { { "CPU duelists (ini or ygoduelists)", "ini;ygoduelists" } };
     static char dir[1024];
     psx_cpu_share_dir(dir, sizeof dir);
     SDL_ShowOpenFileDialog(pick_cb, (void *)(intptr_t)2, s_win, filters, 1, dir, false);
@@ -988,6 +1019,13 @@ static void rclick(int x, int y)
 {
     edit_end();
     cm_close();
+    if (in_rect(&s_L.portrait, x, y)) {
+        s_cm_x = x; s_cm_y = y; s_cm_n = 0; s_cm_hover = -1;
+        cm_add("Replace the portrait" S_ELLIP " (48x48 picture)", CM_PORTRAIT, s_sel, 0);
+        if (psx_cpu_portrait_edited(s_sel)) cm_add("Portrait back to stock", CM_PORTRAIT_STOCK, s_sel, 0);
+        s_dirty = 1;
+        return;
+    }
     const int p = pane_at(x, y);
     const int r = row_at(p, x, y);
     if (r < 0) return;
@@ -1002,7 +1040,7 @@ static void rclick(int x, int y)
         }
         cm_add("Rename" S_ELLIP, CM_RENAME, d, 0);
         if (psx_cpu_name_edited(d)) cm_add("Name back to the disc's own", CM_NAME_STOCK, d, 0);
-        cm_add("Replace the portrait" S_ELLIP, CM_PORTRAIT, d, 0);
+        cm_add("Replace the portrait" S_ELLIP " (48x48 picture)", CM_PORTRAIT, d, 0);
         if (psx_cpu_portrait_edited(d)) cm_add("Portrait back to stock", CM_PORTRAIT_STOCK, d, 0);
         cm_add("Deck back to stock", CM_DECK_STOCK, d, 0);
         cm_add("AI back to stock", CM_AI_STOCK, d, 0);
@@ -1057,6 +1095,7 @@ static void click(int x, int y, int button)
     if (in_rect(&L->rec_win, x, y))  { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_WINS, 0, w); else say("No save is loaded"); return; }
     if (in_rect(&L->rec_loss, x, y)) { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_LOSSES, 0, l); else say("No save is loaded"); return; }
     if (in_rect(&L->name_box, x, y)) { edit_begin(ED_NAME, 0, 0); return; }
+    if (in_rect(&L->portrait, x, y)) { do_portrait(); return; }
 
     const int p = pane_at(x, y);
     const int r = row_at(p, x, y);
@@ -1383,6 +1422,7 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "rec_win", &L->rec_win);
     if (n < cap) n += rect_json(out + n, cap - n, "rec_loss", &L->rec_loss);
     if (n < cap) n += rect_json(out + n, cap - n, "name_box", &L->name_box);
+    if (n < cap) n += rect_json(out + n, cap - n, "portrait", &L->portrait);
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
         ",\"weight_col\":[%d,%d],\"name_col\":[%d,%d]}",
         L->r_weight_x, L->r_weight_r, L->r_name_x, L->r_name_r);
