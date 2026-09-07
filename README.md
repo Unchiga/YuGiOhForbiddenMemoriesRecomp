@@ -494,11 +494,14 @@ past the boot screen, see `tools/LIVE_TESTING.md`). Every monster's ATK and
 DEF are rolled outright from 0 to 4500 (a card the game can deal into a new
 game's first deck stays under 3000), its level, type, attribute and guardian
 stars are rolled, every card gets a random frame
-color, name color, price and password, a set of monsters gets battle rules,
-immunities and cast effects, a set of Magic cards gets a different effect, every
-equip card fits a random set of monsters (as many as in stock), and
-every card whose effect changed has its description replaced by a short text
-saying what it now does; every duelist's drop tables, deck pool, hand size,
+color, name color, price and password; 60 % of monsters get a cast effect (a
+third of those two, on different triggers), a fifth a battle rule and maybe an
+immunity, 15 % a field bonus that can be negative, and about a third of the
+casts hurt their owner; every Magic and Ritual card gets a new effect (Ritual
+cards a real recipe half the time), every trap a new ATK ceiling, every equip
+a new bonus and a random set of monsters it fits, every field card new type
+boosts; and every card whose effect changed has its description replaced by a
+short text saying what it now does; every duelist's drop tables, deck pool, hand size,
 fusion deck gate, combo width and fusion depth are rolled; the monster +
 monster fusion results are shuffled; and the package switches on `CARD DROPS`
 at 15, `DROP MISSING CARDS` and `LIBRARY PLACEHOLDERS`. The drop tables come

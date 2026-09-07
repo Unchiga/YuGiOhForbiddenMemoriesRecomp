@@ -484,8 +484,11 @@ static void handle_randomizer_stock(int id, const char *json)
     for (int c = 1; c <= 722; c++) {
         PsxCardStock st;
         if (!psx_card_packs_stock(c, &st)) continue;
-        fprintf(f, "%s\"%d\":{\"atk\":%d,\"dfn\":%d,\"type\":%d,\"level\":%d,\"attr\":%d,\"star1\":%d,\"star2\":%d,\"price\":%d,\"password\":\"%s\"}",
-                cards ? "," : "", c, st.attack, st.defense, st.type, st.level, st.attribute, st.star1, st.star2, st.price, st.password);
+        char nm[64]; unsigned k = 0;
+        for (const char *q = st.name; *q && k + 2 < sizeof nm; q++) { if (*q == '"' || *q == '\\') nm[k++] = '\\'; nm[k++] = *q; }
+        nm[k] = 0;
+        fprintf(f, "%s\"%d\":{\"name\":\"%s\",\"atk\":%d,\"dfn\":%d,\"type\":%d,\"level\":%d,\"attr\":%d,\"star1\":%d,\"star2\":%d,\"price\":%d,\"password\":\"%s\"}",
+                cards ? "," : "", c, nm, st.attack, st.defense, st.type, st.level, st.attribute, st.star1, st.star2, st.price, st.password);
         cards++;
     }
     fprintf(f, "},\"ai\":{");
