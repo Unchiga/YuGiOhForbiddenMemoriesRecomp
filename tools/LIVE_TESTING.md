@@ -361,7 +361,26 @@ Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 0x8009B1D5, terrain 0x8009B364, deck written at the grid: 0x801D0200.
 
-## 13. Stopping
+## 13. Measuring what a scene costs
+
+`frame_perf` reports GPU timer spans, and a span runs from a frame's first GPU
+command to its last: on a paced 60 Hz run it reads ~15 ms whatever is drawn
+(the "Created by" still at the end of the credits, 53 prims, reads the same
+as the wireframe monsters). It says nothing about load on its own. To measure
+cost, lift the cap and read the frame counter: `{"cmd":"game_speed","mult":4}`
+(4 is the ceiling), then frames per wall second over 3 s windows. Anything
+under 240 is the machine falling behind; `{"cmd":"game_speed","mult":1}` puts
+it back. That is how the credits' per-line draw path was caught 2026-09-06
+(146 to 235 fps before batching, 240 flat after).
+
+The ending: after Nitemare the game shows SAVE?, then SECRET NO., then the
+wireframe credits, and then stays on "Created by Konami Computer
+Entertainment Japan" forever. That still is the finale, not a hang: the
+frame counter runs and the log is quiet. A player has to reset from there.
+Slot files for a player's state go in the openbios/ folder beside yours;
+slots are 0..11.
+
+## 14. Stopping
 
 ```sh
 kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)
