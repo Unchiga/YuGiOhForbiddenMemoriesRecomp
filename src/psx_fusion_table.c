@@ -414,6 +414,16 @@ int psx_fusion_table_result(int a, int b)
     return 0;
 }
 
+int psx_fusion_table_stock_count(void) { return psx_fusion_table_ready() ? s_stock_n : 0; }
+int psx_fusion_table_stock_pair(int i, int *a, int *b, int *r)
+{
+    if (!psx_fusion_table_ready() || i < 0 || i >= s_stock_n) return 0;
+    if (a) *a = s_stock_pairs[i].a;
+    if (b) *b = s_stock_pairs[i].b;
+    if (r) *r = s_stock_pairs[i].r;
+    return 1;
+}
+
 int psx_fusion_table_stock_result(int a, int b)
 {
     if (!psx_fusion_table_ready()) return 0;
@@ -441,8 +451,48 @@ void psx_fusion_table_budget(int *used, int *capacity, int *pairs)
 
 /* --- editing -------------------------------------------------------------- */
 
+/* An import of thousands of lines used to re-sort the edit list after every
+ * one (a 24 000-line randomizer table took 7 s, past the runtime's 4 s
+ * starvation watchdog). In batch mode the lines are appended as they come,
+ * a removal as r = BATCH_DROP, and batch_end sorts once, keeping the last
+ * word on each pair. */
+#define BATCH_DROP 0xFFFFu
+static int s_batch;
+typedef struct { Pair p; int seq; } BatchPair;
+static int batch_cmp(const void *x, const void *y)
+{
+    const BatchPair *p = (const BatchPair *)x, *q = (const BatchPair *)y;
+    if (p->p.a != q->p.a) return (int)p->p.a - (int)q->p.a;
+    if (p->p.b != q->p.b) return (int)p->p.b - (int)q->p.b;
+    return p->seq - q->seq;
+}
+static void batch_end(void)
+{
+    s_batch = 0;
+    if (s_edit_n <= 0) return;
+    BatchPair *v = (BatchPair *)malloc(sizeof(BatchPair) * (size_t)s_edit_n);
+    if (!v) { qsort(s_edit, (size_t)s_edit_n, sizeof(Pair), pair_cmp); return; }
+    for (int i = 0; i < s_edit_n; i++) { v[i].p = s_edit[i]; v[i].seq = i; }
+    qsort(v, (size_t)s_edit_n, sizeof(BatchPair), batch_cmp);
+    int n = 0;
+    for (int i = 0; i < s_edit_n; ) {
+        int j = i;
+        while (j + 1 < s_edit_n && v[j + 1].p.a == v[i].p.a && v[j + 1].p.b == v[i].p.b) j++;
+        if (v[j].p.r != BATCH_DROP) s_edit[n++] = v[j].p;     /* the last line for this pair wins */
+        i = j + 1;
+    }
+    s_edit_n = n;
+    free(v);
+}
+
 static int edit_put(int a, int b, int r)
 {
+    if (s_batch) {
+        if (!grow((void **)&s_edit, &s_edit_cap, s_edit_n + 1, sizeof(Pair))) return 0;
+        s_edit[s_edit_n].a = (uint16_t)a; s_edit[s_edit_n].b = (uint16_t)b; s_edit[s_edit_n].r = (uint16_t)r;
+        s_edit_n++;
+        return 1;
+    }
     const int i = pair_find(s_edit, s_edit_n, a, b);
     if (i >= 0) { s_edit[i].r = (uint16_t)r; return 1; }
     if (!grow((void **)&s_edit, &s_edit_cap, s_edit_n + 1, sizeof(Pair))) return 0;
@@ -456,6 +506,12 @@ static int edit_put(int a, int b, int r)
 
 static void edit_drop(int a, int b)
 {
+    if (s_batch) {
+        if (!grow((void **)&s_edit, &s_edit_cap, s_edit_n + 1, sizeof(Pair))) return;
+        s_edit[s_edit_n].a = (uint16_t)a; s_edit[s_edit_n].b = (uint16_t)b; s_edit[s_edit_n].r = (uint16_t)BATCH_DROP;
+        s_edit_n++;
+        return;
+    }
     const int i = pair_find(s_edit, s_edit_n, a, b);
     if (i < 0) return;
     memmove(&s_edit[i], &s_edit[i + 1], sizeof(Pair) * (size_t)(s_edit_n - i - 1));
@@ -750,6 +806,7 @@ int psx_fusion_table_import(const char *path, char *err, unsigned cap)
     const int had_wipe = s_wipe;
     int applied = 0, skipped = 0, lines = 0, cleared = 0;
     char *save = NULL;
+    s_batch = 1;                       /* sort once at the end, see edit_put */
     for (char *ln = text; ln && *ln; ) {
         char *nl = strpbrk(ln, "\r\n");
         if (nl) { *nl = 0; save = nl + 1; } else save = NULL;
@@ -777,6 +834,7 @@ int psx_fusion_table_import(const char *path, char *err, unsigned cap)
         ln = save;
         while (ln && (*ln == '\n' || *ln == '\r')) ln++;
     }
+    batch_end();
     free(text);
 
     char why[256] = "";

@@ -29,6 +29,22 @@
 extern "C" {
 #endif
 
+/* COMPATIBILITY CONTRACT for .ygomods files (and the share files inside them)
+ *
+ *  - A package is a zip of independent parts, each read only by the manager
+ *    that owns it, in that manager's own plain-text format. A part the file
+ *    lacks leaves that manager alone; a file the game does not know is
+ *    ignored; an unknown key, row or line inside a part is skipped.
+ *  - Keys never change meaning. A field gains a new key; it never reuses an
+ *    old one for something else. A row a later version removed (a settings
+ *    key, say) is simply not found and ignored.
+ *  - PSX_MOD_PACKAGE_VERSION is bumped ONLY when an older game would misread
+ *    the file. Older packages always import; a newer package is refused with
+ *    "Made by a newer version (N); update the game" rather than half-read.
+ *  - Every release runs tools/package_roundtrip.py against the debug build:
+ *    export, Revert to Stock, import, export again, part-by-part equality,
+ *    and an import of every earlier version's package in tools/fixtures/.
+ *    The B package it keeps becomes the next version's fixture. */
 #define PSX_MOD_PACKAGE_EXT     "ygomods"
 #define PSX_MOD_PACKAGE_FORMAT  "YGOFM-MOD-PACKAGE"
 #define PSX_MOD_PACKAGE_VERSION 1

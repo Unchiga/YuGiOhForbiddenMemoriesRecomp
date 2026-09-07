@@ -81,7 +81,13 @@ makes it. Click a name to follow it, `Backspace` to go back. `Recipes` is all
 
 **Right-click a row** to change, delete or add a fusion, picking the card off a
 searchable list: type `dragon`, take *Blue-eyes Ultimate Dragon*, never having
-to know it is card 380. `Delete all…` empties the table for designing a set from
+to know it is card 380. The orange rows are **equip pairings**, and they are
+editable here too: right-click one to take it away, right-click an equip card
+for `Add a monster it fits…`, or a monster for `Add an equip that fits it…`.
+An equip's list is kept as `equips = …` in its own `cards/<id>/card.ini`
+(the same list the Card Manager edits), so it travels with your cards and a
+MOD package, and `Equip list back to the disc's own` undoes it. The window
+shows the pairings the game actually answers, Card Manager edits included. `Delete all…` empties the table for designing a set from
 scratch; `Restore stock…` (or `Ctrl+Z`) puts the game's own back, keeping a copy
 in `fusion_edits_backup.txt`. `Export…` / `Import…` move a recipe list as plain
 text (a `card1,card2,result` CSV works), and changes save to `fusion_edits.txt`
@@ -137,18 +143,14 @@ when you leave or turn it off.
 ### Scripted story drops (in the Drop Table Manager)
 
 Give a duelist a card they are **guaranteed to drop when the campaign beats
-them**: Simon good for a Lady of Faith, Jono for a Baby Dragon, whatever you
-choose. Right-click a row in the Drop Table Manager to set or clear one, and
+them**. Right-click a row in the Drop Table Manager to set or clear one, and
 pick whether it comes on the **first** campaign win only or on **every** one.
+A stock install has none, so a duelist with no card set is the off switch.
 
-There is no MODS row, because a duelist with no card set is the off switch: a
-stock install has none. The pairs are kept in `drop_table_edits.ini` with your
-weight edits, so one `Save` keeps them and `Export` shares them.
-
-It replaces the drop rather than adding to it, so with `CARD DROPS` on you
-still get the same number of cards - the scripted one plus the usual randoms.
-Free Duel is untouched: it is a story reward, so it only fires in the
-campaign.
+The scripted card replaces that duelist's random drop rather than adding to
+it, and only in the campaign - Free Duel is untouched. Pairs are kept in
+`drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
+and `Export` shares them.
 
 ### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
@@ -175,7 +177,12 @@ cannot balance is refused rather than fudged.
 
 **Nothing is written until `Save`**, which persists your table as
 `drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
-stock. `Export…` writes your table to a file to send to someone and `Import…`
+stock. `Randomize` rebuilds every duelist's three bands from stock: each band
+keeps its number of drops, every monster slot gets a random monster from the
+whole game, the magic, trap, equip and ritual drops keep their card, and every
+slot gets a fresh weight that still totals 2048. It asks twice, since it
+replaces every duelist's edits at once, and like any edit it is not written
+until `Save`. `Export…` writes your table to a file to send to someone and `Import…`
 loads one back - an import is kept straight away, so a table someone sends you
 is live in the game and still there next launch. With `DROP MISSING CARDS` on, the manager shows and
 edits the table you will actually roll against.
@@ -205,8 +212,9 @@ duelist cannot draw: type a weight on one of those, or right-click it, and it
 joins the deck. Right-click anything for the rest - remove a card, put the
 deck, the AI or both back to stock, clear a record.
 
-**AI.** `gDuel_aOpponentData` gives each duelist nine bytes, and the AI is a
-bytecode VM whose script can be disassembled, so most of them have a job:
+**AI.** `gDuel_aOpponentData` gives each duelist nine bytes. The AI is a
+bytecode VM whose script can be disassembled, and five of the bytes have a
+job we can read off it:
 
 | | |
 |---|---|
@@ -215,13 +223,9 @@ bytecode VM whose script can be disassembled, so most of them have a job:
 | `Fusion deck gate` | compared against the cards left in the AI's deck just before it looks for a fusion |
 | `Combo width` | handed to the best-combo search |
 | `Fusion depth` | minus one, how far the fusion evaluator looks |
-| `Rank 1` / `Rank 2` | rise 0 to 5 across the campaign; nothing in the duel script reads them |
-| `Opening value` | the first thing the duel script reads about the opponent |
 
-The window shows the disc's value beside yours, and the hint line says what
-each one does. The script also singles out **Pegasus, Heishin 2nd, Seto 3rd,
-DarkNite and Nitemare** by id and flags them; that is the game's own list of
-special opponents, and the flag is read by code outside the script.
+The rest are editable but not understood, so the window leaves them unnamed
+and shows the disc's value beside yours for every byte.
 
 **Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
 the ones `FREE DUEL` shows. Click either and type.
@@ -249,7 +253,8 @@ and the deck and the portrait go back to the game through sector overrides
 of that duelist's disc record and portrait tile, so the game loads them with
 its own loader. Nothing on your disc is touched.
 
-`Back to stock` puts one duelist's deck, AI, name and portrait back. `Export…` writes the ini, or,
+A deck pool listed in the ini **replaces** the duelist's: a card that is not in
+the list is not in the pool. `Back to stock` puts one duelist's deck, AI, name and portrait back. `Export…` writes the ini, or,
 once any portrait is replaced, a `.ygoduelists` file (a zip, like
 `.ygocards`) with the ini and the portrait PNGs inside, so a set travels
 whole; `Import…` takes either, is kept straight away and replaces what was
@@ -358,8 +363,8 @@ the orange effect frame unless `color` says otherwise.
 
 #### The Card Effects mod
 
-`MODS → Card effects` (or `Dev Card Effects` in the manager) switches to a
-second card set in `mods/card_effects/cards/`: the original cards with their
+`MODS → Card set` (or `Dev Card Effects` in the manager, the same switch)
+switches to a second card set in `mods/card_effects/cards/`: the original cards with their
 real effects adapted to Forbidden Memories. While it is on, the manager, Export
 and Import work on that set and your own `cards/` edits sit untouched. Off by
 default.
@@ -472,6 +477,40 @@ manager's Import does and is kept straight away; the settings rows are set
 as if you had clicked them. A part the file does not carry leaves that
 manager alone. The default folder is `mod_packages` beside your saves.
 
+**Packages keep working across versions.** Every part is a plain-text file
+read only by its own manager; a part the file lacks, a file the game does not
+know, or a key it does not know is skipped, keys never change meaning, and the
+format number only moves when an older game would misread a file (then the
+older game refuses it and says to update). Before a release,
+`tools/package_roundtrip.py` exports, reverts, imports and exports again and
+compares every part, then imports the packages earlier versions wrote
+(`tools/fixtures/`).
+
+#### A randomizer package (`tools/randomizer.py`)
+
+`python3 tools/randomizer.py --seed 2026` builds a whole-game randomizer as one
+`.ygomods` file, from this disc's own data (it needs the debug build running
+past the boot screen, see `tools/LIVE_TESTING.md`). Every monster's ATK, DEF,
+level, attribute and guardian stars are rolled, every card gets a random frame
+color, name color, price and password, a set of monsters gets battle rules,
+immunities and cast effects, a set of Magic cards gets a different effect, every
+equip card fits a random set of monsters (as many as in stock), and
+every card whose effect changed has its description replaced by a short text
+saying what it now does; every duelist's drop tables, deck pool, hand size,
+fusion deck gate, combo width and fusion depth are rolled; the monster +
+monster fusion results are shuffled; and the package switches on `CARD DROPS`
+at 15, `DROP MISSING CARDS` and `LIBRARY PLACEHOLDERS`. The drop tables come
+in two shapes: the default pins up to 128 random monsters over each duelist's
+stock table, taking most of every band, which every release since 0.5.5
+loads; `--drops full` rewrites the bands outright, like the `Randomize`
+button, and needs the runtime that ships with it. The CPUs still ramp:
+the later a duelist sits in the campaign, the stronger the monsters their
+pool draws from, the heavier their strongest cards weigh, and the bigger their
+hand, combo width and fusion depth. `--difficulty 2` makes that ramp steep
+from the first duelist, `--difficulty 0` flattens it. Same seed, same
+package, so a seed is enough to share a run. Import it with `MODS → IMPORT MOD PACKAGE…`, after
+exporting your own package if you want your edits back.
+
 ### Widescreen (`VIEW → WIDESCREEN`, experimental)
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).
@@ -494,6 +533,12 @@ Neither reveal is an overlay: they clear the actual flags, so a monster revealed
 face-up genuinely is face-up and will not flip when attacked. The first three
 rows are preferences restored on every launch; the other three write live save
 data, so they are not re-applied at startup and decline until a save is loaded.
+
+### Heals count past 8000
+
+Stock, a heal card stops at the LP the duel began with, so Mooyan Curry at
+8000 LP does nothing. Here a heal carries LP up to 9999, the most the counter
+shows. Both duelists.
 
 ### From the runtime
 

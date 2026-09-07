@@ -36,6 +36,7 @@
  * nothing and is left alone. That is the whole re-entry guard.
  */
 
+#include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_edits.h"
 #include "psx_drop_missing_table.h"
@@ -68,6 +69,50 @@ static int      g_throttle = 0;     /* frames until the next check */
 static char g_status[128] = "not started";
 static char g_ini_path[1024] = "";
 static uint32_t g_last_fp = 0;      /* observability: last fingerprint seen */
+/* The same three-tier fingerprint of every duelist's STOCK tables, from the
+ * baked drop database, computed on first use. Two pairs of duelists share
+ * identical drop tables (they differ only by deck), so a match can name two
+ * candidates; the opponent id the game keeps at 0x8009B361 (1..39, the
+ * database index + 1) settles those. */
+static uint32_t g_stock_fp[39];
+static int      g_stock_fp_ready;
+#define OPPONENT_ID_ADDR 0x8009B361u
+
+static void stock_fingerprints(void)
+{
+    if (g_stock_fp_ready) return;
+    static uint16_t w[PSX_DROP_CARDS];
+    for (int r = 0; r < 39 && r < PSX_DROP_DB_DUELISTS; r++) {
+        uint32_t h = 0x811C9DC5u;
+        for (int t = 0; t < PSX_DROP_DB_TIERS; t++) {
+            memset(w, 0, sizeof w);
+            for (int i = 0; i < PSX_DROP_DB[r].count[t]; i++) {
+                const PsxDropWeight *e = &PSX_DROP_DB[r].tier[t][i];
+                if (e->card >= 1 && e->card <= PSX_DROP_CARDS) w[e->card - 1] = e->weight;
+            }
+            for (unsigned i = 0; i < PSX_DROP_CARDS; i++) {
+                h = (h ^ (uint32_t)(w[i] & 0xFFu)) * 0x01000193u;
+                h = (h ^ (uint32_t)(w[i] >> 8))    * 0x01000193u;
+            }
+        }
+        g_stock_fp[r] = h;
+    }
+    g_stock_fp_ready = 1;
+}
+
+/* Which duelist the resident drop tiers belong to: -1 when they are nobody's
+ * stock tables (already rewritten, or not a duel). */
+static int match_resident(uint32_t fp)
+{
+    stock_fingerprints();
+    int found = -1, n = 0;
+    for (int r = 0; r < 39; r++)
+        if (g_stock_fp[r] == fp) { if (found < 0) found = r; n++; }
+    if (n <= 1) return found;
+    const int id = (int)psx_mod_read_byte(OPPONENT_ID_ADDR);
+    if (id >= 1 && id <= 39 && g_stock_fp[id - 1] == fp) return id - 1;
+    return -1;
+}
 static int  g_matched = -1;         /* duelist it resolved to, -1 = none */
 static int  g_tier_ok[3] = { -1, -1, -1 };  /* per-tier apply result (mod)   */
 static int  g_edit_ok[3] = { -1, -1, -1 };  /* per-tier apply result (edits) */
@@ -78,11 +123,15 @@ static uint32_t tbl_addr(int table, unsigned card_index)
            + card_index * 2u;
 }
 
-/* FNV-1a over the four 1444-byte weight arrays, byte order as in RAM. */
+/* FNV-1a over the THREE resident drop tiers (tables 1..3), byte order as in
+ * RAM. The deck pool (table 0) is left out on purpose: the CPU Manager
+ * replaces it through a sector override, and a fingerprint that covered it
+ * stopped recognising every duelist whose deck had been edited, so their
+ * drop edits and missing-card placements silently never applied. */
 static uint32_t resident_fingerprint(void)
 {
     uint32_t h = 0x811C9DC5u;
-    for (int t = 0; t < 4; t++) {
+    for (int t = 1; t < 4; t++) {
         for (unsigned i = 0; i < PSX_DROP_CARDS; i++) {
             const uint16_t v = psx_mod_read_half(tbl_addr(t, i));
             h = (h ^ (uint32_t)(v & 0xFFu)) * 0x01000193u;
@@ -116,9 +165,24 @@ int psx_drop_pins_rescale(uint16_t *w, const uint16_t *cards,
 
     uint32_t added = 0;
     for (int i = 0; i < n; i++) added += weights[i];
-    /* Pins may not squeeze the rest of the tier below breathing room: every
-     * surviving stock entry keeps at least weight 1, and 64 spare units is
-     * the margin that guarantees the shortfall walk can land on 2048. */
+    /* Pins that total exactly 2048 ARE the band: nothing else is left any
+     * room, so everything unpinned goes to 0 and the pins go in as given.
+     * This is how a whole table is spelled out (the Randomize button). */
+    if (added == PSX_DROP_TIER_TOTAL) {
+        memset(t, 0, sizeof(t));
+        for (int i = 0; i < n; i++)
+            if (cards[i] >= 1 && cards[i] <= PSX_DROP_CARDS)
+                t[cards[i] - 1] = weights[i];
+        uint32_t total = 0;
+        for (unsigned i = 0; i < PSX_DROP_CARDS; i++) total += t[i];
+        if (total != PSX_DROP_TIER_TOTAL) return -3;   /* a repeated id */
+        memcpy(w, t, sizeof(t));
+        return 1;
+    }
+    /* Otherwise pins may not squeeze the rest of the tier below breathing
+     * room: every surviving stock entry keeps at least weight 1, and 64 spare
+     * units is the margin that guarantees the shortfall walk can land on
+     * 2048. */
     if (added > PSX_DROP_TIER_TOTAL - 64u) return -4;
 
     /* zero the pinned cards first, so a card the duelist already drops is
@@ -388,8 +452,7 @@ void psx_drop_missing_tick(void)
     if (fp == g_last_fp) return;              /* nothing moved */
     g_last_fp = fp;
     g_matched = -1;
-    for (int r = 0; r < 39; r++) {
-        if (PSX_DROP_DUELISTS[r].fingerprint != fp) continue;
+    for (int r = match_resident(fp); r >= 0 && r < 39; r = -1) {
         g_matched = r;
         int ok = 0;
         for (int t = 0; t < 3; t++) {

@@ -14,6 +14,7 @@
  * the way a click does. */
 
 #include "psx_mod_package.h"
+#include "psx_tool_window.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +57,18 @@ static void say(const char *m)
     snprintf(s_msg, sizeof s_msg, "%s", m);
     fprintf(stderr, "mod package: %s\n", m);
     host_osd_push(m, 6000);
+}
+
+/* A package import or export can take seconds on the main thread (722 card
+ * folders), and the runtime's starvation watchdog reads a silent main thread
+ * as a hung emulator after 4 s and exits. Waiting on the disk is not
+ * starvation: beat the watchdog between parts. The symbol is the runtime's;
+ * the build without the watchdog carries an empty stub. */
+extern void starvation_watchdog_heartbeat(void);
+static void beat(const char *phase)
+{
+    starvation_watchdog_heartbeat();
+    psx_tool_log("mod package: %s at %u ms", phase, (unsigned)SDL_GetTicks());
 }
 
 /* ---- paths ------------------------------------------------------------- */
@@ -125,6 +138,9 @@ static int settings_row_wanted(int h, const char **key)
     if (!*key || !(*key)[0]) return 0;
     if (kind == PSX_VM_ROW_ACTION) return 0;
     if (!strcmp(*key, "tool_renderer")) return 0;
+    /* which card SET is live (own cards or the Dev Card Effects set) is the
+     * player's own choice too: a package brings cards for the own set */
+    if (!strcmp(*key, "card_effects")) return 0;
     return 1;
 }
 
@@ -433,6 +449,7 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
         int any = 0;
         for (int i = 0; i < k && !any; i++) any = name_is_cards(ents[i].name);
         if (any) {
+            beat("cards");
             scratch_path("cards.ygocards", tmp, sizeof tmp);
             psx_card_share_own_set(1);          /* into cards/, never the Dev set */
             const int good = repack(b, n, ents, k, name_is_cards, tmp, &c) && psx_card_share_import(tmp, why, sizeof why);
@@ -454,7 +471,9 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
         }
     }
     const PsxZipEntry *e;
+    beat("cpu");
     if ((e = find_entry(ents, k, "fusion-edits.txt")) != NULL) {
+        beat("fusion");
         scratch_path("fusion-edits.txt", tmp, sizeof tmp);
         if (extract_to(b, n, e, tmp) && psx_fusion_table_import(tmp, why, sizeof why)) { parts++; NOTE("%sfusion ok", parts + failed > 1 ? "; " : ""); }
         else { failed++; NOTE("%sfusion: %.80s", parts + failed > 1 ? "; " : "", why); }
@@ -489,6 +508,7 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
         if (extract_to(b, n, e, tmp)) { psx_card_shop_reload_config(); parts++; NOTE("%scard shop ok", parts + failed > 1 ? "; " : ""); }
         else { failed++; NOTE("%scard shop: could not write", parts + failed > 1 ? "; " : ""); }
     }
+    beat("settings");
     if ((e = find_entry(ents, k, "mod_settings.ini")) != NULL) {
         long sz = 0; unsigned char *d = psx_zip_extract(b, n, e, &sz);
         if (d) { const int a = settings_apply((const char *)d); free(d); parts++; NOTE("%s%d setting%s", parts + failed > 1 ? "; " : "", a, a == 1 ? "" : "s"); }

@@ -94,6 +94,7 @@
 #include "psx_card_share.h"      /* the zip container a .ygoduelists file is */
 #include "psx_drop_db.h"
 #include "psx_duelist_portraits.h"
+#include "psx_tool_window.h"     /* psx_tool_log */
 #include "psx_drop_missing.h"
 #include "psx_game_hooks.h"
 #include "psx_textfile.h"
@@ -803,13 +804,32 @@ static int read_ini(const char *path)
         if (sscanf(s, "%d = %d", &card, &weight) != 2) continue;
         if (card < 1 || card > NCARDS || weight < 0 || weight > TOTAL) continue;
         if (!g_edit[cur].deck_set) {
-            deck_stock_into(cur, g_edit[cur].deck);
+            /* The header says a listed pool REPLACES the duelist's, and the
+             * manager's own Save writes every card the pool holds, so the
+             * section starts EMPTY. It used to start from the stock pool
+             * and lay the lines over it, which put every stock card a
+             * player had removed straight back at the next launch
+             * (reported 2026-09-07). */
+            memset(g_edit[cur].deck, 0, sizeof g_edit[cur].deck);
             g_edit[cur].deck_set = 1;
         }
         g_edit[cur].deck[card - 1] = (uint16_t)weight;
         n++;
     }
     fclose(f);
+    /* The game deals 40 cards with at most three copies of each, so a pool
+     * of fewer than 14 distinct cards cannot deal a deck: such a section is
+     * dropped (the duelist keeps the disc's pool) rather than left to hang
+     * the dealer. */
+    for (int d = 0; d < NDUEL; d++) {
+        if (!g_edit[d].deck_set) continue;
+        int distinct = 0;
+        for (int c = 0; c < NCARDS; c++) distinct += g_edit[d].deck[c] != 0;
+        if (distinct < 14) {
+            g_edit[d].deck_set = 0;
+            psx_tool_log("CPU Manager: %s lists %d cards, a deck needs 14; the disc's pool stays", PSX_DROP_DB[d].name, distinct);
+        }
+    }
     /* A hand-written pool that does not total 2048 is not loadable, so it is
      * rescaled here rather than refused: the file stays hand-editable and the
      * loader still gets what it needs. */
@@ -858,7 +878,7 @@ static int write_to(const char *path)
 "; Written by the CPU Manager (VIEW > CPU MANAGER); hand-editing works too.\n"
 "; One section per duelist:\n"
 ";\n"
-";     name = Dingus                        what the FREE DUEL grid calls them (letters,\n"
+";     name = Bakura                        what the FREE DUEL grid calls them (letters,\n"
 ";                                          digits and . , ! ? ' - & / : ( ) only, %d at most)\n"
 ";     ai = 5, 20, 10, 1, 1, 0, 0, 25, 50    the nine AI profile bytes\n"
 ";     <card id> = <weight>                  their deck pool, out of 2048\n"

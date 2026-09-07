@@ -47,6 +47,8 @@
 #include "psx_dialogue.h"
 #include "psx_dialogue_manager.h"
 #include "psx_fusion_manager.h"
+#include "psx_card_db.h"
+#include "psx_textfile.h"
 #include "psx_fusion_table.h"
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
@@ -260,6 +262,27 @@ static void handle_fusion_manager(int id, const char *json)
             if (!psx_fusion_manager_edit(json_get_int(json, "a", -1), eb, er, msg, sizeof msg)) { send_err(id, msg); return; }
         }
     }
+    if (json_get_str(json, "equips_export", path, sizeof path)) {
+        /* the DISC's equip groups, one "equip<TAB>monster" line per pairing */
+        int n = 0, groups = 0;
+        const PsxFusionEquip *eq = psx_fusion_table_equips(&n, &groups);
+        FILE *f = eq ? psx_fopen_utf8(path, "w") : NULL;
+        if (!f) { send_err(id, eq ? "cannot write" : "table not read"); return; }
+        fprintf(f, "# equip\tmonster  (the disc's own equip groups: %d groups, %d pairings)\n", groups, n);
+        for (int i = 0; i < n; i++) fprintf(f, "%d\t%d\n", eq[i].equip, eq[i].mon);
+        fclose(f);
+        send_fmt("{\"id\":%d,\"ok\":true,\"groups\":%d,\"pairings\":%d}", id, groups, n);
+        return;
+    }
+    {
+        const int eqc = json_get_int(json, "equip", -1), mon = json_get_int(json, "mon", -1);
+        if (eqc >= 1 && mon >= 1) {
+            const int ok = psx_fusion_manager_equip_set(eqc, mon, json_get_int(json, "fit", 1), msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+            return;
+        }
+    }
     if (json_get_str(json, "import", path, sizeof path)) {
         const int ok = psx_fusion_manager_import(path, msg, sizeof msg);
         for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
@@ -443,6 +466,52 @@ static void handle_card_share(int id, const char *json)
         send_fmt("{\"id\":%d,\"ok\":%s,\"error\":\"%s\",\"version\":%d,\"cards\":[%s],\"replace\":%d,\"drops\":%d,\"bytes\":%ld}",
                  id, ok ? "true" : "false", info.error, info.version, ids, info.replace_n, info.has_drops, info.bytes);
     } else send_err(id, "op is export, inspect or import");
+}
+
+/* randomizer_stock -- the disc's own values tools/randomizer.py builds from,
+ * as one JSON file: every card's stock stats (psx_card_packs_stock, so a
+ * loaded card.ini does not leak in), the 39 AI profiles as first seen
+ * (keyed by opponent id), the stock fusion pairs and the equip groups. */
+static void handle_randomizer_stock(int id, const char *json)
+{
+    char path[1024];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
+    if (!psx_card_db_ready()) { send_err(id, "card table not resident yet"); return; }
+    FILE *f = psx_fopen_utf8(path, "w");
+    if (!f) { send_err(id, "cannot write"); return; }
+    int cards = 0, ais = 0, fus = 0, eqs = 0;
+    fprintf(f, "{\"cards\":{");
+    for (int c = 1; c <= 722; c++) {
+        PsxCardStock st;
+        if (!psx_card_packs_stock(c, &st)) continue;
+        fprintf(f, "%s\"%d\":{\"atk\":%d,\"dfn\":%d,\"type\":%d,\"level\":%d,\"attr\":%d,\"star1\":%d,\"star2\":%d,\"price\":%d,\"password\":\"%s\"}",
+                cards ? "," : "", c, st.attack, st.defense, st.type, st.level, st.attribute, st.star1, st.star2, st.price, st.password);
+        cards++;
+    }
+    fprintf(f, "},\"ai\":{");
+    for (int d = 0; d < 39; d++) {
+        uint8_t b[PSX_CPU_AI_BYTES];
+        if (!psx_cpu_ai_stock(d, b)) continue;
+        fprintf(f, "%s\"%d\":[", ais ? "," : "", d + 1);
+        for (int i = 0; i < PSX_CPU_AI_BYTES; i++) fprintf(f, "%s%d", i ? "," : "", b[i]);
+        fprintf(f, "]");
+        ais++;
+    }
+    fprintf(f, "},\"fusions\":[");
+    for (int i = 0, a, b, r; psx_fusion_table_stock_pair(i, &a, &b, &r); i++) { fprintf(f, "%s[%d,%d,%d]", i ? "," : "", a, b, r); fus++; }
+    fprintf(f, "],\"equips\":{");
+    {
+        int n = 0, groups = 0, last = 0;
+        const PsxFusionEquip *eq = psx_fusion_table_equips(&n, &groups);
+        for (int i = 0; i < n; i++) {
+            if (eq[i].equip != last) { fprintf(f, "%s\"%d\":[%d", last ? "]," : "", eq[i].equip, eq[i].mon); last = eq[i].equip; eqs++; }
+            else fprintf(f, ",%d", eq[i].mon);
+        }
+        if (last) fprintf(f, "]");
+    }
+    fprintf(f, "}}\n");
+    fclose(f);
+    send_fmt("{\"id\":%d,\"ok\":true,\"cards\":%d,\"ai\":%d,\"fusions\":%d,\"equips\":%d}", id, cards, ais, fus, eqs);
 }
 
 /* card_texts_export / card_texts_import -- every card's name and description
@@ -844,6 +913,16 @@ static void handle_drop_viewer_set(int id, const char *json)
      * is closed" for those; send the open alone, then the rest. */
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_drop_viewer_request_open(open);
+    {   /* randomize, seeded, answers with its own message like the file pair */
+        const int seed = json_get_int(json, "randomize", -1);
+        if (seed >= 0) {
+            char msg[256];
+            const int n = psx_drop_viewer_randomize((unsigned)seed, msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"entries\":%d,\"msg\":\"%s\"}", id, n ? "true" : "false", n, msg);
+            return;
+        }
+    }
     {   /* the file pair answers with its own message, window or no window */
         char path[1024], msg[256];
         const int imp = json_get_str(json, "import", path, sizeof path) != NULL;
@@ -1240,6 +1319,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_colors",        handle_card_colors);
     (void)psx_debug_add_command("monster_effects",    handle_monster_effects);
     (void)psx_debug_add_command("card_manager",       handle_card_manager);
+    (void)psx_debug_add_command("randomizer_stock",  handle_randomizer_stock);
     (void)psx_debug_add_command("card_texts_export", handle_card_texts_export);
     (void)psx_debug_add_command("card_texts_import", handle_card_texts_import);
     (void)psx_debug_add_command("dialogue",          handle_dialogue);

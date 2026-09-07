@@ -608,9 +608,22 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
     if (!s_stock_ok) return;
     const int id = (int)(int16_t)cpu->gpr[4];
     const Fx *f = fx_of(id);
-    if (!f || f->cfg.effect < 0) return;
+    if (!f) return;
     const PsxCardPack *c = &f->cfg;
-    const int proxy = fx_prepare(c->effect, c->amount, c->target, c->terrain, (int)cpu->gpr[5]);
+    int fx = c->effect;
+    if (fx < 0) {
+        /* Only the number was edited (a heal or burn card given a bigger
+         * amount, the common case): the effect stays the card's own class,
+         * and that class runs with the edited amount. Returning here left
+         * those edits dead until the effect was also picked (reported
+         * 2026-09-07). */
+        if (c->amount < 0) return;
+        PsxCardStock st;
+        psx_card_effects_stock(id, &st);
+        fx = st.effect;
+        if (fx < 0) return;
+    }
+    const int proxy = fx_prepare(fx, c->amount, c->target, c->terrain, (int)cpu->gpr[5]);
     if (proxy < 0) return;
     cpu->gpr[4] = (uint32_t)proxy;
     ev(HOOK_MAGIC, id, (int)cpu->gpr[5], proxy);

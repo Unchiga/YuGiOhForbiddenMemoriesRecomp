@@ -29,6 +29,7 @@
 #endif
 
 #include "mod_plugins.h"
+#include "psx_card_db.h"        /* the randomizer draws monsters, so it needs each card's type */
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
@@ -36,7 +37,10 @@
 #define INI_NAME  "drop_table_edits.ini"
 #define NDUEL     PSX_DROP_DB_DUELISTS
 #define NCARDS    PSX_DROP_DB_CARDS
-#define MAX_EDITS 128               /* per duelist; the UI edits one row at a time */
+/* Per duelist. One entry per card at most, and Randomize spells out whole
+ * tables (a stock duelist touches up to 161 distinct cards across the three
+ * bands, and the random ones on top), so the cap is simply every card. */
+#define MAX_EDITS NCARDS
 
 typedef struct { uint16_t card; uint16_t w[3]; } Edit;
 static Edit     g_edit[NDUEL][MAX_EDITS];
@@ -379,6 +383,147 @@ int psx_drop_edits_load_file(const char *name_or_path)
     g_gen++;
     snprintf(g_status, sizeof(g_status), "loaded %d entries", n);
     return n;
+}
+
+/* --- randomize -------------------------------------------------------------
+ *
+ * Every duelist's three bands rebuilt from STOCK: each band keeps its number
+ * of drops, every monster slot gets a monster drawn from all the monsters in
+ * the game (no repeats within a band), the magic, trap, equip and ritual
+ * slots keep their card, and every slot gets a fresh weight. The band still
+ * totals 2048 by construction, and each finished table is trial-applied over
+ * the stock tier through the one renormalizer before anything is kept, so a
+ * table the game could not roll is never recorded.
+ *
+ * Expressed in the edit layer as a complete vector per touched card: the
+ * stock cards that fell out are pinned to 0 and the new ones to their
+ * weights. Scripted rewards are not drops and are left alone.
+ */
+
+/* xorshift32: small, seedable, and not the host's rand(), which the monster
+ * effects roll on. */
+static uint32_t s_rand_state;
+static uint32_t rnd(void)
+{
+    uint32_t x = s_rand_state;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return s_rand_state = x;
+}
+static uint32_t rnd_below(uint32_t n) { return n ? rnd() % n : 0; }
+
+/* Magic, Trap, Ritual and Equip are the four codes past the monster types,
+ * in psx_card_db's table. */
+#define TYPE_MAGIC 20
+
+static int is_monster(int id)
+{
+    int a = 0, d = 0, ty = -1;
+    if (!psx_card_db_stats(id, &a, &d, &ty)) return 0;
+    return ty >= 0 && ty < TYPE_MAGIC;
+}
+
+/* n random weights that total 2048, each at least 1. The draw is a square,
+ * so a band has a few heavy drops and a long tail of light ones, the way
+ * the stock tables read. */
+static void random_weights(uint16_t *w, int n)
+{
+    uint32_t raw[NCARDS], sum = 0;
+    for (int i = 0; i < n; i++) {
+        const uint32_t k = 1 + rnd_below(12);
+        raw[i] = 4 + k * k;
+        sum += raw[i];
+    }
+    uint32_t got = 0;
+    for (int i = 0; i < n; i++) {
+        uint32_t v = raw[i] * PSX_DROP_DB_TOTAL / sum;
+        if (!v) v = 1;
+        w[i] = (uint16_t)v;
+        got += v;
+    }
+    while (got < PSX_DROP_DB_TOTAL) { const int i = (int)rnd_below((uint32_t)n); w[i]++; got++; }
+    while (got > PSX_DROP_DB_TOTAL) { const int i = (int)rnd_below((uint32_t)n); if (w[i] > 1) { w[i]--; got--; } }
+}
+
+int psx_drop_edits_randomize(uint32_t seed, char *msg, unsigned cap)
+{
+    psx_drop_edits_ensure_loaded();
+    if (!psx_card_db_ready()) {
+        if (msg && cap) snprintf(msg, cap, "Card types are not readable yet: start the game first");
+        return 0;
+    }
+    uint16_t pool[NCARDS];
+    int pool_n = 0;
+    for (int id = 1; id <= NCARDS; id++)
+        if (is_monster(id)) pool[pool_n++] = (uint16_t)id;
+    if (pool_n < 160) {          /* a stock band holds up to 149 drops */
+        if (msg && cap) snprintf(msg, cap, "Only %d monsters readable, cannot randomize", pool_n);
+        return 0;
+    }
+
+    s_rand_state = seed ? seed : 0x9E3779B9u;
+    /* Built for every duelist first, kept only if all of them pass. */
+    static Edit    built[NDUEL][MAX_EDITS];
+    static int     built_n[NDUEL];
+    static uint16_t vec[NCARDS + 1][3];
+    static uint8_t  touched[NCARDS + 1];
+    static uint8_t  used[NCARDS + 1];
+    int entries = 0;
+
+    for (int d = 0; d < NDUEL; d++) {
+        const PsxDropDbDuelist *D = &PSX_DROP_DB[d];
+        memset(vec, 0, sizeof vec);
+        memset(touched, 0, sizeof touched);
+        for (int t = 0; t < PSX_DROP_DB_TIERS; t++) {
+            const int n = D->count[t];
+            uint16_t cards[NCARDS], weights[NCARDS];
+            memset(used, 0, sizeof used);
+            /* the stock cards leave the band unless drawn again */
+            for (int i = 0; i < n; i++) touched[D->tier[t][i].card] = 1;
+            /* the kept (non-monster) slots claim their cards first */
+            for (int i = 0; i < n; i++) {
+                const int c = D->tier[t][i].card;
+                cards[i] = 0;
+                if (c >= 1 && c <= NCARDS && !is_monster(c)) { cards[i] = (uint16_t)c; used[c] = 1; }
+            }
+            for (int i = 0; i < n; i++) {
+                if (cards[i]) continue;
+                uint16_t c;
+                do c = pool[rnd_below((uint32_t)pool_n)]; while (used[c]);
+                used[c] = 1;
+                cards[i] = c;
+            }
+            if (n) random_weights(weights, n);
+            for (int i = 0; i < n; i++) { vec[cards[i]][t] = weights[i]; touched[cards[i]] = 1; }
+
+            /* the game must be able to roll it: apply over the stock tier */
+            uint16_t w[NCARDS];
+            memset(w, 0, sizeof w);
+            for (int i = 0; i < n; i++) w[D->tier[t][i].card - 1] = D->tier[t][i].weight;
+            if (n && psx_drop_pins_rescale(w, cards, weights, n) != 1) {
+                if (msg && cap) snprintf(msg, cap, "Randomize refused: %s band %d would not balance", D->name, t + 1);
+                return 0;
+            }
+        }
+        built_n[d] = 0;
+        for (int c = 1; c <= NCARDS; c++) {
+            if (!touched[c]) continue;
+            Edit *e = &built[d][built_n[d]++];
+            e->card = (uint16_t)c;
+            e->w[0] = vec[c][0]; e->w[1] = vec[c][1]; e->w[2] = vec[c][2];
+        }
+        entries += built_n[d];
+    }
+
+    for (int d = 0; d < NDUEL; d++) {
+        memcpy(g_edit[d], built[d], sizeof(Edit) * (size_t)built_n[d]);
+        g_n[d] = built_n[d];
+    }
+    g_dirty = 1;
+    g_gen++;
+    snprintf(g_status, sizeof(g_status), "randomized (seed %u)", (unsigned)seed);
+    if (msg && cap)
+        snprintf(msg, cap, "Randomized every duelist's drops (%d entries). Save to keep it.", entries);
+    return entries;
 }
 
 int psx_drop_edits_reward(int duelist, int *out_every)

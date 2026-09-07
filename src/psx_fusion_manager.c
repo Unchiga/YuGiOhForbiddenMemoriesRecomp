@@ -183,6 +183,12 @@ static int                    s_rec_n;
 static const PsxFusionEquip  *s_eq;
 static int                    s_eq_n, s_eq_groups;
 static unsigned               s_seen_gen;
+static unsigned               s_seen_pack_gen;   /* card packs: an equip list edited anywhere */
+/* The equip pairings the game actually answers: the disc's groups, except
+ * that an equip card whose card.ini names its own list (ids, types or all)
+ * replaces its group. psx_fusion_table_equips() is the disc alone. */
+static PsxFusionEquip *s_eq_buf;
+static int             s_eq_buf_cap;
 
 static uint16_t s_n_makes[MAXID + 1];   /* partners, equip links included */
 static uint16_t s_n_from[MAXID + 1];    /* pairs that produce this card */
@@ -264,8 +270,9 @@ static char s_ed_partner[8], s_ed_result[8];
 /* Right-click menu. The edit line below the panel is the fast path for
  * someone who knows the card ids; this is the one for everybody else, and it
  * is what makes "delete this" and "add one" findable at all. */
-enum { CMA_NONE = 0, CMA_GOTO, CMA_CHANGE, CMA_DELETE, CMA_ADD, CMA_CLEARCARD, CMA_CLEARALL, CMA_SEP };
-enum { CM_MAX = 10 };
+enum { CMA_NONE = 0, CMA_GOTO, CMA_CHANGE, CMA_DELETE, CMA_ADD, CMA_CLEARCARD, CMA_CLEARALL, CMA_SEP,
+       CMA_EQUIP_DEL, CMA_EQUIP_ADD, CMA_EQUIP_STOCK };
+enum { CM_MAX = 12 };
 typedef struct { char label[96]; uint8_t action; uint16_t a, b; } CmItem;
 static CmItem s_cm[CM_MAX];
 static int    s_cm_n, s_cm_x, s_cm_y, s_cm_hover = -1;
@@ -274,7 +281,9 @@ static int    s_cm_open;
 /* Card chooser. Two card ids are two searches through 722 names, so the
  * chooser IS the editor as far as a player is concerned -- the typed line
  * only ever fills in what this would have. */
-enum { PICK_NONE = 0, PICK_PARTNER = 1, PICK_RESULT = 2 };
+enum { PICK_NONE = 0, PICK_PARTNER = 1, PICK_RESULT = 2,
+       PICK_EQUIP_MON = 3,      /* a monster for the equip in s_pick_a */
+       PICK_EQUIP_EQ = 4 };     /* an equip for the monster in s_pick_a */
 static int  s_pick_mode;
 static int  s_pick_a, s_pick_b;      /* the pair being built */
 static char s_pick_search[48];
@@ -506,15 +515,84 @@ static void rebuild_all(void)
 }
 
 /* Pull the published arrays and re-derive everything built from them. */
+static int card_type(int id)
+{
+    int a = 0, d = 0, ty = -1;
+    if (id < 1 || id > MAXID || !psx_card_db_stats(id, &a, &d, &ty)) return -1;
+    return ty;
+}
+static int is_monster_id(int id) { const int t = card_type(id); return t >= 0 && t < 20; }
+static int is_equip_id(int id)   { return card_type(id) == 23; }
+
+/* Does this pack's equip list take monster m? (ids, type bits, attribute
+ * bits, or every monster), the same test hook_equip in psx_card_effects.c
+ * answers the game with. */
+static int pack_equips_monster(const PsxCardPack *pk, int m)
+{
+    for (int i = 0; i < pk->equip_n; i++) if (pk->equip_ids[i] == m) return 1;
+    const uint32_t mask = pk->equip_types;
+    if (!mask) return 0;
+    if (mask & PSX_CARD_PACK_EQUIP_ALL) return 1;
+    int a = 0, d = 0, ty = -1;
+    if (!psx_card_db_stats(m, &a, &d, &ty)) return 0;
+    if (ty >= 0 && ty < 20 && (mask & (1u << ty))) return 1;
+    PsxCardStock st;
+    if (psx_card_packs_stock(m, &st) && st.attribute >= 0 && st.attribute < 6 && (mask & PSX_CARD_PACK_EQUIP_ATTR_BIT(st.attribute))) return 1;
+    return 0;
+}
+
+static int eq_push(int n, int equip, int mon)
+{
+    if (n >= s_eq_buf_cap) {
+        const int cap = s_eq_buf_cap ? s_eq_buf_cap * 2 : 8192;
+        PsxFusionEquip *nb = (PsxFusionEquip *)realloc(s_eq_buf, sizeof(PsxFusionEquip) * (size_t)cap);
+        if (!nb) return n;
+        s_eq_buf = nb; s_eq_buf_cap = cap;
+    }
+    s_eq_buf[n].equip = (uint16_t)equip;
+    s_eq_buf[n].mon = (uint16_t)mon;
+    return n + 1;
+}
+
+static void build_effective_equips(void)
+{
+    int n_stock = 0, groups = 0;
+    const PsxFusionEquip *st = psx_fusion_table_equips(&n_stock, &groups);
+    static uint8_t overridden[MAXID + 1];
+    memset(overridden, 0, sizeof overridden);
+    int n = 0;
+    s_eq_groups = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        PsxCardPack pk;
+        if (!psx_card_packs_get(id, &pk) || !(pk.equips_set || pk.equip_types)) continue;
+        overridden[id] = 1;
+        int any = 0;
+        for (int m = 1; m <= MAXID; m++) {
+            if (!is_monster_id(m) || !pack_equips_monster(&pk, m)) continue;
+            n = eq_push(n, id, m); any = 1;
+        }
+        if (any) s_eq_groups++;
+    }
+    int last_key = 0;
+    for (int i = 0; st && i < n_stock; i++) {
+        if (overridden[st[i].equip]) continue;
+        if (st[i].equip != last_key) { s_eq_groups++; last_key = st[i].equip; }
+        n = eq_push(n, st[i].equip, st[i].mon);
+    }
+    s_eq = s_eq_buf;
+    s_eq_n = n;
+}
+
 static void refresh_index(int force)
 {
     const unsigned gen = psx_fusion_table_generation();
-    if (!force && gen == s_seen_gen && s_rec) return;
+    const unsigned pgen = psx_card_packs_generation();
+    if (!force && gen == s_seen_gen && pgen == s_seen_pack_gen && s_rec) return;
     s_seen_gen = gen;
+    s_seen_pack_gen = pgen;
     s_rec = psx_fusion_table_recipes(&s_rec_n);
-    s_eq = psx_fusion_table_equips(&s_eq_n, &s_eq_groups);
+    build_effective_equips();
     if (!s_rec) s_rec_n = 0;
-    if (!s_eq) s_eq_n = 0;
     memset(s_n_makes, 0, sizeof s_n_makes);
     memset(s_n_from, 0, sizeof s_n_from);
     for (int i = 0; i < s_rec_n; i++) {
@@ -1149,12 +1227,16 @@ static void draw_footer(void)
 /* --- the card chooser ----------------------------------------------------- */
 
 static int pick_extra(void);
+static int equip_pair_set(int equip, int mon, int on, char *err, unsigned cap);
+static int equip_stock(int equip, char *err, unsigned cap);
 
 static void pick_rebuild(void)
 {
     s_pick_n = 0;
     for (int id = 1; id <= MAXID; id++) {
         if (!card_matches(id, s_pick_search)) continue;
+        if (s_pick_mode == PICK_EQUIP_MON && !is_monster_id(id)) continue;
+        if (s_pick_mode == PICK_EQUIP_EQ && !is_equip_id(id)) continue;
         s_pick_order[s_pick_n++] = id;
     }
     if (s_pick_scroll > s_pick_n - 1) s_pick_scroll = s_pick_n > 0 ? s_pick_n - 1 : 0;
@@ -1205,6 +1287,14 @@ static void pick_choose(int row)
         pick_open(PICK_RESULT, s_pick_a, id);
         return;
     }
+    if (s_pick_mode == PICK_EQUIP_MON || s_pick_mode == PICK_EQUIP_EQ) {
+        const int equip = s_pick_mode == PICK_EQUIP_MON ? s_pick_a : id;
+        const int mon   = s_pick_mode == PICK_EQUIP_MON ? id : s_pick_a;
+        pick_close();
+        (void)equip_pair_set(equip, mon, 1, err, sizeof err);
+        say(err);
+        return;
+    }
     /* PICK_RESULT: this is the edit */
     {
         const int a = s_pick_a, b = s_pick_b, r = (id == PICK_NOTHING) ? 0 : id;
@@ -1228,8 +1318,10 @@ static void draw_picker(void)
     psx_ui_round_rect_line(&s_cv, L->pick.x, L->pick.y, L->pick.w, L->pick.h, U_R_PANEL * s_u, 0x30FFFFFFu, 1.0f * s_u);
 
     char head[192];
-    if (s_pick_mode == PICK_PARTNER) snprintf(head, sizeof head, "What does %s fuse with?", nm(s_pick_a));
-    else                             snprintf(head, sizeof head, "%s + %s makes" S_ELLIP, nm(s_pick_a), nm(s_pick_b));
+    if (s_pick_mode == PICK_PARTNER)        snprintf(head, sizeof head, "What does %s fuse with?", nm(s_pick_a));
+    else if (s_pick_mode == PICK_EQUIP_MON) snprintf(head, sizeof head, "Which monster does %s fit?", nm(s_pick_a));
+    else if (s_pick_mode == PICK_EQUIP_EQ)  snprintf(head, sizeof head, "Which equip fits %s?", nm(s_pick_a));
+    else                                    snprintf(head, sizeof head, "%s + %s makes" S_ELLIP, nm(s_pick_a), nm(s_pick_b));
     Rect t = { L->pick.x + px(12.0f), L->pick.y + px(8.0f), L->pick.w - px(24.0f), px(18.0f) };
     text_in(&t, 0, head, COL_TEXT, face_title());
 
@@ -1317,6 +1409,9 @@ static void cm_run(int i)
     case CMA_GOTO:   select_card(it.a, 1); break;
     case CMA_ADD:    if (it.a >= 1) { select_card(it.a, 1); pick_open(PICK_PARTNER, it.a, 0); } break;
     case CMA_CHANGE: pick_open(PICK_RESULT, it.a, it.b); break;
+    case CMA_EQUIP_ADD: if (it.a >= 1) { select_card(it.a, 1); pick_open(is_equip_id(it.a) ? PICK_EQUIP_MON : PICK_EQUIP_EQ, it.a, 0); } break;
+    case CMA_EQUIP_DEL: { char err[256]; (void)equip_pair_set(it.a, it.b, 0, err, sizeof err); say(err); break; }
+    case CMA_EQUIP_STOCK: { char err[256]; (void)equip_stock(it.a, err, sizeof err); say(err); break; }
     case CMA_CLEARCARD: s_dlg_card = it.a; dialog_open(DLG_CLEARCARD); break;
     case CMA_CLEARALL:  dialog_open(DLG_CLEAR); break;
     case CMA_DELETE: {
@@ -1368,9 +1463,13 @@ static void right_click(int x, int y)
     if (p == PANE_MK && row >= 0 && row < s_mk_n) {
         const MakeRow *m = &s_mk[row];
         if (m->kind == MK_EQUIP) {
-            snprintf(buf, sizeof buf, "Go to %.40s", nm(m->partner));
-            cm_add(buf, CMA_GOTO, m->partner, 0);
-            cm_add("(equips are set in the Card Manager)", CMA_SEP, 0, 0);
+            /* the row is an equip pairing: from the monster's side the partner
+             * is the equip, from the equip's side the partner is the monster */
+            const int equip = is_equip_id(s_sel) ? s_sel : m->partner;
+            const int mon   = is_equip_id(s_sel) ? m->partner : s_sel;
+            snprintf(buf, sizeof buf, "%.24s no longer fits %.24s", nm(equip), nm(mon));
+            cm_add(buf, CMA_EQUIP_DEL, (uint16_t)equip, (uint16_t)mon);
+            cm_add("", CMA_SEP, 0, 0);
         } else {
             snprintf(buf, sizeof buf, "Change what %.20s + %.20s makes" S_ELLIP, nm(s_sel), nm(m->partner));
             cm_add(buf, CMA_CHANGE, s_sel, m->partner);
@@ -1378,6 +1477,16 @@ static void right_click(int x, int y)
             cm_add("", CMA_SEP, 0, 0);
         }
         cm_add("Add a fusion" S_ELLIP, CMA_ADD, s_sel, 0);
+        if (is_equip_id(s_sel)) {
+            snprintf(buf, sizeof buf, "Add a monster %.30s fits" S_ELLIP, nm(s_sel));
+            cm_add(buf, CMA_EQUIP_ADD, s_sel, 0);
+            PsxCardPack pk;
+            if (psx_card_packs_get(s_sel, &pk) && (pk.equips_set || pk.equip_types))
+                cm_add("Equip list back to the disc's own", CMA_EQUIP_STOCK, s_sel, 0);
+        } else if (is_monster_id(s_sel)) {
+            snprintf(buf, sizeof buf, "Add an equip that fits %.28s" S_ELLIP, nm(s_sel));
+            cm_add(buf, CMA_EQUIP_ADD, s_sel, 0);
+        }
         snprintf(buf, sizeof buf, "Delete all %d fusions for %.28s" S_ELLIP, s_mk_n, nm(s_sel));
         cm_add(buf, CMA_CLEARCARD, s_sel, 0);
         cm_add("Delete every fusion in the game" S_ELLIP, CMA_CLEARALL, 0, 0);
@@ -1414,6 +1523,13 @@ static void right_click(int x, int y)
         const int id = s_order[row];
         snprintf(buf, sizeof buf, "Add a fusion for %.40s" S_ELLIP, nm(id));
         cm_add(buf, CMA_ADD, id, 0);
+        if (is_equip_id(id)) {
+            snprintf(buf, sizeof buf, "Add a monster %.30s fits" S_ELLIP, nm(id));
+            cm_add(buf, CMA_EQUIP_ADD, id, 0);
+        } else if (is_monster_id(id)) {
+            snprintf(buf, sizeof buf, "Add an equip that fits %.28s" S_ELLIP, nm(id));
+            cm_add(buf, CMA_EQUIP_ADD, id, 0);
+        }
         if (s_n_makes[id]) {
             snprintf(buf, sizeof buf, "Delete every fusion for %.36s" S_ELLIP, nm(id));
             cm_add(buf, CMA_CLEARCARD, id, 0);
@@ -1500,6 +1616,71 @@ static void draw(void)
     draw_context_menu();
 }
 
+/* --- equip pairings --------------------------------------------------------
+ *
+ * Which monsters an equip fits is the equip card's own list in card.ini
+ * (`equips = ...`), served to the game by psx_card_effects.c, so an edit here
+ * goes through the card pack: the equip's effective list, the monster added
+ * or taken out, written back as explicit ids. A list the pack spells as
+ * types or "all" is expanded first, and a list past the pack's capacity is
+ * refused rather than cut. Nothing here touches the fusion table. */
+static int equip_pair_set(int equip, int mon, int on, char *err, unsigned cap)
+{
+    if (!is_equip_id(equip)) { snprintf(err, cap, "%s is not an Equip card", nm(equip)); return 0; }
+    if (!is_monster_id(mon)) { snprintf(err, cap, "%s is not a monster", nm(mon)); return 0; }
+    PsxCardPack pk;
+    if (!psx_card_packs_get(equip, &pk)) {
+        memset(&pk, 0, sizeof pk);
+        pk.id = equip;
+        pk.attack = pk.defense = pk.star1 = pk.star2 = pk.type = pk.level = pk.attribute = pk.price = -1;
+        psx_card_packs_effects_reset(&pk);
+    }
+    uint16_t ids[PSX_CARD_PACK_EQUIP_MAX];
+    int n = 0, had = 0, over = 0;
+    for (int i = 0; i < s_eq_n; i++) {
+        if (s_eq[i].equip != equip) continue;
+        if (s_eq[i].mon == mon) { had = 1; if (!on) continue; }
+        if (n < PSX_CARD_PACK_EQUIP_MAX) ids[n++] = s_eq[i].mon; else over++;
+    }
+    if (on && had)   { snprintf(err, cap, "%s already fits %s", nm(equip), nm(mon)); return 0; }
+    if (!on && !had) { snprintf(err, cap, "%s does not fit %s", nm(equip), nm(mon)); return 0; }
+    if (on && !had) { if (n < PSX_CARD_PACK_EQUIP_MAX) ids[n++] = (uint16_t)mon; else over++; }
+    if (over) { snprintf(err, cap, "%s fits %d monsters; a card.ini list holds %d. Edit it as types in the Card Manager", nm(equip), n + over, PSX_CARD_PACK_EQUIP_MAX); return 0; }
+    pk.equips_set = 1;
+    pk.equip_types = 0;
+    pk.equip_n = n;
+    memcpy(pk.equip_ids, ids, sizeof(uint16_t) * (size_t)n);
+    if (!psx_card_packs_save(&pk)) { snprintf(err, cap, "Could not write cards/%d/card.ini", equip); return 0; }
+    refresh_index(1);
+    rebuild_sel();
+    if (on) snprintf(err, cap, "%s now fits %s (%d monsters). Kept in cards/%d/card.ini", nm(equip), nm(mon), n, equip);
+    else    snprintf(err, cap, "%s no longer fits %s (%d monsters). Kept in cards/%d/card.ini", nm(equip), nm(mon), n, equip);
+    return 1;
+}
+
+/* The equip's list back to the disc's own. */
+static int equip_stock(int equip, char *err, unsigned cap)
+{
+    PsxCardPack pk;
+    if (!psx_card_packs_get(equip, &pk) || !(pk.equips_set || pk.equip_types)) { snprintf(err, cap, "%s already fits the disc's own monsters", nm(equip)); return 0; }
+    pk.equips_set = 0; pk.equip_types = 0; pk.equip_n = 0;
+    if (!psx_card_packs_save(&pk)) { snprintf(err, cap, "Could not write cards/%d/card.ini", equip); return 0; }
+    refresh_index(1);
+    rebuild_sel();
+    snprintf(err, cap, "%s fits the disc's own monsters again", nm(equip));
+    return 1;
+}
+
+int psx_fusion_manager_equip_set(int equip, int mon, int on, char *err, unsigned errcap)
+{
+    char buf[256];
+    refresh_index(0);
+    const int ok = equip_pair_set(equip, mon, on, buf, sizeof buf);
+    if (err && errcap) snprintf(err, errcap, "%s", buf);
+    if (s_win) say(buf);
+    return ok;
+}
+
 /* --- editing -------------------------------------------------------------- */
 
 static void ed_clear(void) { s_ed_partner[0] = 0; s_ed_result[0] = 0; s_dirty = 1; }
@@ -1508,7 +1689,7 @@ static void ed_load_row(int row)
 {
     if (row < 0 || row >= s_mk_n) return;
     const MakeRow *m = &s_mk[row];
-    if (m->kind == MK_EQUIP) { say("Which monsters an equip fits is set in the Card Manager, not here"); return; }
+    if (m->kind == MK_EQUIP) { say("An equip pairing: right-click the row to take it away, or the card to add one"); return; }
     snprintf(s_ed_partner, sizeof s_ed_partner, "%d", m->partner);
     snprintf(s_ed_result, sizeof s_ed_result, "%d", m->result);
     s_ed_focus = ED_RESULT;

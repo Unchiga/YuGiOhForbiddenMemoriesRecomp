@@ -984,8 +984,8 @@ static int split_list(const char *v, char tok[][48], int n)
 
 int psx_card_packs_parse_equips(const char *v, PsxCardPack *c, char *err, unsigned errcap)
 {
-    static char tok[300][48];
-    const int n = split_list(v, tok, 300);
+    static char tok[760][48];          /* an explicit list of every monster, plus type names */
+    const int n = split_list(v, tok, 760);
     uint32_t types = 0; int ids = 0; uint16_t list[PSX_CARD_PACK_EQUIP_MAX];
     for (int i = 0; i < n; i++) {
         const char *t = tok[i];
@@ -1090,7 +1090,7 @@ static int read_ini(int id, PsxCardPack *c)
     pack_path(id, "card.ini", path, sizeof path);
     FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return 0;
-    char line[512];
+    char line[4096];                   /* an `equips = ` line can name every monster by id */
     while (fgets(line, sizeof line, f)) {
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
@@ -1561,7 +1561,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->target >= 0)    fprintf(f, "target = %s\n", psx_card_packs_type_name(c->target));
     if (c->terrain >= 1)   fprintf(f, "terrain = %s\n", psx_card_packs_terrain_name(c->terrain));
     if (c->equip_bonus >= 0) fprintf(f, "equip_bonus = %d\n", c->equip_bonus);
-    if (c->equips_set)     { char b[2048]; psx_card_packs_format_equips(c, b, sizeof b); fprintf(f, "equips = %s\n", b); }
+    if (c->equips_set)     { char b[4096]; psx_card_packs_format_equips(c, b, sizeof b); fprintf(f, "equips = %s\n", b); }
     if (c->boost_set)      { char b[512];  psx_card_packs_format_boost(c, b, sizeof b);  fprintf(f, "boost = %s\n", b); }
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
@@ -1751,7 +1751,22 @@ static void switch_set(int dev)
     bump();
 }
 
-void psx_card_packs_set_dev(int dev) { s_dev_want = dev ? 1 : 0; }
+/* The MODS row that remembers which set is live. The Card Manager's Dev Card
+ * Effects button and this row are one switch: either side moves the other,
+ * and the row's settings key is what makes the choice survive a restart
+ * (until 2026-09-07 it did not, and the set fell back to the player's own
+ * cards at every launch). Packages leave the key out (psx_mod_package.c). */
+static int s_dev_row = -1;
+static void dev_row_changed(int value) { psx_card_packs_set_dev(value); }
+
+void psx_card_packs_set_dev(int dev)
+{
+    s_dev_want = dev ? 1 : 0;
+    if (s_dev_row >= 0 && psx_video_menu_get_row(s_dev_row) != s_dev_want) {
+        psx_video_menu_set_row(s_dev_row, s_dev_want);
+        psx_video_menu_note_change();
+    }
+}
 
 int psx_card_packs_reseed_dev(void)
 {
@@ -1785,7 +1800,15 @@ static void menu_changed(int value)
  * and switches it, so a second control for the same thing in another menu
  * was only ever a way to flip the set without the window that shows you what
  * flipped. Your own cards/ edits apply on their own, with nothing to enable. */
-void psx_card_packs_register_menu(void) { }
+void psx_card_packs_register_menu(void)
+{
+    static const char *const LABELS[] = { "Own cards", "Dev set" };
+    static const char *const HINTS[]  = { "Your own edited cards (cards/) are the live set",
+                                          "The Card Effects mod's set (mods/card_effects/cards/) is live; your own edits wait" };
+    s_dev_row = psx_video_menu_add_option(
+        PSX_VM_MENU_MODS, "Card set", HINTS[0], LABELS, 2, "card_effects", 0, dev_row_changed);
+    psx_video_menu_set_row_hints(s_dev_row, HINTS);
+}
 
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)

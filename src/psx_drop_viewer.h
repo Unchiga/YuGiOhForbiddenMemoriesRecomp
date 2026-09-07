@@ -60,6 +60,10 @@ void psx_drop_viewer_request_open(int open);
  * shows. Both work with the window closed. */
 int  psx_drop_viewer_export(const char *path, char *msg, unsigned cap);
 int  psx_drop_viewer_import(const char *path, char *msg, unsigned cap);
+/* The Randomize button without the two-click arm, for the debug server: a
+ * seed of 0 is a fixed seed, so a test can repeat. Works with the window
+ * closed, like the file pair. */
+int  psx_drop_viewer_randomize(unsigned seed, char *msg, unsigned cap);
 
 /* Deliver mouse motion, clicks, a key press, or typed text — as real SDL
  * events carrying this window's id, so the debug server exercises the exact

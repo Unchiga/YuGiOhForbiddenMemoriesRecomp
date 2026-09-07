@@ -49,6 +49,10 @@ int  psx_fusion_manager_import(const char *path, char *err, unsigned errcap);
  * means "the card the window has selected". `result` 0 removes the fusion.
  * Returns 0 with the reason in `err` and changes nothing. */
 int  psx_fusion_manager_edit(int a, int b, int result, char *err, unsigned errcap);
+/* An equip pairing: `on` makes the equip fit the monster, 0 takes it away.
+ * Goes through the equip card's card.ini list (psx_card_packs), not the
+ * fusion table, so it travels with the cards. */
+int  psx_fusion_manager_equip_set(int equip, int mon, int on, char *err, unsigned errcap);
 
 /* Drop every edit and put the game's own table back (the edits are copied to
  * fusion_edits_backup.txt first). This is what the confirm dialog does; it

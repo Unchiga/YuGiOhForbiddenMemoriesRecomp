@@ -283,7 +283,7 @@ static int  s_edit_len;
 
 /* One-line status ("Saved", "Edit refused: ..."), shown in the right pane's
  * header until its deadline passes. */
-static char     s_msg[80];
+static char     s_msg[120];
 static uint32_t s_msg_until;
 
 /* Right-click context menu: a handful of actions on whatever was under the
@@ -528,7 +528,7 @@ static void invalidate(void)
  */
 
 typedef struct {
-    Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export, btn_third;
+    Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export, btn_random, btn_third;
     int  mod_x;                     /* left edge of the mod indicator        */
     Rect pane[2];                   /* the two panels                        */
     Rect title[2];                  /* what is listed, per panel             */
@@ -556,7 +556,8 @@ static void layout_compute(void)
     const int gap = px(U_GAP), pad = px(U_PAD), cg = px(12.0f);
 
     /* Top bar: title, the two view tabs, the search box; from the right the
-     * mod indicator, then the view-dependent button, Export, Import and Save. */
+     * mod indicator, then the view-dependent button, Randomize, Export,
+     * Import and Save. */
     L->bar = (Rect){ 0, 0, s_w, px(U_BAR_H) };
     const int bh = px(U_BTN_H), by = (L->bar.h - bh) / 2;
     int x = px(8.0f) + tw(ft, "Drop Table Manager") + px(14.0f);
@@ -569,6 +570,8 @@ static void layout_compute(void)
     rx = L->mod_x - px(14.0f);
     int w = tw(fb, s_view == VIEW_DUELISTS ? "Defaults" : "All CPU") + px(18.0f);
     L->btn_third = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
+    w = tw(fb, "Randomize") + px(18.0f);
+    L->btn_random = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Export" S_ELLIP) + px(18.0f);
     L->btn_export = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Import" S_ELLIP) + px(18.0f);
@@ -675,6 +678,8 @@ static int row_at(int p, int x, int y)
 }
 
 /* --- editing -------------------------------------------------------------- */
+
+static int randomize_armed(void);
 
 static void say(const char *m)
 {
@@ -1012,6 +1017,7 @@ static void draw_bar(void)
     draw_button(&L->btn_save, "Save", psx_drop_edits_dirty(), s_hover_btn == 2);
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
     draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
+    draw_button(&L->btn_random, "Randomize", randomize_armed(), s_hover_btn == 6);
     if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 5);
     else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 5);
 
@@ -1384,6 +1390,32 @@ static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int fil
 }
 #endif
 
+/* Randomize replaces every duelist's edits at once, so like Revert to Stock
+ * it asks twice: the first click is the warning, a second within ten seconds
+ * does it. The button stays lit while it is armed. */
+#define RANDOMIZE_ARM_MS 10000u
+static uint32_t s_random_armed_ms;
+
+static int randomize_armed(void)
+{
+    return s_random_armed_ms != 0 && SDL_GetTicks() - s_random_armed_ms <= RANDOMIZE_ARM_MS;
+}
+
+static void do_randomize(void)
+{
+    if (!randomize_armed()) {
+        s_random_armed_ms = SDL_GetTicks();
+        if (!s_random_armed_ms) s_random_armed_ms = 1;
+        say("Randomize every duelist's drops from stock? Click again within 10 s.");
+        return;
+    }
+    s_random_armed_ms = 0;
+    char msg[160];
+    if (psx_drop_edits_randomize((uint32_t)SDL_GetTicks() ^ (uint32_t)SDL_GetPerformanceCounter(), msg, sizeof msg))
+        invalidate();
+    say(msg);
+}
+
 static void do_export(void)
 {
 #if defined(PSX_SDL3)
@@ -1461,7 +1493,7 @@ static void set_view(int view)
 }
 
 /* Which top-bar button the point is on: 0/1 the tabs, 2 Save, 3 Import,
- * 4 Export, 5 the view-dependent slot; -1 none. */
+ * 4 Export, 5 the view-dependent slot, 6 Randomize; -1 none. */
 static int button_at(int x, int y)
 {
     const Layout *L = &s_L;
@@ -1471,6 +1503,7 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_import, x, y)) return 3;
     if (in_rect(&L->btn_export, x, y)) return 4;
     if (in_rect(&L->btn_third, x, y))  return 5;
+    if (in_rect(&L->btn_random, x, y)) return 6;
     return -1;
 }
 
@@ -1490,6 +1523,7 @@ static void click(int x, int y)
         case 2: say(psx_drop_edits_save() ? "Saved" : "Save failed"); break;
         case 3: do_import(); break;
         case 4: do_export(); break;
+        case 6: do_randomize(); break;
         case 5:
             if (s_view == VIEW_DUELISTS) {
                 /* Return to default, scoped to the duelist on screen. The
@@ -2256,6 +2290,13 @@ int psx_drop_viewer_export(const char *path, char *msg, unsigned cap)
     return ok;
 }
 
+int psx_drop_viewer_randomize(unsigned seed, char *msg, unsigned cap)
+{
+    const int n = psx_drop_edits_randomize((uint32_t)seed, msg, cap);
+    if (s_win) { if (n) invalidate(); say(msg); }
+    return n;
+}
+
 int psx_drop_viewer_import(const char *path, char *msg, unsigned cap)
 {
     const int ok = psx_drop_edits_import_file(path, msg, cap);
@@ -2405,6 +2446,7 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "save", &L->btn_save);
     if (n < cap) n += rect_json(out + n, cap - n, "import", &L->btn_import);
     if (n < cap) n += rect_json(out + n, cap - n, "export", &L->btn_export);
+    if (n < cap) n += rect_json(out + n, cap - n, "randomize", &L->btn_random);
     if (n < cap) n += rect_json(out + n, cap - n, "third", &L->btn_third);
     if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
     if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);

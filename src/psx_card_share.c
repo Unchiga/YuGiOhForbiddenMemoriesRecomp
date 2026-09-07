@@ -8,6 +8,9 @@
 
 #include "psx_textfile.h"
 #include "psx_card_share.h"
+#include "psx_sdl.h"
+#include "psx_tool_window.h"
+extern void starvation_watchdog_heartbeat(void);
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -374,6 +377,7 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
             if (!d) { bad++; continue; }
             char p[1200]; snprintf(p, sizeof p, "%s/%d/%s", dir, id, CARD_FILES[file]);
             if (write_file(p, d, (size_t)sz)) files++; else bad++;
+            if ((files % 100) == 0) starvation_watchdog_heartbeat();
             free(d);
         } else if (!strcmp(ents[i].name, "drop_table_edits.ini")) {
             long sz; unsigned char *d = zip_extract(b, n, &ents[i], &sz);
@@ -387,7 +391,10 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
         }
     }
     free(b);
+    starvation_watchdog_heartbeat();
+    psx_tool_log("card share: %d files written at %u ms, reloading", files, (unsigned)SDL_GetTicks());
     psx_card_packs_reload(0);
+    psx_tool_log("card share: reload done at %u ms", (unsigned)SDL_GetTicks());
     if (msg) snprintf(msg, cap, "Imported %d card%s (%d file%s)%s%s", info.card_n, info.card_n == 1 ? "" : "s", files, files == 1 ? "" : "s",
                       info.has_drops ? " and the drop table edits" : "", bad ? "; some entries were damaged and skipped" : "");
     return bad == 0;

@@ -57,8 +57,9 @@ int psx_drop_missing_transform(int duelist, int tier, uint16_t *w);
  * everyone else so the tier still totals 2048. A pinned weight of 0 removes
  * the card from the band. Returns 1 on success; on any negative code w is
  * untouched: -1 no pins, -2 nothing left to scale, -3 the result missed 2048,
- * -4 the pins claim more than 2048-64. There is deliberately exactly ONE
- * implementation of this arithmetic. */
+ * -4 the pins claim more than 2048-64 without reaching 2048. Pins that total
+ * exactly 2048 are taken as the whole band: everything else becomes 0.
+ * There is deliberately exactly ONE implementation of this arithmetic. */
 int psx_drop_pins_rescale(uint16_t *w, const uint16_t *cards,
                           const uint16_t *weights, int n);
 

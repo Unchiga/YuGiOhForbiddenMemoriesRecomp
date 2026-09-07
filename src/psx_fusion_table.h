@@ -55,6 +55,9 @@ const PsxFusionRecipe *psx_fusion_table_recipes(int *n);
 /* The equip table, read from the same block. Read-only here — equips are
  * psx_card_effects.c's to edit. Grouped by equip id, as stored. */
 const PsxFusionEquip *psx_fusion_table_equips(int *n, int *groups);
+/* The DISC's own recipe list, edits or no edits: how many, and pair i. */
+int psx_fusion_table_stock_count(void);
+int psx_fusion_table_stock_pair(int i, int *a, int *b, int *r);
 
 /* Effective result for a pair, 0 when they do not combine. */
 int psx_fusion_table_result(int a, int b);

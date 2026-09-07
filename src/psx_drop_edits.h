@@ -79,6 +79,15 @@ int  psx_drop_edits_import_file(const char *path, char *msg, unsigned cap);
 void psx_drop_edits_share_dir(char *out, unsigned cap);
 int  psx_drop_edits_load_file(const char *name_or_path);
 
+/* Randomize: every duelist's drop tables rebuilt from stock with random
+ * monsters and random weights (the non-monster drops keep their cards), as a
+ * complete set of edits that replaces the current layer. Nothing is written:
+ * Save keeps it, like any other edit. seed 0 picks a fixed seed; a caller
+ * wanting variety passes the clock. Returns the number of entries recorded,
+ * 0 (and msg) when it could not be done: the card types come from the
+ * running game, so it needs the game up. Scripted rewards are untouched. */
+int psx_drop_edits_randomize(uint32_t seed, char *msg, unsigned cap);
+
 /* --- scripted story rewards ------------------------------------------------
  *
  * The card a duelist is guaranteed to drop when the CAMPAIGN beats them: the

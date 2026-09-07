@@ -129,6 +129,16 @@ with ATK/DEF, the selected card's name, type icon and stars below.
 The memory card file's mtime changes when the save is loaded; that is the
 runtime mounting it, not a save. Always screenshot between steps.
 
+Two title-screen facts, both measured 2026-09-07. The FIRST title screen
+after boot ignores START (five 60-frame presses did nothing) until the attract
+loop has cycled: the title idles into the intro FMV, START during the FMV
+skips to the title, and START there opens the menu. So wait for the intro,
+or press START until a screenshot is no longer the title. On this save's
+FREE DUEL grid, `Build Deck` is followed by empty cells (Simon's among them):
+one DOWN selects Weevil Underwood, and the name shows at the bottom of the
+grid when a filled cell is selected. A press on an empty cell does nothing
+and Circle backs out to the campaign menu.
+
 HAZARD: the campaign's card shop menu has SAVE as its first item and "RETURN TO
 TITLE" goes to the loaded-save menu, not the title. Never chain blind presses
 in the campaign. Memory card backups: `~/Documents/ygofm-memcard-backup-*`.
@@ -197,16 +207,47 @@ Other windows: `drop_viewer_set` (`open`, `view` 0 cards / 1 duelists, `card`,
 `search`, `sort`, `desc`, and the file pair `export`:path / `import`:path,
 which answer `{ok,msg}` and work with the window closed), `drop_viewer_shot`;
 `fusion_manager` (`open`, `card`, `search`, `view`) whose state json has
-`sel_name`.
+`sel_name`. Its equip pairings: `equips_export`:path writes the DISC's equip
+groups as `equip<TAB>monster` lines (34 groups, 4041 pairings on this disc;
+Megamorph 657 and 668 fit all 621 monsters, 303 fits 292, 308 fits 226), and
+`equip`:E, `mon`:M, `fit`:1|0 adds or removes one pairing through the equip
+card's card.ini (`{ok,msg}`); the manager's `makes` for the equip counts the
+pairing at once. Verified 2026-09-07 on Elegant Egotist (318): add, duplicate
+refused, remove, a stock pairing removed down to 0 monsters, and `card_effects`
+reported `equip_override` 1 with nothing dropped.
 
-The Drop Table Manager's top bar is Save, Import, Export and a view-dependent
-slot (`geom` rects `save`, `import`, `export`, `third`; `hover_btn` numbers
-them 2, 3, 4, 5 after the two tabs). Import and Export are SDL dialogs like
+The Drop Table Manager's top bar is Save, Import, Export, Randomize and a
+view-dependent slot (`geom` rects `save`, `import`, `export`, `randomize`,
+`third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs).
+Randomize is armed by one click and done by a second within ten seconds;
+`drop_viewer_set` with `randomize`:seed does it in one step, window open or
+closed, and answers `{ok, entries, msg}`. Seed 0 is a fixed seed, so a run
+can be repeated. Verified 2026-09-07: the export after a seeded randomize has
+every band at 2048 with stock's drop counts and the non-monster drops kept,
+and a Free Duel against Weevil loaded the three randomized bands byte for
+byte at 0x801781D8 (`drop_missing_state` reports `edit_result` [1, 1, 1]). Import and Export are SDL dialogs like
 the Card Manager's, so section 7 applies: with
 `SDL_FILE_DIALOG_DRIVER=nosuchdriver` an Export click falls back to
 `drop_tables/drop-table.ini` in the player folder and an Import click says the
 dialog could not open. Verified 2026-09-06 both ways, dialog and fallback, and
 the real KDE dialog picked a file typed with `ydotool type` + Enter.
+
+`randomizer_stock` (`path`) writes the disc's own values as one JSON file
+(stock card stats via psx_card_packs_stock, the AI profiles as first seen
+keyed by opponent id, the stock fusion pairs, the equip groups); it is what
+tools/randomizer.py builds from, and it answers the stock values however many
+card.ini edits, CPU decks or fusion edits are loaded at the time.
+
+Heals and the LP clamp, traced 2026-09-07: with a deck of 40 heal cards
+(`write_mem` 0x801D0200 at the grid, ids 338..342), LP set to 7500 by
+`write_mem` 0x800EA004, `wtrace_range` lo 0x800EA004 hi 0x800EA008 +
+`wtrace_clear`, then X, X, DOWN (a Magic card needs the lower row of the
+slot chooser), X: Mooyan Curry took LP to 7700 and `wtrace_dump` named the
+store at pc 0x80025180. The clamp follows at 0x80025188/0x80025194 (`lh`/`lhu`
+of the max LP at +0x16 of the duelist block, filled at duel start), which the
+cheats module's tick rewrites to `addiu 9999` on every launch (7900 + Mooyan
+Curry -> 8100, verified). Static scans for the
+tables miss because the duel code addresses them off $gp.
 
 ## 7. A save with barely any cards
 
@@ -226,6 +267,20 @@ Entering the LIBRARY re-marks every owned card and every deck card as seen
 (Library_MarkOwnedCards), so an emptied trunk still shows the deck's cards.
 `{"cmd":"fill_library"}` reports seen / owned / cards without a screenshot,
 and `{"cmd":"fill_library","on":1}` drives the MODS row.
+
+## 7b. MOD package round trip (run before every release)
+
+`python3 tools/package_roundtrip.py --keep tools/fixtures/full-coverage-<date>.ygomods`
+against the debug build. It exports the player's state, builds a state where
+every manager has an edit (a randomizer package, a translated line, a CPU
+portrait, edited drop_missing_cards.ini and card_shop.ini), exports A, runs
+Revert to Stock and checks every manager reads empty, imports A, exports B,
+compares A and B part by part, imports every earlier fixture in
+tools/fixtures/, and puts the player's export back. 2026-09-07: green, 732
+files identical. It also found that a 24 000-line fusion import re-sorted the
+edit list after every line (7 s, past the runtime's 4 s starvation watchdog,
+which exit(2)s the game); imports are batched now (0.06 s for the whole
+package) and the package importer beats the watchdog between parts.
 
 ## 8. Scripted story drops
 

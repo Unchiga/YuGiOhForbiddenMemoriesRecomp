@@ -215,7 +215,10 @@ static void force_faceup_tick(void) {
 
 static void reveal_tick(void);     /* defined with REVEAL ALL PORTRAITS */
 
+static void heal_cap_apply(void);
+
 void psx_ygo_cheats_tick(void) {
+    heal_cap_apply();
     show_opp_hand_tick();
     force_faceup_tick();
     free_spending_tick();
@@ -246,6 +249,30 @@ void psx_ygo_cheats_tick(void) {
 static void lp_patch_site(uint32_t pc, int value) {
     if ((psx_mod_read_word(pc) >> 16) != 0x2402u) return;   /* addiu $v0,$zero */
     psx_mod_write_code_word(pc, 0x24020000u | (uint32_t)value);
+}
+
+/* --- HEAL CAP --------------------------------------------------------------
+ * The heal path in the duel effect code:
+ *     80025174  lhu $v1, 0x14($a0)      LP
+ *     80025180  sh  $v1, 0x14($a0)      LP += amount
+ *     80025188  lh  $v0, 0x16($a0)      max LP (set at duel start)
+ *     80025190  slt $v0, $v0, $v1
+ *     80025194  lhu $v1, 0x16($a0)
+ *     80025198  beqz $v0 -> done
+ *     800251A4  sh  $v1, 0x14($a0)      LP = max
+ * Stock, a heal stops at the LP the duel began with, so a heal card at 8000
+ * does nothing. Both max loads become "9999" here, the most the four-digit
+ * counter shows, so a heal always counts. Traced live 2026-09-07 with a write
+ * trace on 0x800EA004 (LP 7500 + Mooyan Curry -> 7700, stored from
+ * 0x80025180; with the patch 7900 -> 8100). Asserted every frame once the
+ * game is up: a savestate can bring the stock words back. Two code words,
+ * both sent to the interpreter. */
+#define HEAL_CAP_LH   0x80025188u
+#define HEAL_CAP_LHU  0x80025194u
+static void heal_cap_apply(void) {
+    if (!psx_mod_game_started()) return;
+    if (psx_mod_read_word(HEAL_CAP_LH)  == 0x84820016u) psx_mod_write_code_word(HEAL_CAP_LH,  0x2402270Fu);   /* addiu $v0,$zero,9999 */
+    if (psx_mod_read_word(HEAL_CAP_LHU) == 0x94830016u) psx_mod_write_code_word(HEAL_CAP_LHU, 0x2403270Fu);   /* addiu $v1,$zero,9999 */
 }
 
 static void lp_changed(int value) {
