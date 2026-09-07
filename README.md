@@ -119,6 +119,20 @@ The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048. 20 is
 about 1%. Each band totals 2048, so what you add comes off that duelist's normal
 drops in proportion. Delete the file for the defaults back.
 
+### Fill library (`MODS → FILL LIBRARY`)
+
+The LIBRARY knows three states per card: never met, **seen** but not owned (a
+fusion you watched resolve, drawn dim), and owned. This row makes every card
+readable while it is on: all 722 show their picture, name, stars, guardian
+stars, ATK/DEF, text and password, and the figure at the top counts **the
+cards you actually own** instead of the ones you have seen.
+
+It gives you nothing. Your trunk is not touched, so a card you looked up here
+is still not yours and cannot go in a deck. Nothing is written to your save
+either: the marks exist only while the LIBRARY is on screen, which is the one
+screen with no `SAVE` on it, and the row puts your own list back bit for bit
+when you leave or turn it off.
+
 ### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
 ![The Drop Table Manager](docs/screenshots/drop-table-manager.png)

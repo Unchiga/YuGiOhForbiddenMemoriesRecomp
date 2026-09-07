@@ -31,6 +31,7 @@
 #include "psx_duelist_icon_cache.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
+#include "psx_fill_library.h"
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
@@ -620,6 +621,18 @@ static void handle_card_manager_shot(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
+/* fill_library — the MODS row that makes every card show in the LIBRARY.
+ * {"on":1/0} drives the row; the reply is its state, plus how many cards the
+ * save has seen and owns right now. */
+static void handle_fill_library(int id, const char *json)
+{
+    const int on = json_get_int(json, "on", -1);
+    if (on >= 0) psx_fill_library_set(on);
+    char buf[256];
+    if (!psx_fill_library_state_json(buf, sizeof buf)) { send_err(id, "state unavailable"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
 /* drop_viewer — what the second window is showing. The window is a host
  * surface with no framebuffer the screenshot commands can reach, so without
  * this the only way to check it is to photograph the desktop. */
@@ -1024,6 +1037,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("rank_fade_ring",    handle_rank_fade_ring);
     (void)psx_debug_add_command("card_drops_state",  handle_card_drops_state);
     (void)psx_debug_add_command("drop_missing_state", handle_drop_missing_state);
+    (void)psx_debug_add_command("fill_library",      handle_fill_library);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);

@@ -202,7 +202,26 @@ the Card Manager's, so section 7 applies: with
 dialog could not open. Verified 2026-09-06 both ways, dialog and fallback, and
 the real KDE dialog picked a file typed with `ydotool type` + Enter.
 
-## 7. File dialogs
+## 7. A save with barely any cards
+
+The library / collection features need a save that has NOT finished the game,
+and the one on this box owns everything. Fabricate the state in RAM instead --
+never save while it is fabricated, and put it back afterwards:
+
+```python
+LIVE, MIR = 0x801D0200, 0x801D3200     # save struct and its +0x3000 mirror
+snap = p.rd(LIVE, 0x680)               # restore from this when done
+# trunk (what you own): 722 bytes at +0x50, card N at +(N-1)
+write(LIVE+0x50, bytes(722)); write(MIR+0x50, bytes(722))
+# seen flags: flag array at +0x418, card N is flag 0x120+N, MSB first
+```
+
+Entering the LIBRARY re-marks every owned card and every deck card as seen
+(Library_MarkOwnedCards), so an emptied trunk still shows the deck's cards.
+`{"cmd":"fill_library"}` reports seen / owned / cards without a screenshot,
+and `{"cmd":"fill_library","on":1}` drives the MODS row.
+
+## 8. File dialogs
 
 Export/Import open an SDL3 save/open dialog, which goes through the KDE
 portal here. Nothing scripted can fill it in through the debug server. Options:
@@ -220,7 +239,7 @@ portal here. Nothing scripted can fill it in through the debug server. Options:
 The KDE dialog has once come up with an empty name field (only `.ygocards`);
 the manager fills in `edited-cards.ygocards` when that happens.
 
-## 8. In-game places where an edited card is visible
+## 9. In-game places where an edited card is visible
 
 - LIBRARY: art, title strip, level (stars), attribute orb, guardian stars,
   ATK/DEF, type, description, frame colour (card view and grid tile).
@@ -235,7 +254,7 @@ description, ATK/DEF, both guardian stars, type, level, attribute, frame
 colour (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
 title strip derived from the name, price and password on the PASSWORD screen.
 
-## 9. Reading duel results
+## 10. Reading duel results
 
 Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 5..9, magic 10..14; opponent +15): +0xC id, +0xE ATK, +0x10 DEF, +0x12 modifier,
@@ -243,7 +262,7 @@ Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 0x8009B1D5, terrain 0x8009B364, deck written at the grid: 0x801D0200.
 
-## 10. Stopping
+## 11. Stopping
 
 ```sh
 kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)
