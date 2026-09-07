@@ -291,7 +291,7 @@ cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         type = Dragon        level = 12      attribute = Light
                         price = 999999       password = 12345678
 cards/<id>/art.png      any size, becomes the 102x96 / 256-color card face
-cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, made from art.png when absent
+cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, the middle 80x64 of art.png when absent
 cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
 ```
 
@@ -540,8 +540,9 @@ Mostly you need **arrows** to move, **`X`** to confirm, **`S`** to cancel.
 | `F` | Show performance stats |
 | Numpad `+` / `-` | Volume |
 
-Keys live in `keybinds.ini` next to the executable, with the accepted names at
-the top. Each input takes a second binding after a comma: `cross = X, Mouse1`.
+Keys live in `keybinds.ini` in the player-data folder (`Documents\My Games\Yu-Gi-Oh
+Forbidden Memories Recompiled`, or next to the executable on a portable install),
+with the accepted names at the top. The launcher's controller page edits the same file. Each input takes a second binding after a comma: `cross = X, Mouse1`.
 
 ---
 

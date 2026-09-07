@@ -64,6 +64,7 @@ static int           s_w, s_h, s_dirty;
 static int           s_open_req;
 static PsxUiCanvas   s_cv;
 static float         s_u = 1.0f;          /* design unit in pixels */
+static float         s_u_base = 1.0f;     /* the unit the canvas height asks for, before fitting */
 static SDL_Window   *s_gl_win;
 static SDL_GLContext s_gl_ctx;
 
@@ -618,7 +619,15 @@ static int field_fits(int f)
 }
 static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab; }
 
-static void layout_compute(void)
+/* The help under the buttons, per tab */
+static const char *const HELP_TEXT[2] = {
+    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, six lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
+    "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.",
+};
+#define HELP_LINES 5
+static int wrap_text(const PsxUiFace *f, const char *s, int max_w, char lines[][256], int max_lines);
+
+static void layout_pass(void)
 {
     Layout *L = &s_L;
     memset(L, 0, sizeof *L);
@@ -781,6 +790,47 @@ static void layout_compute(void)
         L->modal_ok = (Rect){ L->modal.x + L->modal.w - pad - bw * 2 - px(6.0f), L->modal.y + L->modal.h - pad - bh, bw, bh };
         L->modal_cancel = (Rect){ L->modal.x + L->modal.w - pad - bw, L->modal.y + L->modal.h - pad - bh, bw, bh };
     }
+}
+
+/* The pixel row the editor's text ends on after a pass: two status lines,
+ * then the help wrapped to the panel, then the panel's padding. */
+static int layout_bottom(void)
+{
+    const Layout *L = &s_L;
+    const PsxUiFace *fs = face_small();
+    const int ex = L->ed.x + px(U_PAD), w = L->ed.w - px(U_PAD) * 2;
+    char lines[HELP_LINES][256];
+    int y = L->status_y + psx_ui_font_line_height(face_bold()) * 2 + px(3.0f);
+    (void)ex;
+    y += psx_ui_font_line_height(fs) * wrap_text(fs, HELP_TEXT[s_tab], w, lines, HELP_LINES);
+    return y + px(U_PAD);
+}
+
+/* Everything is drawn in design units of canvas height / 480, so a form
+ * taller than the canvas is taller at every window size. When the form
+ * does not fit, the unit shrinks until it does. Both tabs are measured
+ * so switching tabs never changes the size; a card with many rules can
+ * still shrink the window a little more than one without. */
+static void layout_compute(void)
+{
+    const int tab = s_tab;
+    s_u = s_u_base;
+    for (int pass = 0; pass < 3; pass++) {
+        int need = 0;
+        for (int t = 0; t < 2; t++) {
+            s_tab = t;
+            layout_pass();
+            const int b = layout_bottom();
+            if (b > need) need = b;
+        }
+        s_tab = tab;
+        if (need <= s_h || s_u <= 1.0f) break;
+        float u = s_u * (float)s_h / (float)need;
+        if (u < 1.0f) u = 1.0f;
+        if (u >= s_u) break;
+        s_u = u;
+    }
+    layout_pass();
 }
 
 /* --- text helpers -------------------------------------------------------------- */
@@ -1901,9 +1951,7 @@ static void draw_editor(void)
             y = draw_wrapped(ex, y, w, p, COL_DIM, fs, 2);
         }
         y += px(3.0f);
-        draw_wrapped(ex, y, w, s_tab == 0
-            ? "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, six lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first."
-            : "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.", COL_DIM, fs, 5);
+        draw_wrapped(ex, y, w, HELP_TEXT[s_tab], COL_DIM, fs, HELP_LINES);
     }
 }
 
@@ -2389,9 +2437,10 @@ static int ensure_canvas(int w, int h)
     gl_restore();
     if (!s_tex) { free(s_px); s_px = NULL; s_w = s_h = 0; return 0; }
     s_w = w; s_h = h;
-    s_u = (float)h / 480.0f;
-    if (s_u < 1.0f) s_u = 1.0f;
-    if (s_u > 8.0f) s_u = 8.0f;
+    s_u_base = (float)h / 480.0f;
+    if (s_u_base < 1.0f) s_u_base = 1.0f;
+    if (s_u_base > 8.0f) s_u_base = 8.0f;
+    s_u = s_u_base;
     s_dirty = 1;
     return 1;
 }

@@ -12,6 +12,8 @@
  *                  Every key is optional; a missing key keeps the stock value.
  *     art.png      the card face art. Any size; scaled to 102x96, 256 colors.
  *     thumb.png    the duel thumbnail. Any size; scaled to 40x32, 64 colors.
+ *                  Without one, the middle 80x64 of the art, halved (the
+ *                  stock thumbnails are zooms, not the face squashed).
  *                  Derived from art.png when absent.
  *     title.png    the baked title strip, 96x14, dark ink on white or with
  *                  alpha. Rendered from `name` when absent (Times New Roman
@@ -688,16 +690,17 @@ static void rgb_from_indexed(const uint8_t *idx, const uint8_t *clut_le, int n, 
     }
 }
 
-/* 102x96 -> 40x32 box filter, for a thumbnail derived from the art. */
-static void shrink_rgb(const uint8_t *in, int iw, int ih, uint8_t *out, int ow, int oh)
+/* Box filter of one rect of `in` into `out`, for a thumbnail derived from
+ * the art. */
+static void shrink_rgb(const uint8_t *in, int iw, int x0, int y0, int cw, int ch, uint8_t *out, int ow, int oh)
 {
     for (int y = 0; y < oh; y++) {
-        const int y0 = y * ih / oh, y1 = (y + 1) * ih / oh;
+        const int ya = y0 + y * ch / oh, yb = y0 + (y + 1) * ch / oh;
         for (int x = 0; x < ow; x++) {
-            const int x0 = x * iw / ow, x1 = (x + 1) * iw / ow;
+            const int xa = x0 + x * cw / ow, xb = x0 + (x + 1) * cw / ow;
             long r = 0, g = 0, b = 0, n = 0;
-            for (int yy = y0; yy < y1; yy++)
-                for (int xx = x0; xx < x1; xx++) {
+            for (int yy = ya; yy < yb; yy++)
+                for (int xx = xa; xx < xb; xx++) {
                     const uint8_t *p = in + ((size_t)yy * (size_t)iw + (size_t)xx) * 3u;
                     r += p[0]; g += p[1]; b += p[2]; n++;
                 }
@@ -1220,7 +1223,19 @@ static int build_disc_side(Pack *pk)
     }
     pack_path(id, "thumb.png", path, sizeof path);
     if (load_png_rgb(path, THUMB_W, THUMB_H, thumb_rgb)) have_thumb = 1;
-    else if (have_art) { shrink_rgb(art_rgb, ART_W, ART_H, thumb_rgb, THUMB_W, THUMB_H); have_thumb = 1; }
+    else if (have_art) {
+        /* The stock thumbnails are not the face shrunk: each is a zoom on the
+         * monster, a 5:4 window that is the whole face on a few cards and a
+         * third of it on others. Measured over 68 cards (2026-09-07, the
+         * crop of the stock face that best matches the stock thumbnail), the
+         * window is 74 px wide in the median, centred at x 50 and y 40, so
+         * a little above the middle where the heads are. This takes the
+         * 80x64 window on that centre, which is exactly a 2x2 average, and
+         * which beat the whole-face squash on every card measured. A card
+         * whose subject sits elsewhere gets its own thumb.png. */
+        shrink_rgb(art_rgb, ART_W, (ART_W - THUMB_W * 2) / 2, 8, THUMB_W * 2, THUMB_H * 2, thumb_rgb, THUMB_W, THUMB_H);
+        have_thumb = 1;
+    }
     if (have_thumb) {
         quantize(thumb_rgb, THUMB_BYTES, 64, idx, clut);
         memcpy(rec + THUMB_OFF, idx, THUMB_BYTES);

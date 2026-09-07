@@ -18,6 +18,11 @@ cmake --build build-dbg --target psx-runtime     # debug
 cmake --build build     --target psx-runtime     # release
 ```
 
+Only one game holds the debug port. A second launch prints `debug server
+bind(4370) FAILED` and every query keeps going to the OLD process, so after a
+rebuild stop the old one first: `pkill -x Yu_Gi_Oh_Forbid` (the process name
+is cut to 15 characters; `pkill -f` on the full name kills your own shell too).
+
 Player data lives in `~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/`
 (the runtime prints `psxrecomp: player data in ...` at start). Your own edited
 cards are `cards/<id>/`; the Card Effects set is `mods/card_effects/cards/<id>/`.
