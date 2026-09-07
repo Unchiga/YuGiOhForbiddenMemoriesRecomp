@@ -4,14 +4,15 @@ A static recompilation of **Yu-Gi-Oh! Forbidden Memories** (USA, SLUS-01411).
 The game's MIPS code is translated to C ahead of time and compiled into a native
 executable, not interpreted by an emulator.
 
-![A duel in progress, with the overlay menu bar across the top of the window and the duel-rank meter reading S 99 beside the FIELD box.](media/duel.png)
+![A duel in progress, with the overlay menu bar across the top of the window and the duel-rank meter reading S beside the FIELD box.](media/duel.png)
 
 *A duel running natively. The menu bar and the duel-rank meter beside the FIELD
 box are this project's, drawn in the game's own art.*
 
 On top sits a set of quality-of-life features: a live duel-rank meter, a fusion
-assistant, a card-drop multiplier, managers for the drop tables, the cards and
-every fusion in the game, and a cheat menu. All toggleable at runtime.
+assistant, a card-drop multiplier, managers for the drop tables, the cards, the
+CPU duelists and every fusion in the game, a cheat menu, and MOD packages that
+export and import all of it as one file to share. All toggleable at runtime.
 
 Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
