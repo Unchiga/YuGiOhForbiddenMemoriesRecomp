@@ -33,6 +33,7 @@
 #include "mod_plugins.h"
 #include "psx_card_db.h"
 #include "psx_card_packs.h"
+#include "psx_card_effects.h"
 #include "psx_fusion_db.h"
 #include "psx_fusion_table.h"
 #include "psx_game_hooks.h"
@@ -529,16 +530,9 @@ static int is_equip_id(int id)   { return card_type(id) == 23; }
  * answers the game with. */
 static int pack_equips_monster(const PsxCardPack *pk, int m)
 {
-    for (int i = 0; i < pk->equip_n; i++) if (pk->equip_ids[i] == m) return 1;
-    const uint32_t mask = pk->equip_types;
-    if (!mask) return 0;
-    if (mask & PSX_CARD_PACK_EQUIP_ALL) return 1;
-    int a = 0, d = 0, ty = -1;
-    if (!psx_card_db_stats(m, &a, &d, &ty)) return 0;
-    if (ty >= 0 && ty < 20 && (mask & (1u << ty))) return 1;
-    PsxCardStock st;
-    if (psx_card_packs_stock(m, &st) && st.attribute >= 0 && st.attribute < 6 && (mask & PSX_CARD_PACK_EQUIP_ATTR_BIT(st.attribute))) return 1;
-    return 0;
+    /* one test for the game (hook_equip), the duel assistant and this window */
+    const int r = psx_card_effects_equip_fits(pk->id, m);
+    return r > 0;
 }
 
 static int eq_push(int n, int equip, int mon)

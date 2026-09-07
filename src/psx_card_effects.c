@@ -631,6 +631,23 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
 
 int psx_card_effects_hold_active(void) { return s_hold.active; }
 
+int psx_card_effects_equip_scratch(void) { return s_equip_override; }
+
+int psx_card_effects_equip_fits(int equip, int mon)
+{
+    const Fx *f = fx_of(equip);
+    if (!f || !(f->cfg.equips_set || f->cfg.equip_types)) return -1;
+    for (int i = 0; i < f->cfg.equip_n; i++) if (f->cfg.equip_ids[i] == mon) return 1;
+    const uint32_t m = f->cfg.equip_types;
+    if (!m) return 0;
+    if (m & PSX_CARD_PACK_EQUIP_ALL) return 1;
+    const int tb = card_type(mon);
+    if (tb < 0 || tb >= 20) return 0;
+    if (m & (1u << tb)) return 1;
+    const int attr = psx_mod_read_byte(psx_card_extend_aux_base() + (uint32_t)mon) >> 4;
+    return (attr < 6 && (m & PSX_CARD_PACK_EQUIP_ATTR_BIT(attr))) ? 1 : 0;
+}
+
 int psx_card_effects_cast(int fx, int amount, int target, int terrain)
 {
     if (!s_stock_ok) return 0;

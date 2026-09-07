@@ -268,6 +268,18 @@ Entering the LIBRARY re-marks every owned card and every deck card as seen
 `{"cmd":"fill_library"}` reports seen / owned / cards without a screenshot,
 and `{"cmd":"fill_library","on":1}` drives the MODS row.
 
+The duel assistant (FUSION HINT) and edited equips, 2026-09-07: the rebuilt
+equip table psx_card_effects serves starts with a scratch group {0xFFFE, 1, 0}
+whose key the hook rewrites to the equip's id mid-lookup, and psx_fusion_db's
+sentinel and validator read that as garbage, so the hint went dark whenever
+any equip list had been edited (the randomizer edits 32). psx_fusion_db now
+skips the first group by position when psx_card_effects_equip_scratch() says
+the rebuilt table is live, and answers edited equips from
+psx_card_effects_equip_fits(). Check in a duel with the randomizer loaded:
+`fusion_db` ready 1, `fusion_best` names the randomized result, and
+`screenshot_present` shows the overlay (Mushroom Man + Mystical Elf -> Garvas
+under seed 2026).
+
 ## 7b. MOD package round trip (run before every release)
 
 `python3 tools/package_roundtrip.py --keep tools/fixtures/full-coverage-<date>.ygomods`

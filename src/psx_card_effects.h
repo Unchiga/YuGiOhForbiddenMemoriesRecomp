@@ -37,6 +37,15 @@ int psx_card_effects_cast(int fx, int amount, int target, int terrain);
 /* 1 while a parameter hold (a running cast or played effect) is active. */
 int psx_card_effects_hold_active(void);
 
+/* The equip table as the game sees it. 1 while the rebuilt equip table (with
+ * its scratch group first) is being served in place of the disc's, so a
+ * reader walking 0x8017A1D8 has to skip that first group. */
+int psx_card_effects_equip_scratch(void);
+/* Does `equip` fit `mon` according to the equip card's card.ini list (ids,
+ * types, attributes or all), the same test hook_equip answers the game
+ * with? -1 when the card has no list (the disc's group is the answer). */
+int psx_card_effects_equip_fits(int equip, int mon);
+
 /* The effect as card text, in the game's 20-column lines separated by "|",
  * for the description. Empty when the card has no edited effect. */
 int psx_card_effects_describe(const PsxCardPack *c, char *out, unsigned cap);

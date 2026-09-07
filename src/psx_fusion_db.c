@@ -108,6 +108,7 @@
 #include <string.h>
 
 #include "mod_plugins.h"
+#include "psx_card_effects.h"   /* the rebuilt equip table's scratch group, and edited lists */
 
 #define PSX_FUSION_PAIR_BASE   0x8017C2D8u
 #define PSX_FUSION_EQUIP_BASE  0x8017A1D8u
@@ -161,10 +162,26 @@ static uint16_t pair_lookup(uint16_t a, uint16_t b)
     return 0;
 }
 
-/* func_80019A08: is `member` in `key`'s group? Returns `member` if so. */
-static uint16_t equip_lookup(uint16_t key, uint16_t member)
+/* Where the equip groups start. When psx_card_effects serves its rebuilt
+ * table, the first group is a scratch group {key, 1, member} the hook
+ * rewrites during a lookup (its key is 0xFFFE at rest and the equip's own id
+ * mid-lookup), so it is skipped by position, not by key. Until 2026-09-07
+ * the sentinel and validator read it as garbage and the duel assistant went
+ * dark whenever any equip list had been edited. */
+static uint32_t equip_groups_start(void)
 {
     uint32_t p = PSX_FUSION_EQUIP_BASE;
+    if (psx_card_effects_equip_scratch() && psx_mod_read_half(p + 2u) == 1u) p += 6u;
+    return p;
+}
+
+/* func_80019A08: is `member` in `key`'s group? Returns `member` if so. An
+ * edited equip answers from its card.ini list, the way the game's hook does. */
+static uint16_t equip_lookup(uint16_t key, uint16_t member)
+{
+    const int edited = psx_card_effects_equip_fits(key, member);
+    if (edited >= 0) return edited ? member : 0;
+    uint32_t p = equip_groups_start();
     for (int g = 0; g < PSX_FUSION_MAX_EQUIP_GROUPS; g++) {
         const uint16_t k = psx_mod_read_half(p);
         if (k == 0) return 0;
@@ -211,7 +228,7 @@ static int validate(void)
      * 0xC3 (066f2b5, "Fusion overlay: only compose inside an actual duel").
      * Do not talk yourself into thinking readiness is load-bearing for that;
      * it is not, and the overlay's own gate is the thing to check. */
-    uint32_t p = PSX_FUSION_EQUIP_BASE;
+    uint32_t p = equip_groups_start();
     const uint32_t end = PSX_FUSION_EQUIP_BASE + PSX_FUSION_EQUIP_BYTES;
     int groups = 0;
     for (;;) {
@@ -230,9 +247,10 @@ static int validate(void)
 /* Is the duel data plausibly resident? Three reads, no walk. */
 static int sentinel(void)
 {
-    if (psx_mod_read_half(PSX_FUSION_EQUIP_BASE) - 1u >= PSX_FUSION_CARD_ID_MAX)
+    const uint32_t p = equip_groups_start();
+    if (psx_mod_read_half(p) - 1u >= PSX_FUSION_CARD_ID_MAX)
         return 0;
-    if (psx_mod_read_half(PSX_FUSION_EQUIP_BASE + 2u) - 1u >= PSX_FUSION_CARD_ID_MAX)
+    if (psx_mod_read_half(p + 2u) - 1u >= PSX_FUSION_CARD_ID_MAX)
         return 0;
     /* The fusion index used to be probed here too (card 2's record offset),
      * which an emptied table zeroes. The equip table is the same 235-sector
@@ -354,7 +372,7 @@ int psx_fusion_db_walk_equips(PsxFusionEquipFn fn, void *ud)
 {
     if (!fn || !psx_fusion_db_ready()) return 0;
     int seen = 0;
-    uint32_t p = PSX_FUSION_EQUIP_BASE;
+    uint32_t p = equip_groups_start();
     for (int g = 0; g < PSX_FUSION_MAX_EQUIP_GROUPS; g++) {
         const uint16_t key = psx_mod_read_half(p);
         if (key == 0) break;
