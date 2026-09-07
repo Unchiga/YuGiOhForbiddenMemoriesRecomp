@@ -22,8 +22,10 @@
 #ifdef _WIN32
 #include <direct.h>
 #define MKDIR(p) _mkdir(p)
+#define rmdir _rmdir
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #define MKDIR(p) mkdir(p, 0755)
 #endif
 
@@ -240,13 +242,22 @@ int psx_mod_package_export(const char *path, char *msg, unsigned cap)
     char tmp[1200], why[200] = "";
     int ok = 1;
 
-    /* cards and drop tables: the Card Manager's own file, flattened in */
+    /* cards and drop tables: the Card Manager's own file, flattened in.
+     * ALWAYS the player's own cards/ set: with Dev Card Effects on the live
+     * set is the shipped effects mod, which is not theirs to ship. */
     {
         int edited = 0;
-        for (int id = 1; id <= CARD_COUNT && !edited; id++) edited = psx_card_packs_get(id, NULL) != 0;
+        const char *own = psx_card_packs_own_dir();
+        for (int id = 1; id <= CARD_COUNT && !edited; id++) {
+            char pth[1300]; snprintf(pth, sizeof pth, "%s/%d/card.ini", own, id);
+            edited = file_exists(pth);
+        }
         if (edited || psx_drop_edits_any()) {
             scratch_path("cards.ygocards", tmp, sizeof tmp);
-            if (psx_card_share_export(tmp, why, sizeof why)) ok = add_zip_entries(z, tmp, rename_cards, &parts) >= 0;
+            psx_card_share_own_set(1);
+            const int wrote = psx_card_share_export(tmp, why, sizeof why);
+            psx_card_share_own_set(0);
+            if (wrote) ok = add_zip_entries(z, tmp, rename_cards, &parts) >= 0;
             (void)psx_remove_utf8(tmp);
         }
     }
@@ -423,7 +434,10 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
         for (int i = 0; i < k && !any; i++) any = name_is_cards(ents[i].name);
         if (any) {
             scratch_path("cards.ygocards", tmp, sizeof tmp);
-            if (repack(b, n, ents, k, name_is_cards, tmp, &c) && psx_card_share_import(tmp, why, sizeof why)) { parts++; NOTE("%scards ok", parts > 1 ? "; " : ""); }
+            psx_card_share_own_set(1);          /* into cards/, never the Dev set */
+            const int good = repack(b, n, ents, k, name_is_cards, tmp, &c) && psx_card_share_import(tmp, why, sizeof why);
+            psx_card_share_own_set(0);
+            if (good) { parts++; NOTE("%scards ok%s", parts > 1 ? "; " : "", psx_card_packs_is_dev() ? " (into your own set: Dev Card Effects is on, switch it off to see them)" : ""); }
             else { failed++; NOTE("%scards: %.80s", parts + failed > 1 ? "; " : "", why); }
             (void)psx_remove_utf8(tmp);
         }
@@ -494,8 +508,21 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
 {
     char why[300];
     int cards = 0, drops = 0, cpu = 0, fusion = 0, dialogue = 0, files = 0, rows = 0;
-    for (int id = 1; id <= CARD_COUNT; id++)
-        if (psx_card_packs_get(id, NULL) && psx_card_packs_remove(id)) cards++;
+    {   /* the player's own cards/ folders, by hand: psx_card_packs_remove
+         * works on the LIVE set, and with Dev Card Effects on that is the
+         * shipped effects mod, which stays as it is */
+        static const char *const files4[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
+        const char *own = psx_card_packs_own_dir();
+        for (int id = 1; id <= CARD_COUNT; id++) {
+            char d[1300]; snprintf(d, sizeof d, "%s/%d", own, id);
+            int any = 0;
+            for (int j = 0; j < 4; j++) {
+                char pth[1400]; snprintf(pth, sizeof pth, "%s/%s", d, files4[j]);
+                if (file_exists(pth)) { any = 1; (void)psx_remove_utf8(pth); }
+            }
+            if (any) { (void)rmdir(d); cards++; }
+        }
+    }
     psx_card_packs_reload(0);
     for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
         if (psx_drop_edits_count(d)) { psx_drop_edits_clear(d); drops++; }

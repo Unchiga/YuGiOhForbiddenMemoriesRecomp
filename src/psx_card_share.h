@@ -53,6 +53,12 @@ int  psx_zip_list(const unsigned char *b, long n, PsxZipEntry *out, int max, cha
 /* One entry, malloc'd and NUL-terminated, checked against its crc; NULL when damaged. */
 unsigned char *psx_zip_extract(const unsigned char *b, long n, const PsxZipEntry *e, long *size);
 
+/* Address the player's OWN cards/ set rather than whichever set is live.
+ * The MOD package sets this around its calls: with Dev Card Effects on, the
+ * live set is the shipped effects mod, and a package that carried it (or an
+ * import that overwrote it) lost a player's Time Wizard on 2026-09-06. */
+void psx_card_share_own_set(int on);
+
 /* Write every edited card (and drop table edits) to path. */
 int  psx_card_share_export(const char *path, char *msg, unsigned cap);
 /* Read what a file would do, without doing it. */

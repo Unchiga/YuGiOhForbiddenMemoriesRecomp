@@ -1628,14 +1628,19 @@ static void finish_restore_all(int go)
 {
     s_modal = 0; s_dirty = 1;
     if (!go) { say("Nothing restored"); return; }
+    const int dev = psx_card_packs_is_dev();
     int n = 0;
     for (int id = 1; id <= CARDS; id++)
         if (psx_card_packs_get(id, NULL) && psx_card_packs_remove(id)) n++;
-    psx_card_packs_reload(0);
+    /* With the Dev set live, "all back" means the SHIPPED effects set, not
+     * an empty folder: the marker goes and the seed is written again. */
+    if (dev) psx_card_packs_reseed_dev();
+    else     psx_card_packs_reload(0);
     rebuild_order();
     load_editor();
-    char m[120];
-    snprintf(m, sizeof m, "%d card%s back to stock", n, n == 1 ? "" : "s");
+    char m[160];
+    if (dev) snprintf(m, sizeof m, "The Card Effects set is the shipped one again (%d card%s of yours removed)", n, n == 1 ? "" : "s");
+    else     snprintf(m, sizeof m, "%d card%s back to stock", n, n == 1 ? "" : "s");
     say(m);
 }
 
@@ -2006,8 +2011,11 @@ static void draw_modal(void)
     if (s_modal == MODAL_RESTORE_ALL) {
         int n = 0;
         for (int id = 1; id <= CARDS; id++) n += psx_card_packs_get(id, NULL) != 0;
-        char line[200];
-        snprintf(line, sizeof line, "Put all %d edited card%s back to the disc's own? Their folders in cards/ are removed. Export Config first if you want them back later.", n, n == 1 ? "" : "s");
+        char line[260];
+        if (psx_card_packs_is_dev())
+            snprintf(line, sizeof line, "Put the Card Effects set back to the shipped one? Your changes to its %d card%s are removed and the original effects come back. Export Config first to keep them.", n, n == 1 ? "" : "s");
+        else
+            snprintf(line, sizeof line, "Put all %d edited card%s back to the disc's own? Their folders in cards/ are removed. Export Config first if you want them back later.", n, n == 1 ? "" : "s");
         psx_ui_text(&s_cv, ex, y + psx_ui_font_ascent(ft), "Restore all cards", COL_ACCENT, ft); y += psx_ui_font_line_height(ft) + px(6.0f);
         y = draw_wrapped(ex, y, w, line, COL_TEXT, fb, 6);
         draw_button(&L->modal_ok, "Yes", 1, s_modal_hover == 0);

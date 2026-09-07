@@ -225,6 +225,13 @@ typedef struct {
 
 /* Player folder holding the packs (".../cards"); "" before boot. */
 const char *psx_card_packs_dir(void);
+/* The player's OWN set, <player-data>/cards, whichever set is live. What a
+ * share file or a revert must address: the Dev Card Effects set is a
+ * shipped mod and is never what a player means by "my cards". */
+const char *psx_card_packs_own_dir(void);
+/* With the Dev set live: drop its .seeded marker and write the shipped set
+ * again, on top of whatever is there. 1 when it was live and reseeded. */
+int  psx_card_packs_reseed_dev(void);
 
 /* Two card sets share the machinery: the player's own edits in cards/, and
  * the Card Effects mod's set in mods/card_effects/cards/. One is live at a

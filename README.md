@@ -366,7 +366,8 @@ default.
 #### Sharing and bulk edits
 
 `Restore all…` puts every edited card back to the disc's own after a yes (the
-folders in `cards/` go, so `Export Config` first if you want them back).
+folders in `cards/` go, so `Export Config` first if you want them back). With
+`Dev Card Effects` on it puts the shipped effects set back instead.
 
 `Export Config` writes every edited card (`card.ini` and PNGs) plus your
 `drop_table_edits.ini` to a single `.ygocards` file, a plain zip. `Import
@@ -452,7 +453,8 @@ Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 
 One file with everything. `Export MOD package…` writes a `.ygomods` file (a
 zip, like `.ygocards`) holding every manager's edits and every mod setting:
-the edited cards and their pictures, the drop tables and scripted story
+your own edited cards and their pictures (always the `cards/` set, never the
+Dev Card Effects set, whichever is live), the drop tables and scripted story
 drops, the CPU duelists' decks, AI, names and portraits, the fusion edits,
 the dialogue translation, the drop-missing-cards placements, the card shop's
 configuration, and a `mod_settings.ini` with the value of every `MODS`,

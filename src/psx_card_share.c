@@ -81,11 +81,29 @@ static int write_file(const char *path, const void *data, size_t n)
     return ok;
 }
 
+static const char *const CARD_FILES[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
+
+static int s_own_only;
+void psx_card_share_own_set(int on) { s_own_only = on ? 1 : 0; }
+
 static void cards_dir(char *out, size_t cap)
 {
-    const char *d = psx_card_packs_dir();
+    const char *d = s_own_only ? psx_card_packs_own_dir() : psx_card_packs_dir();
     if (d && d[0]) snprintf(out, cap, "%s", d);
     else snprintf(out, cap, "%s/cards", psx_mod_player_data_dir());
+}
+
+/* Is there an edit for this card in the set being addressed? The live set
+ * answers from memory; the own set, while another set is live, from disk. */
+static int card_edited(int id, const char *dir)
+{
+    if (!s_own_only) return psx_card_packs_get(id, NULL) != 0;
+    for (int j = 0; j < 4; j++) {
+        char p[1200]; snprintf(p, sizeof p, "%s/%d/%s", dir, id, CARD_FILES[j]);
+        FILE *f = psx_fopen_utf8(p, "rb");
+        if (f) { fclose(f); return 1; }
+    }
+    return 0;
 }
 
 static void drops_path(char *out, size_t cap)
@@ -93,7 +111,6 @@ static void drops_path(char *out, size_t cap)
     snprintf(out, cap, "%s/drop_table_edits.ini", psx_mod_player_data_dir());
 }
 
-static const char *const CARD_FILES[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
 
 /* ---- zip writer (stored) --------------------------------------------------- */
 typedef struct { char name[64]; uint32_t crc, size, offset; } Central;
@@ -167,7 +184,7 @@ int psx_card_share_export(const char *path, char *msg, unsigned cap)
     }
     /* manifest first: what the file is, which cards, whether drops ride along */
     int ids[CARD_COUNT], n = 0;
-    for (int id = 1; id <= CARD_COUNT; id++) if (psx_card_packs_get(id, NULL)) ids[n++] = id;
+    for (int id = 1; id <= CARD_COUNT; id++) if (card_edited(id, dir)) ids[n++] = id;
     int drops = 0;
     if (psx_drop_edits_any()) { psx_drop_edits_save(); drops = 1; }
     {

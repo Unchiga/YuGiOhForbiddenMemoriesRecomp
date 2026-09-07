@@ -1457,6 +1457,14 @@ static void scan_all(void)
 
 /* ---- public ------------------------------------------------------------------- */
 const char *psx_card_packs_dir(void) { return s_dir_ok ? s_dir : ""; }
+const char *psx_card_packs_own_dir(void)
+{
+    static char own[1200];
+    const char *dir = psx_mod_player_data_dir();
+    if (!dir || !dir[0]) return "";
+    snprintf(own, sizeof own, "%s/cards", dir);
+    return own;
+}
 unsigned psx_card_packs_generation(void) { return s_generation; }
 
 int psx_card_packs_get(int id, PsxCardPack *out)
@@ -1729,6 +1737,19 @@ static void switch_set(int dev)
 }
 
 void psx_card_packs_set_dev(int dev) { s_dev_want = dev ? 1 : 0; }
+
+int psx_card_packs_reseed_dev(void)
+{
+    if (!s_dev || !s_dir_ok) return 0;
+    char marker[1300];
+    snprintf(marker, sizeof marker, "%s/.seeded", s_dir);
+    (void)psx_remove_utf8(marker);
+    seed_card_effects(s_dir);
+    scan_all();
+    rebuild_password_table();
+    bump();
+    return 1;
+}
 int  psx_card_packs_is_dev(void) { return s_dev; }
 
 static void menu_changed(int value)
