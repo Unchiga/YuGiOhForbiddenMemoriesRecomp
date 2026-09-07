@@ -1,4 +1,4 @@
-/* psx_card_colors.h -- per-card frame colours.
+/* psx_card_colors.h -- per-card frame colors.
  *
  * Stock derives a card's frame from its type (monster yellow, magic green,
  * trap pink, ritual blue). This gives every card its own slot out of seven
@@ -15,7 +15,7 @@ extern "C" {
 
 /* The slot a card draws with right now (edit, effect default, or stock). */
 int psx_card_colors_slot(int id);
-/* A colour swatch for the manager: the palette's three sample RGB values. */
+/* A color swatch for the manager: the palette's three sample RGB values. */
 int psx_card_colors_swatch(int slot, unsigned char rgb[9]);
 /* Debug-server state line. */
 int psx_card_colors_state_json(char *out, unsigned cap);

@@ -401,7 +401,7 @@ void psx_rank_logic_tick(void) {
             /* Fade-in at duel start. SYNTHETIC, and deliberately so.
              *
              * Three candidate mechanisms for the game's own fade were tested
-             * and all ruled out by measurement: primitive-colour modulation
+             * and all ruled out by measurement: primitive-color modulation
              * (the HUD is always drawn at neutral 0x808080), a CLUT ramp (the
              * FIELD box palette sits at full brightness through a duel start)
              * and a full-screen darkening quad (none exists in the 2.5s after

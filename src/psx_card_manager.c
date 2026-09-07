@@ -120,7 +120,7 @@ static int  s_sel = 1;
 static int  s_sb_drag, s_sb_grab;
 
 /* --- editor ---------------------------------------------------------------- */
-enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR,
+enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR, F_NAME_COLOR,
        F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_TRAP_MAX,
        F_RULE_FIRST,                                      /* the effects list: RULE_MAX rows of RP_N boxes */
        F_RULE_END = F_RULE_FIRST + 16 * 5,
@@ -317,7 +317,7 @@ static int param_kind(int f)
 static const char *field_label(int f)
 {
     static const char *const FIELD_LABEL[F_RULE_FIRST] = {
-        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame",
+        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame", "Name color",
         "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max"
     };
     if (f < F_RULE_FIRST) return FIELD_LABEL[f];
@@ -330,7 +330,7 @@ static const char *field_label(int f)
 static int field_is_enum(int f)
 {
     if (is_param(f)) { const int k = param_kind(f); return k == 't' || k == 'f'; }
-    return f == F_STAR1 || f == F_STAR2 || f == F_TYPE || f == F_ATTR || f == F_COLOR || f == F_EFFECT || f == F_TARGET || f == F_TERRAIN
+    return f == F_STAR1 || f == F_STAR2 || f == F_TYPE || f == F_ATTR || f == F_COLOR || f == F_NAME_COLOR || f == F_EFFECT || f == F_TARGET || f == F_TERRAIN
         || f == F_IMMUNE || is_when(f) || is_chance(f) || is_trig(f) || is_per(f);
 }
 /* the open dropdown; a "per" list may be showing the 722 cards instead */
@@ -343,6 +343,7 @@ static int enum_count(int f)
     case F_TYPE: return 24;
     case F_ATTR: return 8;
     case F_COLOR: return PSX_CARD_COLOR_COUNT;
+    case F_NAME_COLOR: return PSX_CARD_NAME_COLOR_COUNT;
     case F_EFFECT: return magic_dispatchable(s_sel) ? PSX_CARD_FX_GAMBLE : TRIG_N - 1 - TRIG_MONSTER_ONLY;   /* every spell effect; outside the game's own spell ids also no "none" / ritual */
     case F_TARGET: return 20;
     case F_TERRAIN: return 6;
@@ -408,6 +409,7 @@ static const char *enum_label(int f, int i)
     case F_TYPE: return psx_card_packs_type_name(v);
     case F_ATTR: return psx_card_packs_attribute_name(v);
     case F_COLOR: return psx_card_packs_color_name(v);
+    case F_NAME_COLOR: return psx_card_packs_name_color_name(v);
     case F_EFFECT: return psx_card_packs_effect_label(v);
     case F_TARGET: return psx_card_packs_type_name(v);
     case F_TERRAIN: return psx_card_packs_terrain_name(v);
@@ -440,6 +442,7 @@ static int enum_current_value(int f)
     case F_TYPE: return s_edit.type >= 0 ? s_edit.type : s_stock.type;
     case F_ATTR: return s_edit.attribute >= 0 ? s_edit.attribute : s_stock.attribute;
     case F_COLOR: return s_edit.color >= 0 ? s_edit.color : psx_card_colors_slot(s_sel);
+    case F_NAME_COLOR: return s_edit.name_color >= 0 ? s_edit.name_color : PSX_CARD_NAME_COLOR_WHITE;
     case F_EFFECT: return s_edit.effect >= 0 ? s_edit.effect : (s_stock.effect >= 0 ? s_stock.effect : (magic_dispatchable(s_sel) ? 0 : PSX_CARD_FX_HEAL));
     case F_TARGET: return s_edit.target >= 0 ? s_edit.target : ((s_stock.effect == PSX_CARD_FX_DESTROY_TYPE && s_stock.amount >= 0) ? s_stock.amount : 3);
     case F_TERRAIN: return s_edit.terrain >= 1 ? s_edit.terrain : ((s_stock.effect == PSX_CARD_FX_FIELD && s_stock.amount >= 1) ? s_stock.amount : 1);
@@ -508,6 +511,7 @@ static void enum_set(int f, int i)
     case F_TYPE: s_edit.type = v; break;
     case F_ATTR: s_edit.attribute = v; break;
     case F_COLOR: s_edit.color = v; break;
+    case F_NAME_COLOR: s_edit.name_color = v; break;
     case F_EFFECT: s_edit.effect = v; break;
     case F_TARGET: s_edit.target = v; break;
     case F_TERRAIN: s_edit.terrain = v; break;
@@ -720,7 +724,7 @@ static void layout_compute(void)
         if (field_is_enum(f)) {
             L->step_l[f] = (Rect){ vx, y, step_w, box_h };
             vx += step_w + sgap;
-            vw = (f == F_EFFECT) ? px(190.0f) : (f == F_COLOR || f == F_IMMUNE) ? px(120.0f) : px(90.0f);
+            vw = (f == F_EFFECT) ? px(190.0f) : (f == F_COLOR || f == F_NAME_COLOR || f == F_IMMUNE) ? px(120.0f) : px(90.0f);
             L->value[f] = (Rect){ vx, y, vw, box_h };
             L->step_r[f] = (Rect){ vx + vw + sgap, y, step_w, box_h };
             L->clear[f] = (Rect){ L->step_r[f].x + step_w + sgap * 2, y, step_w, box_h };
@@ -923,6 +927,7 @@ static int field_is_set(int f)
     case F_PRICE: return s_edit.price >= 0;
     case F_PASSWORD: return s_edit.password[0] != 0;
     case F_COLOR: return s_edit.color >= 0;
+    case F_NAME_COLOR: return s_edit.name_color >= 0;
     case F_EFFECT: return s_edit.effect >= 0;
     case F_AMOUNT: return s_edit.amount != -1;
     case F_TARGET: return s_edit.target >= 0;
@@ -954,6 +959,7 @@ static void field_clear(int f)
     case F_PRICE: s_edit.price = -1; break;
     case F_PASSWORD: s_edit.password[0] = 0; break;
     case F_COLOR: s_edit.color = -1; break;
+    case F_NAME_COLOR: s_edit.name_color = -1; break;
     case F_EFFECT: s_edit.effect = -1; break;
     case F_AMOUNT: s_edit.amount = -1; break;
     case F_TARGET: s_edit.target = -1; break;
@@ -992,6 +998,7 @@ static void field_text(int f, int stock, char *out, size_t cap)
     case F_PRICE: snprintf(out, cap, "%d", set ? s_edit.price : s_stock.price); break;
     case F_PASSWORD: snprintf(out, cap, "%s", set ? s_edit.password : (s_stock.password[0] ? s_stock.password : "none")); break;
     case F_COLOR: snprintf(out, cap, "%s", psx_card_packs_color_name(set ? s_edit.color : (stock ? s_stock.color : psx_card_colors_slot(s_sel)))); break;
+    case F_NAME_COLOR: snprintf(out, cap, "%s", psx_card_packs_name_color_name(set ? s_edit.name_color : PSX_CARD_NAME_COLOR_WHITE)); break;
     case F_EFFECT: {
         const int e = set ? s_edit.effect : s_stock.effect;
         snprintf(out, cap, "%s", e >= 0 ? psx_card_packs_effect_label(e) : "code only");
@@ -1749,7 +1756,7 @@ static void draw_editor(void)
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_art ? "Face art: yours" : "Face art: stock", s_edit.has_art ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_thumb ? "Duel thumbnail: yours" : "Duel thumbnail: stock", s_edit.has_thumb ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours" : "Title strip: from the name", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
-        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colours. The duel thumbnail is 40x32 in 64 colours and is made from the face unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
+        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colors. The duel thumbnail is 40x32 in 64 colors and is made from the face unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
     }
     }
     /* fields */
@@ -2672,7 +2679,7 @@ static void row_activate(void) { psx_card_manager_open(); }
 PSX_MOD_CONSTRUCTOR(psx_card_manager_install)
 {
     (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Card manager \xe2\x80\x94 experimental",
-                                    "EXPERIMENTAL, may have bugs. Change a card's name, description, art, frame colour, stats, stars, effects, price and password; export or import them",
+                                    "EXPERIMENTAL, may have bugs. Change a card's name, description, art, frame color, stats, stars, effects, price and password; export or import them",
                                     row_activate);
     (void)psx_game_add_frame_hook(tick);
     (void)psx_game_add_event_hook(on_event);

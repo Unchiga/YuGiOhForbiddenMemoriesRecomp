@@ -62,7 +62,7 @@ void psx_rank_meter_tune_get(int *letter_x, int *letter_y, int *gap,
                              int *anchor_dx, int *anchor_dy);
 
 /* Fade, 0..255, applied to the whole widget's alpha. The game fades its HUD in
- * at duel start by modulating the primitive colour it draws the box with, so
+ * at duel start by modulating the primitive color it draws the box with, so
  * the host passes that brightness straight through and the meter fades in step
  * with the HUD rather than popping in at full strength. */
 void psx_rank_meter_set_fade(int fade_0_255);

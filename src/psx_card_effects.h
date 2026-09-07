@@ -25,7 +25,7 @@ void psx_card_effects_stock(int id, PsxCardStock *out);
 const char *psx_card_effects_note(int id, int effective_type);
 
 /* 1 when the card is a monster carrying any monster effect (implemented in
- * psx_monster_effects.c); the colour module paints those orange by default. */
+ * psx_monster_effects.c); the color module paints those orange by default. */
 int psx_card_effects_monster_has_effect(int id);
 
 /* Run a magic effect class now, through the game's own effect driver, as

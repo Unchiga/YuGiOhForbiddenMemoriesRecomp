@@ -10,8 +10,8 @@
  * the guest happens to have loaded.
  *
  * ARGB8888, row-major, alpha 0 where the PS1 palette entry was 0x0000 (the
- * transparent colour), so they composite straight over the frame. The game
- * draws all of them with primitive colour 0x808080 — neutral modulation — so
+ * transparent color), so they composite straight over the frame. The game
+ * draws all of them with primitive color 0x808080 — neutral modulation — so
  * the stored pixels are exactly what appears on screen.
  */
 

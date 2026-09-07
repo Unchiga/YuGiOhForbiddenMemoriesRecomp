@@ -298,8 +298,8 @@ static void redraw(void)
         x += (w ? w : 4) + 1;
         s_have_content = 1;
     }
-    /* Only the NAME takes the colour. The icons and digits are the game's own
-     * art, and recolouring them made the whole line read as a warning rather
+    /* Only the NAME takes the color. The icons and digits are the game's own
+     * art, and recoloring them made the whole line read as a warning rather
      * than as a card — the name alone carries the signal. */
     s_tint = 0xFFFFFFu;
     if (*p == '\t') {
@@ -380,7 +380,7 @@ static void compose(char *out, int cap, uint8_t *badges)
     const int nbest = psx_fusion_assist_best(&best, NULL, NULL, NULL, pick,
                                              PSX_FUSION_HAND_MAX);
     /* HINT ONLY: that a fusion is there, and nothing else. No badges, no name,
-     * no stats, and no tracking colour while picking -- green for "still on
+     * no stats, and no tracking color while picking -- green for "still on
      * the best line" would be the answer given away one pick at a time. The
      * empty hand still says so, for the same reason the full line does. */
     if (s_mode == PSX_FUSION_HINT_ONLY) {

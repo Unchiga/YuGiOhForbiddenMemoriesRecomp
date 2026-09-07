@@ -90,8 +90,8 @@ view (and it stays 0xC3 into the duel). It is 0 at the title and main menu.
 Leaving a sub-screen with circle puts the cursor back on the row you came
 from, so count from there, not from CAMPAIGN.
 
-LIBRARY (verified 2026-09-06): the grid lists all 722 cards as frame-colour
-tiles (an edited frame colour shows here), name of the selected card at the
+LIBRARY (verified 2026-09-06): the grid lists all 722 cards as frame-color
+tiles (an edited frame color shows here), name of the selected card at the
 bottom. A d-pad hold repeats: 6 frames = one tile, 20 frames = four tiles.
 cross 20 opens the card view (art, title strip, stars, attribute orb, type,
 guardian stars, ATK/DEF, description). In the card view RIGHT shows the 3D
@@ -103,7 +103,7 @@ the deck count. circle leaves it.
 
 PASSWORD: eight digits, cursor on the first. UP adds one, RIGHT moves to the
 next digit (6-frame holds, ~0.5 s apart), cross 12 confirms and shows the card
-(title strip, frame colour, art) with CARD NUMBER and the starchip price,
+(title strip, frame color, art) with CARD NUMBER and the starchip price,
 then an EXCHANGE / QUIT menu. down 6 + cross 12 quits without buying.
 
 Free Duel and duels: `tools/goto_freeduel.py`, `tools/goto_duel.py`,
@@ -156,7 +156,7 @@ g['btn'][i]            # button centres: 0 Save, 1 Restore stock, 2 Open folder,
                        # 10 Export Config, 11 Import Config, 12 Dev Card Effects
 g['value'][f]          # field rects [x,y,w,h]: 0 name, 1 description, 2 atk, 3 def,
                        # 4 star1, 5 star2, 6 type, 7 level, 8 attribute, 9 price,
-                       # 10 password, 11 colour, then the effect fields
+                       # 10 password, 11 color, then the effect fields
 g['modal_ok'], g['modal_cancel']                 # the confirm dialog buttons
 dbg.q({'cmd':'card_manager_set','card':1})       # select a card
 dbg.q({'cmd':'card_manager_set','search':'elf'})
@@ -265,7 +265,7 @@ the manager fills in `edited-cards.ygocards` when that happens.
 ## 10. In-game places where an edited card is visible
 
 - LIBRARY: art, title strip, level (stars), attribute orb, guardian stars,
-  ATK/DEF, type, description, frame colour (card view and grid tile).
+  ATK/DEF, type, description, frame color (card view and grid tile).
 - PASSWORD: type the 8 digits; shows art, title, stars, ATK/DEF and price
   before you accept.
 - BUILD DECK chest list: name, ATK/DEF, type icon, guardian stars.
@@ -274,7 +274,7 @@ the manager fills in `edited-cards.ygocards` when that happens.
 
 Checked on 2026-09-06 after an export -> wipe -> import cycle: name, four-line
 description, ATK/DEF, both guardian stars, type, level, attribute, frame
-colour (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
+color (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
 title strip derived from the name, price and password on the PASSWORD screen.
 
 ## 11. Reading duel results

@@ -80,7 +80,8 @@ typedef struct {
     int  trap_atk_max;                    /* 0..25500; -1 = stock (traps 681..686) */
     int  ritual_set;
     int  ritual_mat[3], ritual_result;    /* card ids */
-    int  color;                           /* frame colour slot 0..5 (PSX_CARD_COLOR_*), -1 = stock */
+    int  color;                           /* frame color slot 0..5 (PSX_CARD_COLOR_*), -1 = stock */
+    int  name_color;                      /* the NAME's text color, PSX_CARD_NAME_COLOR_*, -1 = stock white */
 
     /* ---- monster effects (see psx_monster_effects.c) ---------------------- */
     int  battle;                          /* PSX_CARD_BATTLE_*, -1 = stock */
@@ -109,7 +110,7 @@ int  psx_card_packs_parse_immune(const char *v);
 /* 1 when any monster-effect field is set. */
 int  psx_card_packs_has_monster_effect(const PsxCardPack *c);
 
-/* Frame colours: the disc carries six palettes (only four are used in stock:
+/* Frame colors: the disc carries six palettes (only four are used in stock:
  * monsters yellow, magic green, traps pink, rituals blue; purple and orange
  * sit unused). See psx_card_colors.c. */
 enum {
@@ -123,6 +124,23 @@ enum {
 };
 const char *psx_card_packs_color_name(int slot);   /* "Yellow (normal)" */
 int  psx_card_packs_parse_color(const char *v);
+
+/* Name colors: the text engine's own color byte, the one the card-info
+ * widgets copy into every glyph they emit. Seven usable entries; anything
+ * past red has no palette entry (invisible text or corrupted glyphs). Used
+ * for the card's NAME wherever the game prints it. See psx_card_name_color.c. */
+enum {
+    PSX_CARD_NAME_COLOR_WHITE = 0,
+    PSX_CARD_NAME_COLOR_YELLOW,
+    PSX_CARD_NAME_COLOR_BLUE,
+    PSX_CARD_NAME_COLOR_GREEN,
+    PSX_CARD_NAME_COLOR_GREY,
+    PSX_CARD_NAME_COLOR_ORANGE,
+    PSX_CARD_NAME_COLOR_RED,
+    PSX_CARD_NAME_COLOR_COUNT
+};
+const char *psx_card_packs_name_color_name(int slot);
+int  psx_card_packs_parse_name_color(const char *v);
 
 
 /* Effects a Magic card can carry. Each is a stock effect class the game
@@ -193,7 +211,7 @@ typedef struct {
     int  trap_atk_max;      /* traps 681..686 */
     int  boost[20];         /* field cards */
     int  ritual_mat[3], ritual_result;
-    int  color;             /* the frame colour the stock card draws with */
+    int  color;             /* the frame color the stock card draws with */
 } PsxCardStock;
 
 /* Player folder holding the packs (".../cards"); "" before boot. */

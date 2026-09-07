@@ -194,23 +194,32 @@ DEF, both Guardian Stars, type, level, attribute, price and password**. The
 change shows up **everywhere the card is drawn**, because it is applied where
 the game reads, not where it draws.
 
-![The Card Manager on Time Wizard: face art and duel thumbnail, then name, description, stats, stars, type, level, attribute, price, password and frame colour](docs/screenshots/card-manager-time-wizard.png)
+![The Card Manager on Time Wizard: face art and duel thumbnail, then name, description, stats, stars, type, level, attribute, price, password and frame color](docs/screenshots/card-manager-time-wizard.png)
 
 Green marks your edit and the `x` puts it back; the frame row is why an effect
-monster comes out orange.
+monster comes out orange, and `Name color` tints the card's name wherever the
+game prints it - the library, the chest, the duel. A card with no name color
+set draws the way the game draws it.
+
+`Dev Card Effects` ships one of those colors for **228 of the 722 cards**, as
+a rarity ladder: blue for a card nobody drops, then red, orange, yellow and
+green as the best drop chance any duelist gives it improves. They are yours
+from the moment you switch the set on - change one in the manager, or delete
+the card's folder to put it back.
 
 An edited card is a folder in your player-data:
 
 ```
 cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
-                        color = purple       (yellow, green, pink, blue, purple, orange)
+                        color = purple       frame (yellow, green, pink, blue, purple, orange)
+                        name_color = red     the name's text (white, yellow, blue, green, grey, orange, red)
                         description = Text with|a line break   (| = new line; no | = wrapped at 20)
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
                         price = 999999       password = 12345678
-cards/<id>/art.png      any size, becomes the 102x96 / 256-colour card face
-cards/<id>/thumb.png    optional; the 40x32 / 64-colour duel card, made from art.png when absent
+cards/<id>/art.png      any size, becomes the 102x96 / 256-color card face
+cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, made from art.png when absent
 cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
 ```
 

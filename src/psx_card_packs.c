@@ -10,8 +10,8 @@
  *                  level = 12             attribute = Light  (name or 0..7)
  *                  price = 999999         password = 12345678
  *                  Every key is optional; a missing key keeps the stock value.
- *     art.png      the card face art. Any size; scaled to 102x96, 256 colours.
- *     thumb.png    the duel thumbnail. Any size; scaled to 40x32, 64 colours.
+ *     art.png      the card face art. Any size; scaled to 102x96, 256 colors.
+ *     thumb.png    the duel thumbnail. Any size; scaled to 40x32, 64 colors.
  *                  Derived from art.png when absent.
  *     title.png    the baked title strip, 96x14, dark ink on white or with
  *                  alpha. Rendered from `name` when absent (Times New Roman
@@ -462,6 +462,35 @@ int psx_card_packs_has_monster_effect(const PsxCardPack *c)
     return c->battle > 0 || c->on_summon.n > 0 || c->on_death.n > 0 || c->on_attack.n > 0 || c->each_turn.n > 0 || c->on_flip.n > 0 ||
            c->opp_turn.n > 0 || c->bonus_n > 0 || c->immune > 0;
 }
+/* The text engine's color byte, by name. White is the game's own, so a card
+ * left at white is a card this layer does not touch. */
+static const char *const NAME_COLOR_NAMES[PSX_CARD_NAME_COLOR_COUNT] = {
+    "White (stock)", "Yellow", "Blue", "Green", "Grey", "Orange", "Red"
+};
+static const char *const NAME_COLOR_KEYS[PSX_CARD_NAME_COLOR_COUNT] = {
+    "white", "yellow", "blue", "green", "grey", "orange", "red"
+};
+
+const char *psx_card_packs_name_color_name(int slot)
+{
+    return (slot >= 0 && slot < PSX_CARD_NAME_COLOR_COUNT) ? NAME_COLOR_NAMES[slot] : "?";
+}
+
+int psx_card_packs_parse_name_color(const char *v)
+{
+    if (*v >= '0' && *v <= '9') {
+        const int x = atoi(v);
+        return (x >= 0 && x < PSX_CARD_NAME_COLOR_COUNT) ? x : -1;
+    }
+    for (int i = 0; i < PSX_CARD_NAME_COLOR_COUNT; i++) {
+        const char *a = v, *b = NAME_COLOR_KEYS[i];
+        while (*a && *b && (*a | 32) == *b) { a++; b++; }
+        if (!*b && (!*a || *a == ' ' || *a == '(')) return i;
+    }
+    if (!strcmp(v, "gray")) return PSX_CARD_NAME_COLOR_GREY;
+    return -1;
+}
+
 const char *psx_card_packs_color_name(int slot) { return (slot >= 0 && slot < PSX_CARD_COLOR_COUNT) ? COLOR_NAMES[slot] : "?"; }
 int psx_card_packs_parse_color(const char *v)
 {
@@ -894,6 +923,7 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->ritual_set = 0;
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
+    c->name_color = -1;
     c->battle = -1;
     memset(&c->on_summon, 0, sizeof c->on_summon); memset(&c->on_flip, 0, sizeof c->on_flip);
     memset(&c->on_death, 0, sizeof c->on_death);   memset(&c->on_attack, 0, sizeof c->on_attack);
@@ -1097,6 +1127,8 @@ static int read_ini(int id, PsxCardPack *c)
             const int v = atoi(val); if (v >= 0 && v <= 25500) c->trap_atk_max = v / 100 * 100;
         } else if (!strcmp(key, "ritual") || !strcmp(key, "recipe")) {
             (void)psx_card_packs_parse_ritual(val, c, NULL, 0);
+        } else if (!strcmp(key, "name_color") || !strcmp(key, "name_colour")) {
+            c->name_color = psx_card_packs_parse_name_color(val);
         } else if (!strcmp(key, "color") || !strcmp(key, "colour") || !strcmp(key, "frame")) {
             c->color = psx_card_packs_parse_color(val);
         } else if (!strcmp(key, "battle")) {
@@ -1495,6 +1527,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);
+    if (c->name_color >= 0) fprintf(f, "name_color = %s\n", NAME_COLOR_KEYS[c->name_color]);
     if (c->battle >= 0)    fprintf(f, "battle = %s\n", psx_card_packs_battle_name(c->battle));
     { char b[512];
       if (c->on_summon.n) { psx_card_packs_format_trigger(&c->on_summon, b, sizeof b); fprintf(f, "on_summon = %s\n", b); }
@@ -1580,19 +1613,35 @@ int psx_card_packs_state_json(char *out, unsigned cap)
 }
 
 /* ---- card sets --------------------------------------------------------------- */
-/* Write the shipped Card Effects set into the player's folder, once.
+/* Write the shipped Card Effects set into the player's folder.
  *
  * The switch used to point at a directory nothing ever filled, so turning it
  * on showed every card stock -- the feature looking broken when it was merely
- * empty. The set lands here the first time it is asked for, and the marker
- * means it lands exactly once: after that these are the player's files, and a
- * card they delete stays deleted. */
+ * empty. The set lands here the first time it is asked for, and a card the
+ * player then deletes stays deleted: the pass never overwrites a card.ini
+ * that exists.
+ *
+ * The marker carries the set's VERSION, so a build that ships more cards than
+ * the player was seeded with can add the new ones without touching theirs.
+ * Version 2 added the 228 name colors. */
+#define CARD_EFFECTS_SET_VERSION 2
+
 static void seed_card_effects(const char *cards_dir)
 {
     char marker[1200];
     snprintf(marker, sizeof marker, "%s/.seeded", cards_dir);
     FILE *m = psx_fopen_utf8(marker, "rb");
-    if (m) { fclose(m); return; }
+    if (m) {
+        /* A version-less marker is version 1, the four-card set. */
+        int seen = 1;
+        char line[128];
+        if (fgets(line, sizeof line, m)) {
+            const char *v = strstr(line, "version ");
+            if (v) seen = atoi(v + 8);
+        }
+        fclose(m);
+        if (seen >= CARD_EFFECTS_SET_VERSION) return;
+    }
 
     int written = 0;
     for (int i = 0; i < PSX_CARD_EFFECTS_SET_N; i++) {
@@ -1610,7 +1659,11 @@ static void seed_card_effects(const char *cards_dir)
         written++;
     }
     m = psx_fopen_utf8(marker, "wb");
-    if (m) { fprintf(m, "the shipped set was written here once; delete this to get it back\n"); fclose(m); }
+    if (m) {
+        fprintf(m, "version %d -- the shipped set was written here; delete this to get it back\n",
+                CARD_EFFECTS_SET_VERSION);
+        fclose(m);
+    }
     if (written) fprintf(stderr, "card effects: seeded %d card%s\n", written, written == 1 ? "" : "s");
 }
 

@@ -19,7 +19,7 @@ static int      s_ready;
 static int      s_gave_up;
 static uint32_t s_next_try;               /* SDL ticks; the disc can be busy */
 
-/* 15-bit PSX colour -> opaque ARGB. The STP bit is ignored on purpose: the
+/* 15-bit PSX color -> opaque ARGB. The STP bit is ignored on purpose: the
  * tiles are solid squares and stock stores black as 0x8000 (STP set) so
  * that it draws instead of keying out. */
 static uint32_t argb(unsigned c)
@@ -34,7 +34,7 @@ static int load(void)
     for (uint32_t s = 0; s < SECTORS; s++)
         if (!psx_mod_cd_read_stock_sector(TILE_LBA + s, raw + s * SECTOR)) return 0;
     /* Sanity: this disc's tiles carry the STP bit on every CLUT entry and
-     * index no colour past the CLUT. A different revision, or a dump with
+     * index no color past the CLUT. A different revision, or a dump with
      * the sectors elsewhere, fails here and the drawn-screen capture keeps
      * doing the job. */
     for (uint32_t i = 1; i < TILES; i++) {

@@ -518,7 +518,7 @@ static void handle_dialogue_manager(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
-/* card_colors — frame colour slots and patch state. */
+/* card_colors — frame color slots and patch state. */
 static void handle_card_colors(int id, const char *json)
 {
     (void)json;

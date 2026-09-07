@@ -412,7 +412,7 @@ static int text_width(const char *t) {
 }
 
 /* The card shop's palette, for the same reason it uses it: these are the
- * colours the password screen's own box furniture was authored against. */
+ * colors the password screen's own box furniture was authored against. */
 #define C_GOLD   0xFFE0B84Cu
 #define C_WHITE  0xFFF0F0F0u
 #define C_GREY   0xFFB0B4C0u

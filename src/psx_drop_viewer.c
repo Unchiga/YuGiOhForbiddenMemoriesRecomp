@@ -164,7 +164,7 @@ static int text_right(int right, int baseline, const char *s, uint32_t col, cons
  * which every player has. Failing that, the compile-time bake or the
  * drawn-screen capture: those 38x38 icons carry transparent corners, and the
  * toolkit's scaled blit treats its source as opaque, so they are composed
- * over the row's own colour first. Nothing at all gets a plain plate. */
+ * over the row's own color first. Nothing at all gets a plain plate. */
 static void draw_icon(int x, int y, int size, int duelist, uint32_t bg)
 {
     const uint32_t *disc = psx_duelist_portraits_get(duelist);

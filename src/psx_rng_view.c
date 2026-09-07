@@ -177,7 +177,7 @@ static void redraw(void)
     if (!s_drawn[0]) return;
 
     /* The line is authored as label/value/delta segments split by \t so each
-     * can carry its own colour; measure first so the backing strip hugs the
+     * can carry its own color; measure first so the backing strip hugs the
      * text instead of spanning the screen. */
     static const uint32_t seg_color[] = { RV_LABEL, RV_VALUE, RV_DELTA };
     for (int pass = 0; pass < 2; pass++) {
@@ -217,7 +217,7 @@ static void compose(void)
     s_prev_index = idx;
     s_prev_seed = seed;
 
-    /* \t alternates label / value / delta colours; see redraw. */
+    /* \t alternates label / value / delta colors; see redraw. */
     int n = snprintf(s_line, sizeof s_line, "S \t%08X\t\t N \t%u\t", seed, idx);
     if (s_prev_valid && delta && delta <= 99999u)
         n += snprintf(s_line + n, sizeof s_line - n, "+%u", delta);
