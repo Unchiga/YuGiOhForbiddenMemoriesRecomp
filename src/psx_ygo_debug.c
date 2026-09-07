@@ -32,6 +32,7 @@
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
 #include "psx_fill_library.h"
+#include "psx_video_menu.h"
 #include "psx_cpu_data.h"
 #include "psx_cpu_manager.h"
 #include "psx_story_rewards.h"
@@ -653,6 +654,19 @@ static void handle_cpu_manager(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
+/* video_menu — the overlay menu bar's state, and a way to drive it without a
+ * keyboard: {"toggle":1} shows+expands or hides, {"collapse":1} closes the
+ * dropdown. The reply says whether the bar is visible and whether a dropdown
+ * is expanded (which is what captures input). */
+static void handle_video_menu(int id, const char *json)
+{
+    if (json_get_int(json, "toggle", 0)) psx_video_menu_toggle();
+    if (json_get_int(json, "collapse", 0)) psx_video_menu_collapse();
+    if (json_get_int(json, "hide", 0)) psx_video_menu_hide();
+    send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d}",
+             id, psx_video_menu_is_visible(), psx_video_menu_is_open());
+}
+
 /* cpu_data — the CPU duelists' decks, AI profiles and records.
  * {"duelist":0-38} with "card"+"weight" edits a deck entry, "ai_field"+
  * "ai_value" one AI byte (-1 clears the profile), "wins"/"losses" the save's
@@ -1159,6 +1173,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("story_rewards",     handle_story_rewards);
     (void)psx_debug_add_command("cpu_data",          handle_cpu_data);
     (void)psx_debug_add_command("cpu_manager",       handle_cpu_manager);
+    (void)psx_debug_add_command("video_menu",        handle_video_menu);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);
