@@ -640,15 +640,28 @@ static void row_import(void)
  * for. */
 #define REVERT_ARM_MS 10000u
 static unsigned s_revert_armed_ms;
+/* The row's hint while it is armed, and the one it shows at rest: the arm
+ * has to be visible in the menu itself, because a player who does not
+ * catch the popup otherwise presses once and sees nothing happen. */
+static int s_revert_row = -1;
+static const char *const REVERT_HINT_REST[]  = { "Every manager's edits and every mod setting back to the disc's own, saved or not. Asks twice. Export MOD package first to keep what you have" };
+static const char *const REVERT_HINT_ARMED[] = { "ARMED: choose Revert to Stock AGAIN within 10 seconds to do it. Every edit goes, saved or not" };
+static void revert_show_armed(int armed)
+{
+    if (s_revert_row >= 0) psx_video_menu_set_row_hints(s_revert_row, armed ? REVERT_HINT_ARMED : REVERT_HINT_REST);
+}
+
 static void row_reset(void)
 {
     const unsigned now = SDL_GetTicks();
     if (!s_revert_armed_ms || now - s_revert_armed_ms > REVERT_ARM_MS) {
         s_revert_armed_ms = now;
-        say("Revert to Stock loses every edit, saved or not: cards, drop tables, CPU duelists, fusions, the translation and the mod settings. Export MOD package first to keep them. Choose Revert to Stock again within 10 seconds to do it.");
+        revert_show_armed(1);
+        say("Press Revert to Stock AGAIN within 10 seconds to do it. It loses every edit, saved or not: cards, drop tables, CPU duelists, fusions, the translation and the mod settings. Export MOD package first to keep them.");
         return;
     }
     s_revert_armed_ms = 0;
+    revert_show_armed(0);
     char m[400];
     psx_mod_package_reset_all(m, sizeof m);
     say(m);
@@ -658,6 +671,8 @@ void psx_mod_package_revert_row(void) { row_reset(); }
 
 static void tick(void)
 {
+    /* an arm that timed out goes back to the resting hint */
+    if (s_revert_armed_ms && SDL_GetTicks() - s_revert_armed_ms > REVERT_ARM_MS) { s_revert_armed_ms = 0; revert_show_armed(0); }
     if (s_pick_err[0]) {
         char why[200]; snprintf(why, sizeof why, "%s", s_pick_err);
         const int kind = s_pick_err_kind;
@@ -691,6 +706,7 @@ void psx_mod_package_register_menu(void)
         "Write one .ygomods file with every manager's edits (cards, drops, CPU duelists, portraits, fusions, translation) and these settings", row_export);
     const int hr = psx_video_menu_add_action(PSX_VM_MENU_MODS, "Revert to Stock",
         "Every manager's edits and every mod setting back to the disc's own, saved or not. Asks twice. Export MOD package first to keep what you have", row_reset);
+    s_revert_row = hr;
     /* the bottom of MODS, whatever registers after this: Import, Export, then Revert last */
     psx_video_menu_set_row_order(hi, 1000);
     psx_video_menu_set_row_order(he, 1001);
