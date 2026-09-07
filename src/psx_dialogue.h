@@ -54,7 +54,10 @@ int  psx_dialogue_export_raw(const char *path, char *err, unsigned errcap);  /* 
  * then holds the summary and any warnings), 0 when nothing was applied. */
 int  psx_dialogue_import(const char *path, char *err, unsigned errcap);
 /* Back to the original texts; deletes the kept file. */
-void psx_dialogue_clear(void);
+void psx_dialogue_clear(void);           /* back to the stock text; the kept file becomes a dated backup */
+/* Turn the kept translation into dialogue/dialogue.backup-<date>-<time>.txt
+ * (nothing here ever deletes it). 1 when a file was moved. */
+int  psx_dialogue_backup_kept(void);
 /* Where the kept translation lives ("" before boot). */
 const char *psx_dialogue_file(void);
 

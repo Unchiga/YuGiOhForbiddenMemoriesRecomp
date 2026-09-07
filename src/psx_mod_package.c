@@ -459,6 +459,7 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
             char dir[1200]; snprintf(dir, sizeof dir, "%s", kept);
             char *slash = strrchr(dir, '/');
             if (slash) { *slash = 0; (void)MKDIR(dir); }
+            (void)psx_dialogue_backup_kept();
             if (extract_to(b, n, e, kept)) { parts++; NOTE("%sdialogue kept for the next launch", parts + failed > 1 ? "; " : ""); }
             else { failed++; NOTE("%sdialogue: could not write", parts + failed > 1 ? "; " : ""); }
         } else { failed++; NOTE("%sdialogue: no player folder", parts + failed > 1 ? "; " : ""); }

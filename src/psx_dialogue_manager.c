@@ -445,7 +445,7 @@ static void do_original(void)
 {
     if (!psx_dialogue_translated_count()) { say("The game already shows its original text"); return; }
     psx_dialogue_clear();
-    say("Back to the original text; the kept translation file was removed");
+    say("Back to the original text; the translation file is kept as a dated backup in the dialogue folder");
 }
 
 static void run_button(int b)

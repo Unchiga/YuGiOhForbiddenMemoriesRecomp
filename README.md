@@ -410,7 +410,10 @@ A blank line is a page break, and nobody has to count characters: on import,
 long lines are wrapped and long pages split. The game's own codes show as `{1}`,
 `{2}`… and only need to stay in order next to the same words; `{name}` is the
 player's name. An imported file lives on as `dialogue/dialogue.txt`, and one
-that fails to parse changes nothing.
+that fails to parse changes nothing. That file is never deleted: `Back to
+original`, an import of a file with nothing translated in it, and a MOD
+package import all turn the previous one into
+`dialogue/dialogue.backup-<date>-<time>.txt` first.
 
 ### Card shop (`MODS → CARD SHOP`)
 

@@ -988,6 +988,39 @@ static Run *run_by_key(uint32_t key)
     return NULL;
 }
 
+/* The kept translation is never deleted: whatever is about to replace or
+ * drop it, the file first becomes dialogue.backup-<date>-<time>.txt beside
+ * itself. A player lost a translation on 2026-09-06 to a "Back to original"
+ * (or an import with nothing translated in it), which removed the one copy
+ * the game had; the price of a stale backup is a file in a folder. */
+static int backup_kept(void)
+{
+    if (!s_dir_ok) return 0;
+    FILE *probe = psx_fopen_utf8(s_file, "rb");
+    if (!probe) return 0;
+    fclose(probe);
+    char stamp[32], to[1300];
+    const time_t t = time(NULL);
+    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&t));
+    for (int k = 0; k < 100; k++) {
+        if (k) snprintf(to, sizeof to, "%s/dialogue.backup-%s-%d.txt", s_dir, stamp, k);
+        else   snprintf(to, sizeof to, "%s/dialogue.backup-%s.txt", s_dir, stamp);
+        FILE *taken = psx_fopen_utf8(to, "rb");
+        if (!taken) break;
+        fclose(taken);
+    }
+    FILE *a = psx_fopen_utf8(s_file, "rb"); if (!a) return 0;
+    FILE *b = psx_fopen_utf8(to, "wb");     if (!b) { fclose(a); return 0; }
+    char buf[8192]; size_t n; int ok = 1;
+    while ((n = fread(buf, 1, sizeof buf, a)) > 0) if (fwrite(buf, 1, n, b) != n) ok = 0;
+    fclose(a); fclose(b);
+    if (ok) (void)psx_remove_utf8(s_file);
+    fprintf(stderr, "Dialogue: kept translation backed up as %s\n", to);
+    return ok;
+}
+
+int psx_dialogue_backup_kept(void) { return backup_kept(); }
+
 static int copy_file(const char *from, const char *to)
 {
     if (!strcmp(from, to)) return 1;
@@ -1125,8 +1158,10 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
     bump();
     if (persist && s_dir_ok) {
         MKDIR(s_dir);
+        /* the previous translation becomes a dated backup, never a deletion;
+         * importing the kept file itself is the one case with nothing to keep */
+        if (strcmp(path, s_file)) backup_kept();
         if (translated) { if (!copy_file(path, s_file)) WARN("could not keep a copy as %s; ", s_file); }
-        else remove(s_file);
     }
     snprintf(err, errcap, "Imported %d translated text%s (%d unchanged%s%s)%s%s",
              translated, translated == 1 ? "" : "s", stock,
@@ -1143,7 +1178,7 @@ void psx_dialogue_clear(void)
     for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
     { char why[64]; (void)rebuild_bank(why, sizeof why); }   /* nothing left: the stock bank comes back */
     restore_bank();
-    if (s_dir_ok) remove(s_file);
+    backup_kept();            /* Back to original keeps the file as a backup */
     bump();
 }
 
