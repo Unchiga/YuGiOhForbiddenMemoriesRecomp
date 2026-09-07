@@ -153,7 +153,8 @@ g['btn'][i]            # button centres: 0 Save, 1 Restore stock, 2 Open folder,
                        # 3 Pick art, 4 Pick thumbnail, 5 Pick title,
                        # 6 Effect text -> description, 7 + Add effect,
                        # 8 Export Descriptions, 9 Import Descriptions,
-                       # 10 Export Config, 11 Import Config, 12 Dev Card Effects
+                       # 10 Export Config, 11 Import Config, 12 Restore all (a Yes/No
+                       # modal: modal_ok / modal_cancel), 13 Dev Card Effects
 g['value'][f]          # field rects [x,y,w,h]: 0 name, 1 description, 2 atk, 3 def,
                        # 4 star1, 5 star2, 6 type, 7 level, 8 attribute, 9 price,
                        # 10 password, 11 color, then the effect fields
@@ -372,6 +373,10 @@ defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 
 ## 13. MOD packages
 
+`{"cmd":"mod_package","reset":1}` does what MODS > Revert to Stock (the last
+row) does, at once; `{"revert_row":1}` is the row itself, which arms on the
+first call and reverts on a second within ten seconds (the reply says
+`armed`).
 `{"cmd":"mod_package","export":path}` writes the bundle (extension added
 when missing), `{"import":path}` loads it, `{"inspect":path}` lists what a
 file holds, and `{}` reports the default path and how many menu rows exist.

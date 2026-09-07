@@ -365,6 +365,9 @@ default.
 
 #### Sharing and bulk edits
 
+`Restore all…` puts every edited card back to the disc's own after a yes (the
+folders in `cards/` go, so `Export Config` first if you want them back).
+
 `Export Config` writes every edited card (`card.ini` and PNGs) plus your
 `drop_table_edits.ini` to a single `.ygocards` file, a plain zip. `Import
 Config` shows what it holds and what it would replace, first.
@@ -454,6 +457,11 @@ drops, the CPU duelists' decks, AI, names and portraits, the fusion edits,
 the dialogue translation, the drop-missing-cards placements, the card shop's
 configuration, and a `mod_settings.ini` with the value of every `MODS`,
 `CHEATS` and `VIEW` mod row. Whatever you have not touched is left out.
+
+`Revert to Stock`, the last row: every manager's edits and every mod setting
+go back to the disc's own, saved or not. It asks twice: the first choice is
+the warning, a second within ten seconds does it. `Export MOD package…` first
+if you want any of it back.
 
 `Import MOD package…` hands each part to the manager that owns it, through
 that manager's own import, so each part replaces yours the way that

@@ -36,6 +36,7 @@
 #include "psx_cpu_data.h"
 #include "psx_dialogue.h"
 #include "psx_drop_edits.h"
+#include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_fusion_table.h"
 #include "psx_game_hooks.h"
@@ -488,6 +489,53 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
     return failed == 0 && parts > 0;
 }
 
+/* ---- everything back to stock ------------------------------------------ */
+int psx_mod_package_reset_all(char *msg, unsigned cap)
+{
+    char why[300];
+    int cards = 0, drops = 0, cpu = 0, fusion = 0, dialogue = 0, files = 0, rows = 0;
+    for (int id = 1; id <= CARD_COUNT; id++)
+        if (psx_card_packs_get(id, NULL) && psx_card_packs_remove(id)) cards++;
+    psx_card_packs_reload(0);
+    for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
+        if (psx_drop_edits_count(d)) { psx_drop_edits_clear(d); drops++; }
+        if (psx_drop_edits_reward(d, NULL)) { psx_drop_edits_reward_set(d, 0, 0); drops++; }
+    }
+    (void)psx_drop_edits_save();
+    for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
+        const int a = psx_cpu_deck_clear(d), b = psx_cpu_ai_clear(d);
+        const int c = psx_cpu_name_clear(d), e = psx_cpu_portrait_clear(d);
+        cpu += (a || b || c || e);
+    }
+    (void)psx_cpu_save();
+    if (psx_fusion_table_edit_count() > 0 || psx_fusion_table_cleared()) {
+        if (psx_fusion_table_restore_stock(why, sizeof why)) fusion = 1;
+    }
+    if (psx_dialogue_ready() && psx_dialogue_translated_count() > 0) { psx_dialogue_clear(); dialogue = 1; }
+    else if (psx_dialogue_backup_kept()) dialogue = 1;      /* not resident yet: the file steps aside */
+    {
+        char p[1200];
+        player_file("drop_missing_cards.ini", p, sizeof p);
+        if (file_exists(p) && psx_remove_utf8(p) == 0) { psx_drop_missing_reload(); files++; }
+        player_file("card_shop.ini", p, sizeof p);
+        if (file_exists(p) && psx_remove_utf8(p) == 0) { psx_card_shop_reload_config(); files++; }
+    }
+    {
+        const int count = psx_video_menu_row_count();
+        for (int h = 0; h < count; h++) {
+            const char *key = NULL;
+            if (settings_row_wanted(h, &key)) rows += psx_video_menu_reset_row(h);
+        }
+        if (rows) psx_video_menu_note_change();
+    }
+    if (msg && cap)
+        snprintf(msg, cap, "Back to stock: %d card%s, %d drop table%s, %d CPU duelist%s%s%s, %d file%s, %d setting%s",
+                 cards, cards == 1 ? "" : "s", drops, drops == 1 ? "" : "s", cpu, cpu == 1 ? "" : "s",
+                 fusion ? ", the fusions" : "", dialogue ? ", the translation" : "",
+                 files, files == 1 ? "" : "s", rows, rows == 1 ? "" : "s");
+    return 1;
+}
+
 /* ---- the rows ---------------------------------------------------------- */
 static char s_pick_path[1200];
 static int  s_pick_kind;           /* 1 export, 2 import */
@@ -538,6 +586,29 @@ static void row_import(void)
 #endif
 }
 
+/* The menu has no dialog, so the row is armed by its first choice and does
+ * the work on a second within ten seconds; the first choice is the warning.
+ * No package is written for the player: that is what Export is for, and a
+ * revert that always wrote one filled mod_packages with files nobody asked
+ * for. */
+#define REVERT_ARM_MS 10000u
+static unsigned s_revert_armed_ms;
+static void row_reset(void)
+{
+    const unsigned now = SDL_GetTicks();
+    if (!s_revert_armed_ms || now - s_revert_armed_ms > REVERT_ARM_MS) {
+        s_revert_armed_ms = now;
+        say("Revert to Stock loses every edit, saved or not: cards, drop tables, CPU duelists, fusions, the translation and the mod settings. Export MOD package first to keep them. Choose Revert to Stock again within 10 seconds to do it.");
+        return;
+    }
+    s_revert_armed_ms = 0;
+    char m[400];
+    psx_mod_package_reset_all(m, sizeof m);
+    say(m);
+}
+int psx_mod_package_revert_row_armed(void) { return s_revert_armed_ms != 0 && SDL_GetTicks() - s_revert_armed_ms <= REVERT_ARM_MS; }
+void psx_mod_package_revert_row(void) { row_reset(); }
+
 static void tick(void)
 {
     if (s_pick_err[0]) {
@@ -571,9 +642,12 @@ void psx_mod_package_register_menu(void)
         "Load a .ygomods file: every manager's edits and every MODS and CHEATS setting in it, each replacing yours", row_import);
     const int he = psx_video_menu_add_action(PSX_VM_MENU_MODS, "Export MOD package" "\xE2\x80\xA6",
         "Write one .ygomods file with every manager's edits (cards, drops, CPU duelists, portraits, fusions, translation) and these settings", row_export);
-    /* the bottom of MODS, whatever registers after this */
+    const int hr = psx_video_menu_add_action(PSX_VM_MENU_MODS, "Revert to Stock",
+        "Every manager's edits and every mod setting back to the disc's own, saved or not. Asks twice. Export MOD package first to keep what you have", row_reset);
+    /* the bottom of MODS, whatever registers after this: Import, Export, then Revert last */
     psx_video_menu_set_row_order(hi, 1000);
     psx_video_menu_set_row_order(he, 1001);
+    psx_video_menu_set_row_order(hr, 1002);
     (void)psx_game_add_frame_hook(tick);
 }
 

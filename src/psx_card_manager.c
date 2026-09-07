@@ -131,10 +131,10 @@ enum { RP_WHEN, RP_CHANCE, RP_FX, RP_PARAM, RP_PER, RP_N };
 static const char *const TAB_LABEL[2] = { "Card", "Effects" };
 static int s_tab;                     /* 0 the card's own fields, 1 its effects */
 enum { B_SAVE, B_RESTORE, B_FOLDER, B_ART, B_THUMB, B_TITLE, B_EFFECT_TEXT, B_ADD_RULE,
-       B_EXPORT_TEXTS, B_IMPORT_TEXTS, B_EXPORT, B_IMPORT, B_DEV, B_COUNT };   /* B_EXPORT_TEXTS.. sit in the top bar */
+       B_EXPORT_TEXTS, B_IMPORT_TEXTS, B_EXPORT, B_IMPORT, B_RESTORE_ALL, B_DEV, B_COUNT };   /* B_EXPORT_TEXTS.. sit in the top bar */
 #define B_BAR_FIRST B_EXPORT_TEXTS
 static const char *const BTN_LABEL[B_COUNT] = { "Save", "Restore stock", "Open folder", "Pick art\xE2\x80\xA6", "Pick thumbnail\xE2\x80\xA6", "Pick title\xE2\x80\xA6",
-                                                "Effect text \xE2\x86\x92 description", "+ Add effect", "Export Descriptions", "Import Descriptions", "Export Config", "Import Config", "Dev Card Effects: OFF" };
+                                                "Effect text \xE2\x86\x92 description", "+ Add effect", "Export Descriptions", "Import Descriptions", "Export Config", "Import Config", "Restore all\xE2\x80\xA6", "Dev Card Effects: OFF" };
 static char s_dev_label[32];
 #define FTEXT 2048                    /* the longest field text (an equip list) */
 
@@ -164,6 +164,7 @@ static unsigned s_present_count;
 static int  s_modal;
 #define MODAL_IMPORT 1
 #define MODAL_ACTIVATE 2
+#define MODAL_RESTORE_ALL 3           /* every edited card back to stock, after a yes */
 static PsxCardShareInfo s_share;
 static char s_share_path[1024];
 static int  s_modal_hover = -1;
@@ -774,7 +775,7 @@ static void layout_compute(void)
     L->status_y = y;
     /* the import preview panel, centred */
     {
-        const int mw = px(360.0f), mh = px(s_modal == MODAL_ACTIVATE ? 112.0f : 200.0f);
+        const int mw = px(360.0f), mh = px(s_modal == MODAL_ACTIVATE || s_modal == MODAL_RESTORE_ALL ? 112.0f : 200.0f);
         L->modal = (Rect){ (s_w - mw) / 2, (s_h - mh) / 2, mw, mh };
         const int bw = px(80.0f), bh = px(U_BTN_H);
         L->modal_ok = (Rect){ L->modal.x + L->modal.w - pad - bw * 2 - px(6.0f), L->modal.y + L->modal.h - pad - bh, bw, bh };
@@ -1621,9 +1622,27 @@ static void finish_activate(int go)
     else    { psx_card_packs_set_dev(0); say("Card Effects stays off"); }   /* also puts the MODS row back */
 }
 
+/* Every edited card in the live set back to the disc's own. The folders go
+ * (Export Config is the way to keep them), so it sits behind a yes. */
+static void finish_restore_all(int go)
+{
+    s_modal = 0; s_dirty = 1;
+    if (!go) { say("Nothing restored"); return; }
+    int n = 0;
+    for (int id = 1; id <= CARDS; id++)
+        if (psx_card_packs_get(id, NULL) && psx_card_packs_remove(id)) n++;
+    psx_card_packs_reload(0);
+    rebuild_order();
+    load_editor();
+    char m[120];
+    snprintf(m, sizeof m, "%d card%s back to stock", n, n == 1 ? "" : "s");
+    say(m);
+}
+
 static void finish_import(int go)
 {
     if (s_modal == MODAL_ACTIVATE) { finish_activate(go); return; }
+    if (s_modal == MODAL_RESTORE_ALL) { finish_restore_all(go); return; }
     s_modal = 0; s_dirty = 1;
     if (!go) { say("Import cancelled; nothing changed"); return; }
     char msg[200];
@@ -1984,6 +2003,17 @@ static void draw_modal(void)
     psx_ui_round_rect(&s_cv, L->modal.x, L->modal.y, L->modal.w, L->modal.h, (float)px(U_R_PANEL), COL_PANEL);
     const int ex = L->modal.x + px(U_PAD), w = L->modal.w - px(U_PAD) * 2;
     int y = L->modal.y + px(U_PAD);
+    if (s_modal == MODAL_RESTORE_ALL) {
+        int n = 0;
+        for (int id = 1; id <= CARDS; id++) n += psx_card_packs_get(id, NULL) != 0;
+        char line[200];
+        snprintf(line, sizeof line, "Put all %d edited card%s back to the disc's own? Their folders in cards/ are removed. Export Config first if you want them back later.", n, n == 1 ? "" : "s");
+        psx_ui_text(&s_cv, ex, y + psx_ui_font_ascent(ft), "Restore all cards", COL_ACCENT, ft); y += psx_ui_font_line_height(ft) + px(6.0f);
+        y = draw_wrapped(ex, y, w, line, COL_TEXT, fb, 6);
+        draw_button(&L->modal_ok, "Yes", 1, s_modal_hover == 0);
+        draw_button(&L->modal_cancel, "No", 0, s_modal_hover == 1);
+        return;
+    }
     if (s_modal == MODAL_ACTIVATE) {
         psx_ui_text(&s_cv, ex, y + psx_ui_font_ascent(ft), "Card Effects", COL_ACCENT, ft); y += psx_ui_font_line_height(ft) + px(6.0f);
         y = draw_wrapped(ex, y, w, "The Card Effects mod brings the original card effects and adapts them to Forbidden Memories. Applying this will replace any settings you currently have in the Card Manager. Would you like to activate the mod?", COL_TEXT, fb, 6);
@@ -2125,6 +2155,13 @@ static void click(int x, int y, int button, int clicks)
         case B_IMPORT: do_import(); break;
         case B_EXPORT_TEXTS: do_export_texts(); break;
         case B_IMPORT_TEXTS: do_import_texts(); break;
+        case B_RESTORE_ALL: {
+            int n = 0;
+            for (int id = 1; id <= CARDS; id++) n += psx_card_packs_get(id, NULL) != 0;
+            if (!n) say("No edited cards to restore");
+            else { s_modal = MODAL_RESTORE_ALL; s_modal_hover = -1; s_dirty = 1; }
+            break;
+        }
         case B_DEV:
             if (psx_card_packs_is_dev()) { psx_card_packs_set_dev(0); say("Switching to your own cards"); }
             else { s_modal = MODAL_ACTIVATE; s_modal_hover = -1; s_dirty = 1; }

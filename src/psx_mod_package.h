@@ -37,6 +37,14 @@ int  psx_mod_package_export(const char *path, char *msg, unsigned cap);
 int  psx_mod_package_import(const char *path, char *msg, unsigned cap);
 /* What a file holds, one line, without importing it. */
 int  psx_mod_package_inspect(const char *path, char *msg, unsigned cap);
+/* Everything back to the disc's own: every manager's edits cleared through
+ * that manager's own reset and every mod row back to its default. The MODS
+ * row asks twice (a first choice warns, a second within ten seconds does it);
+ * this call does it at once. */
+int  psx_mod_package_reset_all(char *msg, unsigned cap);
+/* The row's own two-step, for a test: call once to arm, again to revert. */
+void psx_mod_package_revert_row(void);
+int  psx_mod_package_revert_row_armed(void);
 /* The default file name, in <player-data>/mod_packages. */
 void psx_mod_package_default_path(char *out, unsigned cap);
 

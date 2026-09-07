@@ -83,8 +83,10 @@
 #include <string.h>
 #ifdef _WIN32
 #include <direct.h>
+#define rmdir _rmdir
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include "mod_plugins.h"
@@ -560,9 +562,11 @@ int psx_cpu_portrait_clear(int duelist)
 {
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
-    char png[1200];
+    char png[1200], dir[1024];
     portrait_png(duelist, png, sizeof png);
     (void)psx_remove_utf8(png);
+    portrait_dir(duelist, dir, sizeof dir);
+    (void)rmdir(dir);                  /* only when nothing else is in it */
     g_edit[duelist].portrait_set = 0;
     psx_duelist_portraits_override(duelist, NULL);
     (void)portraits_install();

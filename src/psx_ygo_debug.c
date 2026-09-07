@@ -697,6 +697,16 @@ static void handle_mod_package(int id, const char *json)
         send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
         return;
     }
+    if (json_get_int(json, "revert_row", 0)) {      /* the MODS row itself: arm, then do */
+        psx_mod_package_revert_row();
+        send_fmt("{\"id\":%d,\"ok\":true,\"armed\":%d,\"last\":\"%s\"}", id, psx_mod_package_revert_row_armed(), psx_mod_package_last_message());
+        return;
+    }
+    if (json_get_int(json, "reset", 0)) {
+        const int ok = psx_mod_package_reset_all(msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
     if (json_get_str(json, "inspect", path, sizeof path)) {
         const int ok = psx_mod_package_inspect(path, msg, sizeof msg);
         send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
