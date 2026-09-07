@@ -242,6 +242,22 @@ int  psx_card_packs_get(int id, PsxCardPack *out);
  * it, else the game's own. psx_card_db_name() stays the stock name, which is
  * what "back to stock" and the stock snapshots need. */
 const char *psx_card_packs_display_name(int id);
+/* The two string arenas in the free tail of the game's name blob. The blob's
+ * last stock string ends at 0x801D8C66 and 0x801D916F..0x801DA000 is zero in
+ * the SLUS and in every state sampled (psx_card_extend.c); 0x801DA000 is NOT
+ * free: it is D_801DA000, a table of 0x88-byte records func_80036C14 writes
+ * (seen live 2026-09-06: eight bytes appear there once a save is loaded).
+ * psx_card_extend takes 0x801D9200.. for its clone names, the card renames
+ * run from 0x801D9800 up to this limit, and the CPU Manager's duelist names
+ * (psx_cpu_data.c, 39 fixed slots of PSX_CPU_NAME_MAX + 1 bytes) fill the
+ * rest up to 0x801DA000. */
+#define PSX_CARD_PACKS_NAMES_LIMIT 0x801D9CC0u
+#define PSX_CPU_NAMES_BASE         0x801D9CC0u
+/* One character in the game's own frequency-ordered glyph code, or 0 for a
+ * character the font does not have (A-Z a-z 0-9 and the punctuation the
+ * dialogue export lists). Shared with the CPU Manager's duelist names, which
+ * live in the same string table as the card names. */
+int  psx_card_packs_encode_char(char c);
 /* Stock values (the game's own tables and the disc). */
 int  psx_card_packs_stock(int id, PsxCardStock *out);
 /* Write card.ini for a pack (creating the folder) and apply it. Fields at

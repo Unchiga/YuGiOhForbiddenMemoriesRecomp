@@ -9,6 +9,7 @@
 #include "gpu.h"
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 #define N       PSX_ICON_CACHE_N
 #define TILE    PSX_ICON_CACHE_W
@@ -69,7 +70,7 @@ static void load_disk(void)
     s_loaded = 1;
     char path[1024];
     cache_path(path, sizeof path);
-    FILE *f = fopen(path, "rb");
+    FILE *f = psx_fopen_utf8(path, "rb");
     if (!f) return;
     uint32_t magic = 0;
     uint8_t have[N];
@@ -87,7 +88,7 @@ static void save_disk(void)
 {
     char path[1024];
     cache_path(path, sizeof path);
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return;
     uint32_t magic = CACHE_MAGIC;
     fwrite(&magic, 4, 1, f);

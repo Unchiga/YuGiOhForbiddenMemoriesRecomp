@@ -17,6 +17,12 @@
  * The record on the title line is the save's own WIN / LOSS, editable in
  * place. It is written to the save struct in RAM, so it counts as a save
  * edit, not a preference -- the window says so when no save is loaded.
+ *
+ * The NAME on the title line is the one the FREE DUEL grid prints; click it
+ * (or right-click the duelist, Rename) and type. It is a cpu_manager.ini
+ * edit like the deck and the AI, and psx_cpu_data.c puts it in the game's
+ * string table. The list on the left and the Drop Table Manager print the
+ * same name; the ini's section headers keep the disc's.
  */
 
 #include "psx_cpu_manager.h"
@@ -41,6 +47,7 @@
 #include "psx_ui_draw.h"
 #include "psx_ui_font.h"
 #include "psx_video_menu.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 #define WIN_W  1280
 #define WIN_H   760
@@ -169,15 +176,17 @@ static unsigned s_seen_gen;
 /* Right-click menu: a handful of actions on whatever is under the pointer.
  * One level, no submenus. */
 enum { CM_NONE = 0, CM_EDIT, CM_ADD, CM_REMOVE, CM_DECK_STOCK, CM_AI_STOCK,
-       CM_ALL_STOCK, CM_RECORD_CLEAR, CM_SELECT, CM_PORTRAIT, CM_PORTRAIT_STOCK };
+       CM_ALL_STOCK, CM_RECORD_CLEAR, CM_SELECT, CM_PORTRAIT, CM_PORTRAIT_STOCK,
+       CM_RENAME, CM_NAME_STOCK };
 #define CMENU_MAX 10
 static struct { char label[64]; int action, a, b; } s_cm[CMENU_MAX];
 static int s_cm_n, s_cm_x, s_cm_y, s_cm_hover = -1;
 
-/* the number box: which row (or -1), and which field it edits */
-enum { ED_NONE = 0, ED_DECK, ED_AI, ED_WINS, ED_LOSSES };
+/* the edit box: which row (or -1), and which field it edits. Numbers for
+ * all but ED_NAME, which takes the characters the game's font has. */
+enum { ED_NONE = 0, ED_DECK, ED_AI, ED_WINS, ED_LOSSES, ED_NAME };
 static int  s_edit_kind, s_edit_row;
-static char s_edit_buf[8];
+static char s_edit_buf[PSX_CPU_NAME_MAX + 1];
 static int  s_edit_len;
 static int  s_caret_on = 1;
 
@@ -245,6 +254,12 @@ static void rebuild_rows(void)
 
 static void invalidate(void) { s_seen_gen = 0; rebuild_rows(); s_dirty = 1; }
 
+/* Anything of this duelist's that is the player's rather than the disc's. */
+static int duelist_edited(int d)
+{
+    return psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL) || psx_cpu_portrait_edited(d) || psx_cpu_name_edited(d);
+}
+
 /* --- layout --------------------------------------------------------------- */
 
 typedef struct {
@@ -255,6 +270,7 @@ typedef struct {
     int  d_icon_x, d_name_x, d_name_r, d_rec_x, d_rec_r, d_deck_x, d_deck_r;
     int  r_id_x, r_id_r, r_name_x, r_name_r, r_weight_x, r_weight_r, r_share_x, r_share_r;
     Rect rec_win, rec_loss;              /* the editable record cells */
+    Rect name_box;                       /* the title line's name, click to rename */
 } Layout;
 static Layout s_L;
 
@@ -338,6 +354,9 @@ static void layout_compute(void)
         const int lw = tw(fs, "LOSS") + px(6.0f);
         L->rec_loss = (Rect){ L->title[1].x + L->title[1].w - cw, L->title[1].y, cw, h };
         L->rec_win  = (Rect){ L->rec_loss.x - lw - cw - px(12.0f), L->title[1].y, cw, h };
+        /* the name takes what is left of the line, a gap short of WIN's label */
+        const int nr = L->rec_win.x - lw - px(12.0f);
+        L->name_box = (Rect){ L->title[1].x, L->title[1].y, imax(px(40.0f), nr - L->title[1].x), h };
     }
 }
 
@@ -485,8 +504,7 @@ static void draw_duelists(void)
     const Rect *C = &L->cols[0], *R = &L->rows[0];
     char side[48];
     int edited = 0;
-    for (int d = 0; d < NDUEL; d++)
-        edited += psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL) || psx_cpu_portrait_edited(d);
+    for (int d = 0; d < NDUEL; d++) edited += duelist_edited(d);
     if (edited) snprintf(side, sizeof side, "%d edited", edited);
     else        snprintf(side, sizeof side, "stock");
     draw_panel(0, "39 duelists", COL_TEXT, side, edited ? COL_EDITED : COL_DIM);
@@ -511,8 +529,8 @@ static void draw_duelists(void)
             psx_ui_fill(&s_cv, L->d_icon_x + icon - m, y + (L->row_h - icon) / 2, m, m, COL_EDITED);
         }
         const int base = psx_ui_baseline_in(y, L->row_h, fr);
-        const int mine = psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL) || psx_cpu_portrait_edited(d);
-        psx_ui_text_clip(&s_cv, L->d_name_x, base, PSX_DROP_DB[d].name,
+        const int mine = duelist_edited(d);
+        psx_ui_text_clip(&s_cv, L->d_name_x, base, psx_cpu_display_name(d),
                          sel ? COL_ACCENT : (mine ? COL_EDITED : COL_TEXT), fr, L->d_name_r - L->d_name_x);
         char buf[24];
         int wins = 0, losses = 0;
@@ -556,16 +574,33 @@ static void draw_record_cells(void)
     }
 }
 
+/* The right pane's title line: the duelist's name (an edit box while it is
+ * being typed), a note on what is edited, and the record cells. */
+static void draw_right_title(const char *note, uint32_t col)
+{
+    const Layout *L = &s_L;
+    draw_panel(1, "", col, NULL, COL_DIM);
+    if (s_edit_kind == ED_NAME) { draw_number_box(&L->name_box); }
+    else {
+        char title[80];
+        snprintf(title, sizeof title, "%s%s%s", psx_cpu_display_name(s_sel),
+                 psx_cpu_name_edited(s_sel) ? " " S_DASH " renamed" : "", note);
+        if (s_hover_btn == 7)
+            psx_ui_round_rect(&s_cv, L->name_box.x - px(4.0f), L->name_box.y, L->name_box.w + px(8.0f), L->name_box.h,
+                              (float)px(U_R_BOX), COL_HOVER);
+        psx_ui_text_clip(&s_cv, L->name_box.x, psx_ui_baseline_in(L->name_box.y, L->name_box.h, face_bold()),
+                         title, col, face_bold(), L->name_box.w);
+    }
+    draw_record_cells();
+}
+
 static void draw_deck(void)
 {
     const Layout *L = &s_L;
     const PsxUiFace *fr = face_body();
     const Rect *C = &L->cols[1], *R = &L->rows[1];
-    char title[64];
-    snprintf(title, sizeof title, "%s%s", PSX_DROP_DB[s_sel].name,
-             psx_cpu_deck_edited(s_sel) ? " " S_DASH " edited deck" : "");
-    draw_panel(1, title, psx_cpu_deck_edited(s_sel) ? COL_EDITED : COL_ACCENT, NULL, COL_DIM);
-    draw_record_cells();
+    draw_right_title(psx_cpu_deck_edited(s_sel) ? " " S_DASH " edited deck" : "",
+                     psx_cpu_deck_edited(s_sel) || psx_cpu_name_edited(s_sel) ? COL_EDITED : COL_ACCENT);
     draw_col(L->r_id_x, 0, C->y, C->h, "ID", 0);
     draw_col(L->r_name_x, 0, C->y, C->h, "Card", 0);
     draw_col(0, L->r_weight_r, C->y, C->h, "Weight", 1);
@@ -610,10 +645,8 @@ static void draw_ai(void)
     const int have_live = psx_cpu_ai_live(s_sel, live);
     const int have_stock = psx_cpu_ai_stock(s_sel, stock);
     const int edited = psx_cpu_ai_edit(s_sel, NULL);
-    char title[64];
-    snprintf(title, sizeof title, "%s%s", PSX_DROP_DB[s_sel].name, edited ? " " S_DASH " edited AI" : "");
-    draw_panel(1, title, edited ? COL_EDITED : COL_ACCENT, NULL, COL_DIM);
-    draw_record_cells();
+    draw_right_title(edited ? " " S_DASH " edited AI" : "",
+                     edited || psx_cpu_name_edited(s_sel) ? COL_EDITED : COL_ACCENT);
     draw_col(L->r_id_x, 0, C->y, C->h, "#", 0);
     draw_col(L->r_name_x, 0, C->y, C->h, "Field", 0);
     draw_col(0, L->r_weight_r, C->y, C->h, "Value", 1);
@@ -748,6 +781,8 @@ static void edit_begin(int kind, int row, int value)
     s_edit_buf[0] = 0;
     s_edit_len = 0;
     s_dirty = 1;
+    if (kind == ED_NAME)
+        say("Type the name the Free Duel grid will show, then Enter. Empty puts the disc's own name back.");
 }
 
 static void edit_commit(void)
@@ -755,6 +790,19 @@ static void edit_commit(void)
     if (!s_edit_kind) return;
     const int v = s_edit_len ? atoi(s_edit_buf) : -1;
     const int kind = s_edit_kind, row = s_edit_row;
+    if (kind == ED_NAME) {
+        char name[PSX_CPU_NAME_MAX + 1];
+        snprintf(name, sizeof name, "%s", s_edit_buf);
+        edit_end();
+        if (!name[0]) {
+            if (psx_cpu_name_clear(s_sel)) { invalidate(); say("Name back to the disc's own. Save to keep it."); }
+            return;
+        }
+        if (!psx_cpu_name_set(s_sel, name)) { say("That name has a character the game's font cannot show"); return; }
+        invalidate();
+        say("Renamed. Save to keep it; the Free Duel grid shows it at once.");
+        return;
+    }
     edit_end();
     if (v < 0) return;
     if (kind == ED_DECK) {
@@ -828,6 +876,13 @@ static void cm_run(int i)
         if (psx_cpu_record_set(a, 0, 0)) { s_dirty = 1; say("Record cleared in the save"); }
         else say("No save is loaded");
         break;
+    case CM_RENAME:
+        if (a != s_sel) { s_sel = a; s_scroll_right = 0; invalidate(); }
+        edit_begin(ED_NAME, 0, 0);
+        break;
+    case CM_NAME_STOCK:
+        if (psx_cpu_name_clear(a)) { invalidate(); say("Name back to the disc's own. Save to keep it."); }
+        break;
     default: break;
     }
 }
@@ -857,6 +912,7 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_export, x, y)) return 4;
     if (in_rect(&L->btn_default, x, y)) return 5;
     if (in_rect(&L->btn_all, x, y))     return 6;
+    if (in_rect(&L->name_box, x, y))    return 7;
     return -1;
 }
 
@@ -941,9 +997,11 @@ static void rclick(int x, int y)
         const int d = s_scroll + r;
         if (d >= NDUEL) return;
         if (d != s_sel) {
-            snprintf(buf, sizeof buf, "Show %.24s", PSX_DROP_DB[d].name);
+            snprintf(buf, sizeof buf, "Show %.24s", psx_cpu_display_name(d));
             cm_add(buf, CM_SELECT, d, 0);
         }
+        cm_add("Rename" S_ELLIP, CM_RENAME, d, 0);
+        if (psx_cpu_name_edited(d)) cm_add("Name back to the disc's own", CM_NAME_STOCK, d, 0);
         cm_add("Replace the portrait" S_ELLIP, CM_PORTRAIT, d, 0);
         if (psx_cpu_portrait_edited(d)) cm_add("Portrait back to stock", CM_PORTRAIT_STOCK, d, 0);
         cm_add("Deck back to stock", CM_DECK_STOCK, d, 0);
@@ -998,6 +1056,7 @@ static void click(int x, int y, int button)
     }
     if (in_rect(&L->rec_win, x, y))  { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_WINS, 0, w); else say("No save is loaded"); return; }
     if (in_rect(&L->rec_loss, x, y)) { int w = 0, l = 0; if (psx_cpu_record(s_sel, &w, &l)) edit_begin(ED_LOSSES, 0, l); else say("No save is loaded"); return; }
+    if (in_rect(&L->name_box, x, y)) { edit_begin(ED_NAME, 0, 0); return; }
 
     const int p = pane_at(x, y);
     const int r = row_at(p, x, y);
@@ -1240,11 +1299,16 @@ static int on_event(const void *evp)
         if (ev->text.windowID != id) return 0;
         const char *t = ev->text.text;
         if (s_edit_kind) {
-            for (; *t; t++)
-                if (*t >= '0' && *t <= '9' && s_edit_len + 1 < (int)sizeof s_edit_buf) {
+            for (; *t; t++) {
+                const int ok = s_edit_kind == ED_NAME
+                    ? (*t == ' ' || ((unsigned char)*t < 0x80u && psx_card_packs_encode_char(*t) != 0))
+                    : (*t >= '0' && *t <= '9');
+                const int room = s_edit_kind == ED_NAME ? PSX_CPU_NAME_MAX : 7;
+                if (ok && s_edit_len < room) {
                     s_edit_buf[s_edit_len++] = *t;
                     s_edit_buf[s_edit_len] = 0;
                 }
+            }
             s_dirty = 1;
             return 1;
         }
@@ -1291,12 +1355,12 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     const int have = psx_cpu_record(s_sel, &wins, &losses);
     unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"view\":\"%s\",\"sel\":%d,\"name\":\"%s\",\"rows\":%d,\"search\":\"%s\","
-        "\"record\":[%d,%d],\"has_record\":%d,\"deck_edited\":%d,\"ai_edited\":%d,\"dirty\":%d,"
+        "\"record\":[%d,%d],\"has_record\":%d,\"deck_edited\":%d,\"ai_edited\":%d,\"name_edited\":%d,\"dirty\":%d,"
         "\"canvas\":[%d,%d],\"list_rows\":%d,\"hover\":[%d,%d],\"hover_btn\":%d,\"edit\":%d,"
         "\"edit_row\":%d,\"edit_buf\":\"%s\",\"all_cards\":%d,\"menu\":%d,\"msg\":\"%s\"",
-        s_win != NULL, s_view == VIEW_AI ? "ai" : "decks", s_sel, PSX_DROP_DB[s_sel].name,
+        s_win != NULL, s_view == VIEW_AI ? "ai" : "decks", s_sel, psx_cpu_display_name(s_sel),
         s_view == VIEW_AI ? PSX_CPU_AI_BYTES : s_rows_n, s_search,
-        wins, losses, have, psx_cpu_deck_edited(s_sel), psx_cpu_ai_edit(s_sel, NULL), psx_cpu_dirty(),
+        wins, losses, have, psx_cpu_deck_edited(s_sel), psx_cpu_ai_edit(s_sel, NULL), psx_cpu_name_edited(s_sel), psx_cpu_dirty(),
         s_w, s_h, s_win ? list_rows() : 0, s_hover_pane, s_hover_row, s_hover_btn,
         s_edit_kind, s_edit_row, s_edit_buf, s_all_cards, s_cm_n, s_msg);
     if (!s_win || n >= cap) return n < cap;
@@ -1318,6 +1382,7 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "right_sb", &L->sb[1]);
     if (n < cap) n += rect_json(out + n, cap - n, "rec_win", &L->rec_win);
     if (n < cap) n += rect_json(out + n, cap - n, "rec_loss", &L->rec_loss);
+    if (n < cap) n += rect_json(out + n, cap - n, "name_box", &L->name_box);
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
         ",\"weight_col\":[%d,%d],\"name_col\":[%d,%d]}",
         L->r_weight_x, L->r_weight_r, L->r_name_x, L->r_name_r);
@@ -1328,7 +1393,7 @@ int psx_cpu_manager_shot(const char *path)
 {
     if (!s_win || !s_px || !path) return 0;
     if (s_dirty) { draw(); s_dirty = 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return 0;
     fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
     for (int i = 0; i < s_w * s_h; i++) {

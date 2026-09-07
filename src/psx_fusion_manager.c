@@ -299,6 +299,8 @@ static int s_hover_dlg = -1;       /* 0 cancel, 1 confirm */
 /* the file dialog's answer, consumed on the emulation thread */
 static char s_pick_path[1200];
 static int  s_pick_kind;           /* 1 export, 2 import */
+static char s_pick_err[200];       /* why the dialog would not open, until tick() has said so */
+static int  s_pick_err_kind;
 
 enum { NC_CARD = 7, NC_REC = 9, NC_MAKE = 7, NC_FROM = 4 };
 enum { PANE_LIST = 0, PANE_MK = 1, PANE_FR = 2, PANE_COUNT = 3 };
@@ -1571,14 +1573,31 @@ static void dialog_confirm(void)
 /* --- actions -------------------------------------------------------------- */
 
 #if defined(PSX_SDL3)
+/* SDL may call this from another thread: the path goes first and the kind
+ * last, since tick() takes the kind as the signal to read both. A dialog
+ * that failed to open used to vanish here without a word; now it lands in
+ * s_pick_err for tick() to report, and an Export falls back to the default
+ * file the way the Card and Drop Table managers' do. */
 static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int filter)
 {
     (void)filter;
-    if (!filelist || !filelist[0]) return;
+    const int kind = (int)(intptr_t)userdata;
+    if (!filelist) {
+        const char *e = SDL_GetError();
+        s_pick_err_kind = kind;
+        snprintf(s_pick_err, sizeof s_pick_err, "%s", e && e[0] ? e : "the file dialog could not open");
+        return;
+    }
+    if (!filelist[0]) return;                       /* cancelled */
     snprintf(s_pick_path, sizeof s_pick_path, "%s", filelist[0]);
-    s_pick_kind = (int)(intptr_t)userdata;
+    s_pick_kind = kind;
 }
 #endif
+
+static void export_default_path(char *out, unsigned cap)
+{
+    snprintf(out, cap, "%s/fusion-recipes.txt", psx_mod_player_data_dir());
+}
 
 static void do_export(void)
 {
@@ -1586,7 +1605,7 @@ static void do_export(void)
 #if defined(PSX_SDL3)
     static const SDL_DialogFileFilter filters[] = { { "Text files", "txt" } };
     static char def[1200];
-    snprintf(def, sizeof def, "%s/fusion-recipes.txt", psx_mod_player_data_dir());
+    export_default_path(def, sizeof def);
     SDL_ShowSaveFileDialog(pick_cb, (void *)(intptr_t)1, s_win, filters, 1, def);
 #else
     say("No file dialog in this build: use the debug command fusion_manager with export:<path>");
@@ -2069,7 +2088,22 @@ static void tick(void)
         if (req > 0) psx_fusion_manager_open(); else psx_fusion_manager_close();
     }
 
-    /* a file dialog answered (the callback may run on another thread) */
+    /* a file dialog answered, or could not open at all (the callback may
+     * run on another thread) */
+    if (s_pick_err[0]) {
+        char why[200]; snprintf(why, sizeof why, "%s", s_pick_err);
+        const int kind = s_pick_err_kind;
+        s_pick_err[0] = 0;
+        if (kind == 1) {
+            char def[1200], msg[sizeof s_msg];
+            export_default_path(def, sizeof def);
+            psx_fusion_table_export(def, 0, msg, sizeof msg);
+            say(msg);
+        } else {
+            char m[280]; snprintf(m, sizeof m, "The file dialog could not open: %.200s", why);
+            say(m);
+        }
+    }
     if (s_pick_kind) {
         const int kind = s_pick_kind;
         s_pick_kind = 0;

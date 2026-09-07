@@ -40,6 +40,7 @@
 #include "debug_server.h"
 
 #include "psx_ui_font8.inc"    /* FONT8[95][8], ASCII 32..126 */
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 /* ---- what the freeze looks like ---------------------------------------- */
 
@@ -233,7 +234,7 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
 
     if (!dir || !dir[0]) return;
     snprintf(path, sizeof path, "%s/freeze_report.txt", dir);
-    f = fopen(path, "w");
+    f = psx_fopen_utf8(path, "w");
     if (!f) return;
 
     savestate_get_integrity(&bios_cksum, &entry_pc);

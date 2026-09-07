@@ -225,22 +225,30 @@ special opponents, and the flag is read by code outside the script.
 **Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
 the ones `FREE DUEL` shows. Click either and type.
 
+**Name.** Click the name on the title line (or right-click the duelist and
+`Rename…`) and type what the `FREE DUEL` grid should call them, up to 20
+characters from the game's own font (letters, digits and a little
+punctuation, no accents). Enter keeps it, an empty box puts the disc's name
+back, and the grid shows the new name at once. The Drop Table Manager and
+this window's list print it too; the ini keeps the disc's name as the
+section header so a renamed duelist can still be found.
+
 **Portraits.** Right-click a duelist and `Replace the portrait…`: any picture
 becomes their 48x48 tile, scaled and quantised to the 64 colours the tile
 holds, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
 `duelists/<id>/portrait.png`, so it comes back at the next launch and can be
 replaced by hand; `Portrait back to stock` removes it.
 
-Deck and AI edits are kept in `cpu_manager.ini` (hand-editable) and applied
-the moment they change: the AI table is written in memory, and the deck and
-the portrait go back to the game through sector overrides of that duelist's
-disc record and portrait tile, so the game loads them with its own loader.
-Nothing on your disc is touched.
+Deck, AI and name edits are kept in `cpu_manager.ini` (hand-editable) and
+applied the moment they change: the AI table and the name are written in
+memory (the name is an entry in the same string table the card names use),
+and the deck and the portrait go back to the game through sector overrides
+of that duelist's disc record and portrait tile, so the game loads them with
+its own loader. Nothing on your disc is touched.
 
-Renaming a duelist is **not** here: the name the `FREE DUEL` grid draws is
-not in the card-name blob or the dialogue bank, and it has not been found
-yet. `Defaults` puts one duelist back, `Import…`/`Export…` share the lot,
-and an import is kept straight away.
+`Defaults` puts one duelist's deck and AI back, `Import…`/`Export…` share the
+lot, and an import is kept straight away and replaces what was there,
+overrides included.
 
 ### Card Manager (`VIEW → CARD MANAGER`)
 

@@ -59,6 +59,7 @@
 #include "psx_shop_skin.h"
 #include "psx_video_menu.h"
 #include "psx_ygo_cheats.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 /* ---- measured addresses -------------------------------------------------- */
 #define SHOP_STATE_ADDR   0x8009B23Au   /* campaign overlay state: 0xE00D   */
@@ -370,7 +371,7 @@ static int cfg_rarity_mask(const char *v) {
 }
 
 static void shop_cfg_write_default(const char *path) {
-    FILE *f = fopen(path, "w");
+    FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return;
     fprintf(f,
         "# CARD SHOP - pack prices, rarity bands and card placements.\n"
@@ -407,7 +408,7 @@ static void shop_cfg_load(void) {
     s_cfg_loaded = 1;
     char path[512];
     if (!shop_ini_path(path, sizeof path)) return;
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) { shop_cfg_write_default(path); return; }
     s_cfg_forced_n = 0;
     char line[160], sect[24] = "";

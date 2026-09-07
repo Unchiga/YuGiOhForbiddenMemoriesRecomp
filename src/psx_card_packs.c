@@ -119,9 +119,10 @@
 #define NAMEOFF_TABLE  0x801D5800u
 #define NAME_SEGMENT   0x801D0000u
 /* Our name strings. 0x801D916F.. is zero on the stock EXE; psx_card_extend
- * uses 0x801D9200.. for its clone names and stops well before 0x801D9800. */
+ * uses 0x801D9200.. for its clone names and stops well before 0x801D9800,
+ * and the duelist names take the top of the tail (see the header). */
 #define NAMES_BASE     0x801D9800u
-#define NAMES_LIMIT    0x801DA000u
+#define NAMES_LIMIT    PSX_CARD_PACKS_NAMES_LIMIT
 /* Descriptions: offsets are relative to 0x801C0000, so the strings must sit
  * in that 64 KB. The stock texts end at 0x801CD59E; psx_card_extend's
  * relocated tables run 0x801CD5A0..~0x801CEB90 and the parked free-duel
@@ -151,6 +152,7 @@ static int encode_char(char c)
         if (CODE_TABLE[i] && CODE_TABLE[i] == c) return i;
     return 0;
 }
+int psx_card_packs_encode_char(char c) { return encode_char(c); }
 
 /* Game text -> ASCII, FE -> '|', unknown glyphs -> '?'. */
 static void decode_text(uint32_t addr, char *out, size_t cap)
@@ -562,7 +564,7 @@ static long file_mtime(const char *path)
 
 static unsigned char *read_file(const char *path, long *size)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = psx_fopen_utf8(path, "rb");
     if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
@@ -1083,7 +1085,7 @@ static int read_ini(int id, PsxCardPack *c)
 {
     char path[1200];
     pack_path(id, "card.ini", path, sizeof path);
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return 0;
     char line[512];
     while (fgets(line, sizeof line, f)) {
@@ -1517,7 +1519,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     pack_path(c->id, NULL, path, sizeof path);
     MKDIR(path);
     pack_path(c->id, "card.ini", path, sizeof path);
-    FILE *f = fopen(path, "w");
+    FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return 0;
     fprintf(f, "; card %d -- written by the Card Manager; hand edits are picked up live\n", c->id);
     if (c->name[0])        fprintf(f, "name = %s\n", c->name);

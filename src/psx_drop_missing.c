@@ -48,6 +48,7 @@
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
 #include "psx_video_menu.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 #define INI_NAME "drop_missing_cards.ini"
 #define MAX_ADDS 64
@@ -236,7 +237,7 @@ static void load_defaults(void)
 
 static void write_ini(const char *path)
 {
-    FILE *f = fopen(path, "w");
+    FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return;
     fprintf(f,
 "; Yu-Gi-Oh! Forbidden Memories - Recompiled : DROP MISSING CARDS\n"
@@ -295,7 +296,7 @@ static char *trim(char *s)
 
 static int read_ini(const char *path)
 {
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return 0;
     for (int r = 0; r < 39; r++) g_adds[r].n = 0;
     char line[256];
@@ -337,7 +338,7 @@ static void ensure_loaded(void)
     char path[1024];
     ini_path(path, sizeof(path));
     snprintf(g_ini_path, sizeof(g_ini_path), "%s", path);
-    FILE *probe = fopen(path, "r");
+    FILE *probe = psx_fopen_utf8(path, "r");
     if (probe) {
         fclose(probe);
         const int n = read_ini(path);

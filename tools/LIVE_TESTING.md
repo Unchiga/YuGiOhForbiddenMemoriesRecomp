@@ -255,8 +255,33 @@ dbg.q({'cmd':'cpu_data','duelist':2,'deck':1})            # Jono's pool
 dbg.q({'cmd':'cpu_data','duelist':2,'card':1,'weight':1984})
 dbg.q({'cmd':'cpu_data','duelist':2,'ai_field':0,'ai_value':16})
 dbg.q({'cmd':'cpu_data','duelist':2,'wins':12,'losses':4})
+dbg.q({'cmd':'cpu_data','duelist':2,'name':'Sir Dingus'})  # what the grid prints
+dbg.q({'cmd':'cpu_data','duelist':2,'clear_name':1})
 dbg.q({'cmd':'cpu_data','save':1})                        # cpu_manager.ini
 ```
+
+`cpu_manager` takes `keycode` (a number: 13 is Enter, 27 Escape), not `key`.
+The window's name box is `geom['name_box']`: click it, `text`, then
+`keycode` 13; the state json has `name` (what is shown), `name_edited` and
+`edit` (5 while the name box is open).
+
+Names (verified 2026-09-06): the Free Duel grid prints string 0x8328 + cell,
+cell = duelist id, which is entry 808 + id of the u16 offset table at
+0x801D5800 (offsets from 0x801D0000, the card names' table). The edited
+strings sit in fixed 21-byte slots from 0x801D9CC0 (the top of the free tail
+of the name blob, above the card renames), re-asserted every frame; the
+table entry goes back to the SLUS value when a name is cleared (Simon's is
+0x8BDB, read from the file at 0x1C6000 + 809*2 and from RAM). Do NOT use
+0x801DA000.. for anything: it is D_801DA000, a table of 0x88-byte records
+func_80036C14 writes, and eight bytes appear there the moment a save loads.
+The caption at the bottom of the grid is the check; the vertical strip on
+the right is decoration. Cells 1 and 2 (Simon, Teana) are empty on this
+box's save, so RIGHT from Build Deck shows no caption; RIGHT x3 is Jono.
+
+An import REPLACES the edits: a duelist whose section is missing from the
+file loses the deck override too (verified 2026-09-06 by dueling Jono after
+importing a file without his section: the pool at 0x801781D8 was stock, 23
+cards, card 1 at 0).
 
 What the numbers are, all measured 2026-09-06:
 

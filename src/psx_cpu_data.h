@@ -77,6 +77,24 @@ int  psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned
 int  psx_cpu_portrait_clear(int duelist);
 int  psx_cpu_portrait_edited(int duelist);
 
+/* ---- the name ------------------------------------------------------------
+ * What the FREE DUEL grid prints under the portrait, and what the campaign
+ * prints wherever a text carries the opponent's name: string 0x8328 + id in
+ * the same name table the card names live in (entries 808..847 of
+ * gText_aGlobalOffsets, measured 2026-09-06 against the SLUS). A rename is
+ * asserted per frame like a card rename: the string goes to reclaimed RAM
+ * and the table entry is repointed at it. The game's font has no accents,
+ * so a name is ASCII; characters the font lacks are refused by
+ * psx_cpu_name_set. Empty clears. */
+#define PSX_CPU_NAME_MAX 20
+int  psx_cpu_name_set(int duelist, const char *name);
+int  psx_cpu_name_clear(int duelist);
+int  psx_cpu_name_edited(int duelist);
+/* The name every window should print for a duelist: the edit when there is
+ * one, else the stock name. PSX_DROP_DB[d].name stays the stock name, which
+ * is what the ini section headers and "back to stock" need. */
+const char *psx_cpu_display_name(int duelist);
+
 /* ---- persistence ---------------------------------------------------------
  * One file for the window, cpu_manager.ini, the same way the Drop Table
  * Manager keeps drop_table_edits.ini. Import replaces every edit with the

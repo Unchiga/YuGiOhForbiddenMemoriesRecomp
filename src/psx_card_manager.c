@@ -1462,7 +1462,7 @@ static int install_pick(const char *src, int kind)
     snprintf(dst + n, sizeof dst - n, "/%s", names[kind]);
     FILE *in = psx_fopen_utf8(src, "rb");
     if (!in) return 0;
-    FILE *out = fopen(dst, "wb");
+    FILE *out = psx_fopen_utf8(dst, "wb");
     if (!out) { fclose(in); return 0; }
     char buf[65536];
     size_t got;
@@ -2662,7 +2662,7 @@ int psx_card_manager_shot(const char *path)
 {
     if (!s_win || !s_px || !path) return 0;
     if (s_dirty) { draw(); s_dirty = 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return 0;
     fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
     for (int i = 0; i < s_w * s_h; i++) {

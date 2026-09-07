@@ -126,7 +126,7 @@ static void drop_if_empty(int id)
 {
     char path[1200];
     snprintf(path, sizeof path, "%s/%d/card.ini", psx_card_packs_dir(), id);
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return;
     char line[512]; int keys = 0;
     while (fgets(line, sizeof line, f)) if (line[0] != ';' && strchr(line, '=')) keys++;

@@ -656,22 +656,26 @@ static void handle_cpu_manager(int id, const char *json)
 
 /* video_menu — the overlay menu bar's state, and a way to drive it without a
  * keyboard: {"toggle":1} shows+expands or hides, {"collapse":1} closes the
- * dropdown. The reply says whether the bar is visible and whether a dropdown
- * is expanded (which is what captures input). */
+ * dropdown, {"quiet":1} is what a minimize / restore / focus change does
+ * (collapse, and hold hover-to-open until the pointer leaves the bar). The
+ * reply says whether the bar is visible and whether a dropdown is expanded
+ * (which is what captures input). */
 static void handle_video_menu(int id, const char *json)
 {
     if (json_get_int(json, "toggle", 0)) psx_video_menu_toggle();
     if (json_get_int(json, "collapse", 0)) psx_video_menu_collapse();
+    if (json_get_int(json, "quiet", 0)) psx_video_menu_quiet();      /* what a window change does */
     if (json_get_int(json, "hide", 0)) psx_video_menu_hide();
     send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d}",
              id, psx_video_menu_is_visible(), psx_video_menu_is_open());
 }
 
-/* cpu_data — the CPU duelists' decks, AI profiles and records.
+/* cpu_data — the CPU duelists' decks, AI profiles, names and records.
  * {"duelist":0-38} with "card"+"weight" edits a deck entry, "ai_field"+
- * "ai_value" one AI byte (-1 clears the profile), "wins"/"losses" the save's
- * record, "clear_deck":1 puts the deck back; {"save":1} writes the ini,
- * {"export"/"import":path} the share pair. "deck":1 lists the pool. */
+ * "ai_value" one AI byte (-1 clears the profile), "name":text the name the
+ * Free Duel grid prints ("clear_name":1 puts it back), "wins"/"losses" the
+ * save's record, "clear_deck":1 puts the deck back; {"save":1} writes the
+ * ini, {"export"/"import":path} the share pair. "deck":1 lists the pool. */
 static void handle_cpu_data(int id, const char *json)
 {
     char path[1024], msg[256];
@@ -699,6 +703,10 @@ static void handle_cpu_data(int id, const char *json)
             return;
         }
         if (json_get_int(json, "clear_portrait", 0)) psx_cpu_portrait_clear(d);
+        if (json_get_str(json, "name", msg, sizeof msg) && !psx_cpu_name_set(d, msg)) {
+            send_err(id, "that name has a character the game's font lacks, or is empty"); return;
+        }
+        if (json_get_int(json, "clear_name", 0)) psx_cpu_name_clear(d);
         {
             const int f = json_get_int(json, "ai_field", -1);
             const int v = json_get_int(json, "ai_value", -1000);

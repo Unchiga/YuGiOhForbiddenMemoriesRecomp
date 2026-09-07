@@ -31,6 +31,7 @@
 #include "mod_plugins.h"
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 #define INI_NAME  "drop_table_edits.ini"
 #define NDUEL     PSX_DROP_DB_DUELISTS
@@ -68,7 +69,7 @@ static char *trim(char *s)
 
 static int read_ini(const char *path)
 {
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return -1;
     for (int d = 0; d < NDUEL; d++) {
         g_n[d] = 0;
@@ -210,7 +211,7 @@ int psx_drop_edits_clear(int duelist)
 
 static int write_to(const char *path)
 {
-    FILE *f = fopen(path, "w");
+    FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return 0;
     fprintf(f,
 "; Yu-Gi-Oh! Forbidden Memories - Recompiled : drop table edits\n"

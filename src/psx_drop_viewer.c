@@ -54,6 +54,7 @@
 #include "mod_plugins.h"
 #include "psx_card_db.h"
 #include "psx_card_packs.h"
+#include "psx_cpu_data.h"        /* psx_cpu_display_name(): a renamed duelist shows here too */
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
 #include "psx_drop_missing.h"
@@ -65,6 +66,7 @@
 #include "psx_ui_draw.h"
 #include "psx_ui_font.h"
 #include "psx_video_menu.h"
+#include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 /* --- look ---------------------------------------------------------------- */
 
@@ -385,7 +387,7 @@ static int duel_cmp(const void *pa, const void *pb)
     const int ia = *(const int *)pa, ib = *(const int *)pb;
     int r = 0;
     if (s_dsort == DSORT_NAME)
-        r = strcmp(PSX_DROP_DB[ia].name, PSX_DROP_DB[ib].name);
+        r = strcmp(psx_cpu_display_name(ia), psx_cpu_display_name(ib));
     else if (s_dsort == DSORT_DROPS)
         r = s_duel_total[ia] - s_duel_total[ib];
     if (r == 0) r = ia - ib;         /* roster index is the stable tie-break */
@@ -864,10 +866,10 @@ static void cmenu_run(int i)
         if (psx_story_rewards_set(a, b, c)) {
             char m[120];
             if (b) snprintf(m, sizeof m, "%.20s gives %.24s on %s campaign win. Save to keep it.",
-                            PSX_DROP_DB[a].name, psx_card_packs_display_name(b),
+                            psx_cpu_display_name(a), psx_card_packs_display_name(b),
                             c ? "every" : "the first");
             else   snprintf(m, sizeof m, "%.20s gives no scripted card any more. Save to keep it.",
-                            PSX_DROP_DB[a].name);
+                            psx_cpu_display_name(a));
             say(m);
             invalidate();
         }
@@ -1106,7 +1108,7 @@ static void draw_drop_rows(int name_of_card)
             psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_packs_display_name(d->card), namecol, fr, L->r_name_r - L->r_name_x);
         } else {
             draw_icon(L->r_icon_x, y + (L->row_h - icon) / 2, icon, d->duelist, bg);
-            psx_ui_text_clip(&s_cv, L->r_name_x, base, PSX_DROP_DB[d->duelist].name,
+            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_cpu_display_name(d->duelist),
                              namecol, fr, L->r_name_r - L->r_name_x);
         }
         if (grey) {
@@ -1227,7 +1229,7 @@ static void draw_duelists_view(void)
     const int ec = psx_drop_edits_count(s_sel_duelist);
     int sr_every = 0;
     const int sr = psx_story_rewards_get(s_sel_duelist, &sr_every);
-    int tn = snprintf(sel, sizeof sel, "%s", PSX_DROP_DB[s_sel_duelist].name);
+    int tn = snprintf(sel, sizeof sel, "%s", psx_cpu_display_name(s_sel_duelist));
     if (ec && tn < (int)sizeof sel)
         tn += snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %d edit%s", ec, ec == 1 ? "" : "s");
     if (sr && tn < (int)sizeof sel)
@@ -1258,7 +1260,7 @@ static void draw_duelists_view(void)
         }
         const int base = psx_ui_baseline_in(y, L->row_h, fr);
         draw_icon(L->d_icon_x, y + (L->row_h - icon) / 2, icon, d, bg);
-        psx_ui_text_clip(&s_cv, L->d_name_x, base, PSX_DROP_DB[d].name, selected ? COL_ACCENT : COL_TEXT, fr, L->d_name_r - L->d_name_x);
+        psx_ui_text_clip(&s_cv, L->d_name_x, base, psx_cpu_display_name(d), selected ? COL_ACCENT : COL_TEXT, fr, L->d_name_r - L->d_name_x);
         char buf[16];
         snprintf(buf, sizeof buf, "%d", s_duel_total[d]);
         text_right(L->d_drops_r, base, buf, COL_DIM, fr);
@@ -1644,7 +1646,7 @@ static void rclick(int x, int y)
                     cmenu_add("Stop giving this card", CM_STORY, d, 0, 0);
                 } else {
                     snprintf(buf, sizeof buf, "Give this on the first win vs %.20s",
-                             PSX_DROP_DB[d].name);
+                             psx_cpu_display_name(d));
                     cmenu_add(buf, CM_STORY, d, c, 0);
                 }
             }
@@ -1666,7 +1668,7 @@ static void rclick(int x, int y)
             rebuild_rows();
             for (int t = 0; t < NTIER; t++) {
                 snprintf(buf, sizeof buf, "Add to %.24s (%s)",
-                         PSX_DROP_DB[s_sel_duelist].name, PSX_DROP_TIER_NAMES[t]);
+                         psx_cpu_display_name(s_sel_duelist), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_sel_duelist, s_sel_card, t);
             }
         }
@@ -1688,7 +1690,7 @@ static void rclick(int x, int y)
                     cmenu_add("Stop giving this card", CM_STORY, d, 0, 0);
                 } else {
                     snprintf(buf, sizeof buf, "Give it on the first win vs %.20s",
-                             PSX_DROP_DB[d].name);
+                             psx_cpu_display_name(d));
                     cmenu_add(buf, CM_STORY, d, s_sel_card, 0);
                 }
             }
@@ -2430,7 +2432,7 @@ int psx_drop_viewer_shot(const char *path)
 {
     if (!s_win || !s_px || !path) return 0;
     if (s_dirty) { draw(); s_dirty = 0; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = psx_fopen_utf8(path, "wb");
     if (!f) return 0;
     fprintf(f, "P6\n%d %d\n255\n", s_w, s_h);
     for (int i = 0; i < s_w * s_h; i++) {

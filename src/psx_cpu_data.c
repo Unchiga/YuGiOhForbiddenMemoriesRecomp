@@ -60,6 +60,20 @@
  * RECORD. gFreeDuel_aDuelistRecords (0x801D071C) in the save: 40 x {u16 win,
  * u16 loss}, duelist ids from +4. The campaign does not touch it (only
  * FreeDuel_Init does), so it is exactly the Free Duel screen's WIN n LOSS n.
+ *
+ * NAME. The Free Duel grid prints string 0x8328 + cell for the cell under
+ * the cursor (FreeDuel_PlaceCursor; teatools/image-freeduel), and cell = id
+ * (0 is the Build Deck tile). Those are entries 808..847 of the u16 offset
+ * table at gText_aGlobalOffsets (0x801D5800), the table the card names
+ * share, each an offset from 0x801D0000 to an 0xFF-ended string in the
+ * game's frequency-ordered glyph code. Checked 2026-09-06 by decoding the
+ * SLUS: the forty entries read Build Deck, Simon Muran ... Duel Master K,
+ * the order tools/gen_drop_db.py already uses. A rename is done the way a
+ * card rename is (psx_card_packs.c): the encoded string is written to
+ * reclaimed RAM and the entry repointed at it, both re-asserted per frame,
+ * because the table is EXE data a savestate puts back. The strings sit in
+ * fixed slots at the top of the name blob's free tail, above the card
+ * renames (psx_card_packs.h says where the tail ends and why).
  */
 
 #include "psx_cpu_data.h"
@@ -79,6 +93,7 @@
 #include "psx_duelist_portraits.h"
 #include "psx_drop_missing.h"
 #include "psx_game_hooks.h"
+#include "psx_textfile.h"
 #include "psx_ygo_cheats.h"      /* psx_ygo_save_is_live() */
 
 #define NDUEL      PSX_DROP_DB_DUELISTS      /* 39 */
@@ -109,6 +124,22 @@
 /* the save's records */
 #define RECORDS       0x801D071Cu
 
+/* the names: entry 808 + id of the offset table, offsets from NAME_SEGMENT */
+#define NAMEOFF_TABLE 0x801D5800u
+#define NAME_SEGMENT  0x801D0000u
+#define NAME_ENTRY0   808u
+/* Where the renamed strings go: one fixed slot per duelist, PSX_CPU_NAME_MAX
+ * glyphs and the 0xFF, from PSX_CPU_NAMES_BASE up to 0x801DA000. The first
+ * pick was the page at 0x801DA100: zero in the SLUS image, zero at the title,
+ * and then eight bytes appeared at 0x801DA000 the moment a save was loaded
+ * (2026-09-06) -- it is D_801DA000, a table of 0x88-byte records that
+ * func_80036C14 writes, so the tail of the name blob it is. */
+#define NAME_ARENA    PSX_CPU_NAMES_BASE
+#define NAME_SLOT     (PSX_CPU_NAME_MAX + 1u)
+#define NAME_SLOT_ADDR(d) (NAME_ARENA + (uint32_t)(d) * NAME_SLOT)
+typedef char cpu_name_arena_fits[(NAME_ARENA + 39u * NAME_SLOT <= 0x801DA000u) ? 1 : -1];
+typedef char cpu_name_arena_above_packs[(NAME_ARENA >= PSX_CARD_PACKS_NAMES_LIMIT) ? 1 : -1];
+
 /* the portrait tiles: WA_MRG sector 0x1EAA, forty 2432-byte tiles */
 #define TILE_LBA      17952u
 #define TILE_BYTES    2432u
@@ -127,11 +158,17 @@ typedef struct {
     uint8_t  ai[PSX_CPU_AI_BYTES];
     uint8_t  ai_set;
     uint8_t  installed;          /* the override is in place for this duelist */
+    char     name[PSX_CPU_NAME_MAX + 1];
+    uint8_t  name_set;
+    uint8_t  enc[PSX_CPU_NAME_MAX + 1];   /* the name in the game's code, 0xFF-ended */
+    uint8_t  enc_len;
 } CpuEdit;
 
 static CpuEdit  g_edit[NDUEL];
 static uint8_t  g_ai_stock[NDUEL][PSX_CPU_AI_BYTES];
 static int      g_ai_stock_ready;
+static uint16_t g_name_stock[NDUEL];     /* the stock offset-table entries */
+static int      g_name_stock_ready;
 static int      g_loaded;
 static int      g_dirty;
 static unsigned g_gen = 1;
@@ -397,7 +434,7 @@ static void portrait_png(int duelist, char *out, size_t cap)
 
 static int file_exists(const char *p)
 {
-    FILE *f = fopen(p, "rb");
+    FILE *f = psx_fopen_utf8(p, "rb");
     if (!f) return 0;
     fclose(f);
     return 1;
@@ -489,9 +526,9 @@ int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned 
 #endif
     portrait_png(duelist, dest, sizeof dest);
     {   /* copy it in, unless it is already the file we would write */
-        FILE *in = fopen(png_path, "rb");
+        FILE *in = psx_fopen_utf8(png_path, "rb");
         if (!in) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
-        FILE *out = strcmp(png_path, dest) ? fopen(dest, "wb") : NULL;
+        FILE *out = strcmp(png_path, dest) ? psx_fopen_utf8(dest, "wb") : NULL;
         if (out) {
             char buf[65536];
             size_t got;
@@ -516,12 +553,116 @@ int psx_cpu_portrait_clear(int duelist)
     if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
     char png[1200];
     portrait_png(duelist, png, sizeof png);
-    remove(png);
+    (void)psx_remove_utf8(png);
     g_edit[duelist].portrait_set = 0;
     psx_duelist_portraits_override(duelist, NULL);
     (void)portraits_install();
     g_gen++;
     return 1;
+}
+
+/* ---- the name --------------------------------------------------------------
+ *
+ * The stock offsets are snapshotted once the table is resident (a zero entry
+ * would be a Build Deck tile with no name, so all-nonzero is the test), and
+ * put back when an edit is cleared. The edit itself is one fixed slot in
+ * NAME_ARENA, re-asserted every frame: the table is re-streamed with the
+ * EXE data a savestate restores, and the slot with it. */
+static uint32_t nameoff_addr(int duelist) { return NAMEOFF_TABLE + (NAME_ENTRY0 + (uint32_t)duelist + 1u) * 2u; }
+
+static void name_snapshot(void)
+{
+    if (g_name_stock_ready || !psx_mod_game_started()) return;
+    for (int d = 0; d < NDUEL; d++) {
+        const uint16_t off = psx_mod_read_half(nameoff_addr(d));
+        if (!off) return;
+        g_name_stock[d] = off;
+    }
+    g_name_stock_ready = 1;
+}
+
+static int name_encode(const char *name, uint8_t *out, int cap)
+{
+    int n = 0;
+    for (const char *p = name; *p && n + 1 < cap; p++) {
+        const int code = *p == ' ' ? 0 : psx_card_packs_encode_char(*p);
+        if (*p != ' ' && !code) return -1;      /* a glyph the font lacks */
+        out[n++] = (uint8_t)code;
+    }
+    out[n++] = 0xFF;
+    return n;
+}
+
+int psx_cpu_name_set(int duelist, const char *name)
+{
+    psx_cpu_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL) return 0;
+    if (!name || !name[0]) return psx_cpu_name_clear(duelist);
+    char trimmed[PSX_CPU_NAME_MAX + 1];
+    {   /* the ini writer trims, so what is kept is what would be read back */
+        while (*name == ' ') name++;
+        snprintf(trimmed, sizeof trimmed, "%s", name);
+        size_t n = strlen(trimmed);
+        while (n && trimmed[n - 1] == ' ') trimmed[--n] = 0;
+        if (!n) return psx_cpu_name_clear(duelist);
+    }
+    CpuEdit *e = &g_edit[duelist];
+    uint8_t enc[PSX_CPU_NAME_MAX + 1];
+    const int len = name_encode(trimmed, enc, (int)sizeof enc);
+    if (len < 0) return 0;
+    if (e->name_set && !strcmp(e->name, trimmed)) return 1;
+    snprintf(e->name, sizeof e->name, "%s", trimmed);
+    memcpy(e->enc, enc, (size_t)len);
+    e->enc_len = (uint8_t)len;
+    e->name_set = 1;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_cpu_name_clear(int duelist)
+{
+    psx_cpu_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].name_set) return 0;
+    g_edit[duelist].name_set = 0;
+    g_edit[duelist].enc_len = 0;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_cpu_name_edited(int duelist)
+{
+    psx_cpu_ensure_loaded();
+    return (duelist >= 0 && duelist < NDUEL) ? g_edit[duelist].name_set : 0;
+}
+
+const char *psx_cpu_display_name(int duelist)
+{
+    if (duelist < 0 || duelist >= NDUEL) return "?";
+    psx_cpu_ensure_loaded();
+    return g_edit[duelist].name_set ? g_edit[duelist].name : PSX_DROP_DB[duelist].name;
+}
+
+/* Per frame: the edited strings and their table entries, the stock entries
+ * for everyone else. Cheap: a handful of reads that match. */
+static void names_apply(void)
+{
+    name_snapshot();
+    if (!g_name_stock_ready) return;
+    for (int d = 0; d < NDUEL; d++) {
+        const CpuEdit *e = &g_edit[d];
+        const uint32_t oa = nameoff_addr(d);
+        if (!e->name_set) {
+            if (psx_mod_read_half(oa) != g_name_stock[d]) psx_mod_write_half(oa, g_name_stock[d]);
+            continue;
+        }
+        const uint32_t sa = NAME_SLOT_ADDR(d);
+        for (int k = 0; k < e->enc_len; k++)
+            if (psx_mod_read_byte(sa + (uint32_t)k) != e->enc[k]) psx_mod_write_byte(sa + (uint32_t)k, e->enc[k]);
+        const uint16_t want = (uint16_t)(sa - NAME_SEGMENT);
+        if (psx_mod_read_half(oa) != want) psx_mod_write_half(oa, want);
+    }
 }
 
 /* ---- the record ------------------------------------------------------------ */
@@ -585,12 +726,14 @@ static char *trim(char *s)
 
 static int read_ini(const char *path)
 {
-    FILE *f = fopen(path, "r");
+    FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return -1;
     for (int d = 0; d < NDUEL; d++) {
         g_edit[d].deck_set = 0;
         g_edit[d].ai_set = 0;
         g_edit[d].installed = 0;
+        g_edit[d].name_set = 0;
+        g_edit[d].enc_len = 0;
     }
     char line[256];
     int cur = -1, n = 0;
@@ -607,6 +750,17 @@ static int read_ini(const char *path)
             continue;
         }
         if (cur < 0) continue;
+        if (!strncmp(s, "name", 4) && (s[4] == ' ' || s[4] == '=' || s[4] == '\t')) {
+            char *v = strchr(s, '=');
+            if (!v) continue;
+            v = trim(v + 1);
+            /* through the setter, so a glyph the font lacks is dropped here
+             * rather than drawn as a blank in the grid */
+            const int was_dirty = g_dirty;
+            if (psx_cpu_name_set(cur, v)) n++;
+            g_dirty = was_dirty;
+            continue;
+        }
         int a[PSX_CPU_AI_BYTES];
         if (sscanf(s, "ai = %d , %d , %d , %d , %d , %d , %d , %d , %d",
                    &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7], &a[8]) == PSX_CPU_AI_BYTES) {
@@ -667,7 +821,7 @@ void psx_cpu_ensure_loaded(void)
 
 static int write_to(const char *path)
 {
-    FILE *f = fopen(path, "w");
+    FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return 0;
     fprintf(f,
 "; Yu-Gi-Oh! Forbidden Memories - Recompiled : CPU duelists\n"
@@ -675,16 +829,21 @@ static int write_to(const char *path)
 "; Written by the CPU Manager (VIEW > CPU MANAGER); hand-editing works too.\n"
 "; One section per duelist:\n"
 ";\n"
+";     name = Dingus                        what the FREE DUEL grid calls them (letters,\n"
+";                                          digits and . , ! ? ' - & / : ( ) only, %d at most)\n"
 ";     ai = 5, 20, 10, 1, 1, 0, 0, 25, 50    the nine AI profile bytes\n"
 ";     <card id> = <weight>                  their deck pool, out of 2048\n"
 ";\n"
 "; A deck pool listed here REPLACES that duelist's: every card they can draw\n"
 "; has to be in it, and the weights are rescaled to 2048 when they are not.\n"
-"; Delete a section (or the file) to put a duelist back to the disc's own.\n"
-"\n");
+"; The section header is always the disc's own name, so a renamed duelist\n"
+"; can still be found. Delete a section (or the file) to put a duelist back\n"
+"; to the disc's own.\n"
+"\n", PSX_CPU_NAME_MAX);
     for (int d = 0; d < NDUEL; d++) {
-        if (!g_edit[d].deck_set && !g_edit[d].ai_set) continue;
+        if (!g_edit[d].deck_set && !g_edit[d].ai_set && !g_edit[d].name_set) continue;
         fprintf(f, "[%s]\n", PSX_DROP_DB[d].name);
+        if (g_edit[d].name_set) fprintf(f, "name = %s\n", g_edit[d].name);
         if (g_edit[d].ai_set) {
             fprintf(f, "ai = ");
             for (int i = 0; i < PSX_CPU_AI_BYTES; i++)
@@ -722,13 +881,13 @@ int psx_cpu_export_file(const char *path, char *msg, unsigned cap)
     for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') base = q + 1;
     if (!strchr(base, '.')) { const size_t n = strlen(p); snprintf(p + n, sizeof p - n, ".ini"); }
     if (!write_to(p)) { if (msg && cap) snprintf(msg, cap, "Could not write that file"); return 0; }
-    int decks = 0, ai = 0;
-    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; }
+    int decks = 0, ai = 0, names = 0;
+    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; names += g_edit[d].name_set != 0; }
     base = p;
     for (const char *q = p; *q; q++) if (*q == '/' || *q == '\\') base = q + 1;
     if (msg && cap)
-        snprintf(msg, cap, "Exported %d deck%s and %d AI profile%s as %.40s",
-                 decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", base);
+        snprintf(msg, cap, "Exported %d deck%s, %d AI profile%s and %d name%s as %.40s",
+                 decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s", base);
     return 1;
 }
 
@@ -739,16 +898,26 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
         if (msg && cap) snprintf(msg, cap, "Could not read that file");
         return 0;
     }
-    for (int d = 0; d < NDUEL; d++) g_edit[d].installed = 0;
+    /* The file REPLACES the edits, so a deck that was installed before the
+     * import and is not in the file must come off the disc too: the sector
+     * store keeps an override until it is cleared, and read_ini() only
+     * forgets the flag. (Found in the 2026-09-06 double-check: an import
+     * without Simon's section left Simon's edited pool in play.) */
+    for (int d = 0; d < NDUEL; d++) {
+        g_edit[d].installed = 0;
+        if (g_edit[d].deck_set) continue;
+        for (uint32_t sct = 0; sct < REC_SECTORS; sct++)
+            psx_mod_cd_override_clear(REC_LBA(d + 1) + sct);
+    }
     g_gen++;
     /* An import sticks, the way every other manager's does. */
     const int kept = psx_cpu_save();
-    int decks = 0, ai = 0;
-    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; }
+    int decks = 0, ai = 0, names = 0;
+    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; names += g_edit[d].name_set != 0; }
     if (msg && cap) {
         if (!kept) snprintf(msg, cap, "Imported, but %s could not be written", INI_NAME);
-        else snprintf(msg, cap, "Imported %d deck%s and %d AI profile%s, and kept them",
-                      decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s");
+        else snprintf(msg, cap, "Imported %d deck%s, %d AI profile%s and %d name%s, and kept them",
+                      decks, decks == 1 ? "" : "s", ai, ai == 1 ? "" : "s", names, names == 1 ? "" : "s");
     }
     return 1;
 }
@@ -766,6 +935,7 @@ static void tick(void)
     if (!psx_mod_game_started()) return;
     psx_cpu_ensure_loaded();
     ai_snapshot();
+    names_apply();        /* every frame: the table comes back stock with the EXE data */
     if (g_gen == seen_gen && g_ai_stock_ready == seen_ai_ready) return;
     seen_gen = g_gen;
     seen_ai_ready = g_ai_stock_ready;
@@ -787,26 +957,28 @@ int psx_cpu_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 256u) return 0;
     psx_cpu_ensure_loaded();
-    int decks = 0, ai = 0, portraits = 0;
+    int decks = 0, ai = 0, portraits = 0, names = 0;
     for (int d = 0; d < NDUEL; d++) {
         decks += g_edit[d].deck_set != 0;
         ai += g_edit[d].ai_set != 0;
         portraits += g_edit[d].portrait_set != 0;
+        names += g_edit[d].name_set != 0;
     }
     unsigned n = (unsigned)snprintf(out, cap,
-        "\"decks\":%d,\"ai\":%d,\"portraits\":%d,\"dirty\":%d,\"gen\":%u,\"installs\":%d,\"refused\":%d,"
-        "\"ai_ready\":%d,\"save_live\":%d,\"status\":\"%s\",\"duelists\":[",
-        decks, ai, portraits, g_dirty, g_gen, g_installs, g_refused, g_ai_stock_ready,
-        psx_ygo_save_is_live(), g_status);
+        "\"decks\":%d,\"ai\":%d,\"portraits\":%d,\"names\":%d,\"dirty\":%d,\"gen\":%u,\"installs\":%d,\"refused\":%d,"
+        "\"ai_ready\":%d,\"names_ready\":%d,\"name_arena\":\"%08X\",\"save_live\":%d,\"status\":\"%s\",\"duelists\":[",
+        decks, ai, portraits, names, g_dirty, g_gen, g_installs, g_refused, g_ai_stock_ready,
+        g_name_stock_ready, NAME_ARENA, psx_ygo_save_is_live(), g_status);
     int first = 1;
-    for (int d = 0; d < NDUEL && n + 220u < cap; d++) {
-        if (!g_edit[d].deck_set && !g_edit[d].ai_set) continue;
+    for (int d = 0; d < NDUEL && n + 260u < cap; d++) {
+        if (!g_edit[d].deck_set && !g_edit[d].ai_set && !g_edit[d].name_set) continue;
         uint8_t live[PSX_CPU_AI_BYTES] = {0};
         psx_cpu_ai_live(d, live);
         n += (unsigned)snprintf(out + n, cap - n,
-            "%s{\"d\":%d,\"id\":%d,\"name\":\"%s\",\"deck\":%d,\"installed\":%d,\"ai_set\":%d,"
+            "%s{\"d\":%d,\"id\":%d,\"name\":\"%s\",\"shown\":\"%s\",\"nameoff\":%u,\"deck\":%d,\"installed\":%d,\"ai_set\":%d,"
             "\"live\":[%d,%d,%d,%d,%d,%d,%d,%d,%d]}",
-            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name,
+            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name, psx_cpu_display_name(d),
+            psx_mod_game_started() ? psx_mod_read_half(nameoff_addr(d)) : 0u,
             g_edit[d].deck_set, g_edit[d].installed, g_edit[d].ai_set,
             live[0], live[1], live[2], live[3], live[4], live[5], live[6], live[7], live[8]);
         first = 0;
