@@ -477,8 +477,15 @@ def card_text(sentences, width=20, lines=6):
     return '|'.join(wrap_lines(sentences, width)[:lines])
 
 
+PREFIX = 'Effect:'   # every changed card's text opens with this, so a player can tell at a glance
+
+
+def with_prefix(sentences):
+    return [PREFIX] + list(sentences) if sentences and sentences[0] != PREFIX else list(sentences)
+
+
 def fits(sentences, width=20, lines=6):
-    return len(wrap_lines(sentences, width)) <= lines
+    return len(wrap_lines(with_prefix(sentences), width)) <= lines
 
 
 def settle(items):
@@ -612,7 +619,7 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
             said.append('Equip: +%d ATK and DEF.' % bonus)
             stats['equips'] += 1
         if said:
-            lines.append('description = %s' % card_text(said))
+            lines.append('description = %s' % card_text(with_prefix(said)))
         out[c] = lines
     return out, stats, new_atk
 
