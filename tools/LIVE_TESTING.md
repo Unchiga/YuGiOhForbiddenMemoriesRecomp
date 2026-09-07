@@ -370,7 +370,22 @@ Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 0x8009B1D5, terrain 0x8009B364, deck written at the grid: 0x801D0200.
 
-## 13. Measuring what a scene costs
+## 13. MOD packages
+
+`{"cmd":"mod_package","export":path}` writes the bundle (extension added
+when missing), `{"import":path}` loads it, `{"inspect":path}` lists what a
+file holds, and `{}` reports the default path and how many menu rows exist.
+The MODS rows do the same through a file dialog. Entries are the managers'
+own files flattened (cards/<id>/*, drop_table_edits.ini, cpu-duelists.ini,
+duelists/<id>/portrait.png, fusion-edits.txt, dialogue.txt,
+drop_missing_cards.ini, card_shop.ini) plus mod_settings.ini and a
+manifest. `{"cmd":"video_menu","menu":6}` lists MODS' registered rows in
+display order (Import above Export, pinned last). Verified 2026-09-06: an
+export of this box's state round-tripped, a package with fill_library = 1
+switched the row and menu_settings.ini, and a package with a translation
+brought dialogue/dialogue.txt back after a clear.
+
+## 14. Measuring what a scene costs
 
 `frame_perf` reports GPU timer spans, and a span runs from a frame's first GPU
 command to its last: on a paced 60 Hz run it reads ~15 ms whatever is drawn
@@ -389,7 +404,7 @@ frame counter runs and the log is quiet. A player has to reset from there.
 Slot files for a player's state go in the openbios/ folder beside yours;
 slots are 0..11.
 
-## 14. Stopping
+## 15. Stopping
 
 ```sh
 kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)

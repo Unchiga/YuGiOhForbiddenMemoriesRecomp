@@ -35,6 +35,7 @@
 #include "psx_video_menu.h"
 #include "psx_cpu_data.h"
 #include "psx_cpu_manager.h"
+#include "psx_mod_package.h"
 #include "psx_story_rewards.h"
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
@@ -666,8 +667,44 @@ static void handle_video_menu(int id, const char *json)
     if (json_get_int(json, "collapse", 0)) psx_video_menu_collapse();
     if (json_get_int(json, "quiet", 0)) psx_video_menu_quiet();      /* what a window change does */
     if (json_get_int(json, "hide", 0)) psx_video_menu_hide();
-    send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d}",
-             id, psx_video_menu_is_visible(), psx_video_menu_is_open());
+    const int menu = json_get_int(json, "menu", -1);
+    char rows[1024] = "";
+    if (menu >= 0) {   /* the registered rows of that menu, in display order */
+        unsigned n = (unsigned)snprintf(rows, sizeof rows, ",\"rows\":[");
+        const char *label;
+        for (int i = 0; psx_video_menu_menu_row_label(menu, i, &label) && n + 80u < sizeof rows; i++)
+            n += (unsigned)snprintf(rows + n, sizeof rows - n, "%s\"%.60s\"", i ? "," : "", label);
+        snprintf(rows + n, sizeof rows - n, "]");
+    }
+    send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d%s}",
+             id, psx_video_menu_is_visible(), psx_video_menu_is_open(), rows);
+}
+
+/* mod_package — the one-file bundle: {"export":path} writes it, {"import":path}
+ * loads it through every manager's own import, {"inspect":path} says what a
+ * file holds, and no argument reports the rows' last message, the default
+ * path and how many menu rows exist (the menu holds VM_REG_MAX). */
+static void handle_mod_package(int id, const char *json)
+{
+    char path[1024], msg[512];
+    if (json_get_str(json, "export", path, sizeof path)) {
+        const int ok = psx_mod_package_export(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
+    if (json_get_str(json, "import", path, sizeof path)) {
+        const int ok = psx_mod_package_import(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
+    if (json_get_str(json, "inspect", path, sizeof path)) {
+        const int ok = psx_mod_package_inspect(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
+    psx_mod_package_default_path(path, sizeof path);
+    send_fmt("{\"id\":%d,\"ok\":true,\"last\":\"%s\",\"default_path\":\"%s\",\"rows\":%d}",
+             id, psx_mod_package_last_message(), path, psx_video_menu_row_count());
 }
 
 /* cpu_data — the CPU duelists' decks, AI profiles, names and records.
@@ -1180,6 +1217,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("fill_library",      handle_fill_library);
     (void)psx_debug_add_command("story_rewards",     handle_story_rewards);
     (void)psx_debug_add_command("cpu_data",          handle_cpu_data);
+    (void)psx_debug_add_command("mod_package",       handle_mod_package);
     (void)psx_debug_add_command("cpu_manager",       handle_cpu_manager);
     (void)psx_debug_add_command("video_menu",        handle_video_menu);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);

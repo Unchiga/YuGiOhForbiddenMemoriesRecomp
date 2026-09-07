@@ -461,6 +461,13 @@ static void shop_cfg_load(void) {
     fclose(f);
 }
 
+/* The ini was replaced from outside (a MOD package import): read it again. */
+void psx_card_shop_reload_config(void)
+{
+    s_cfg_loaded = 0;
+    shop_cfg_load();
+}
+
 /* A card's configured placement mask, 0 if the file does not mention it. */
 static int cfg_mask_for(const char *nm) {
     for (int i = 0; i < s_cfg_forced_n; i++)

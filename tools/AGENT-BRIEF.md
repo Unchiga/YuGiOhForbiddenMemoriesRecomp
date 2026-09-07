@@ -101,6 +101,10 @@ Windows (all under VIEW): Card Manager, Drop Table Manager, Fusion Manager,
 Dialogue Manager, CPU Manager. Mods (under MODS): card drops, drop missing
 cards, card shop, library placeholders, fusion hint, and the scripted story
 drops that live in the Drop Table Manager rather than a row of their own.
+At the bottom of MODS, Import / Export MOD package (`src/psx_mod_package.c`)
+bundles every manager's share file and every mod setting into one .ygomods;
+it never parses a manager's format itself, it re-packs and calls that
+manager's own import.
 
 Everything a manager edits is a hand-editable file beside the player's saves,
 every manager's Import keeps what it imported, and no manager writes to the

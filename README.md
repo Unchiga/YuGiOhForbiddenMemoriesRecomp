@@ -442,6 +442,22 @@ legendary_atk = 2500   ; a monster lands in the highest band its ATK reaches
 Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 ```
 
+### MOD packages (`MODS → IMPORT MOD PACKAGE…` / `EXPORT MOD PACKAGE…`)
+
+One file with everything. `Export MOD package…` writes a `.ygomods` file (a
+zip, like `.ygocards`) holding every manager's edits and every mod setting:
+the edited cards and their pictures, the drop tables and scripted story
+drops, the CPU duelists' decks, AI, names and portraits, the fusion edits,
+the dialogue translation, the drop-missing-cards placements, the card shop's
+configuration, and a `mod_settings.ini` with the value of every `MODS`,
+`CHEATS` and `VIEW` mod row. Whatever you have not touched is left out.
+
+`Import MOD package…` hands each part to the manager that owns it, through
+that manager's own import, so each part replaces yours the way that
+manager's Import does and is kept straight away; the settings rows are set
+as if you had clicked them. A part the file does not carry leaves that
+manager alone. The default folder is `mod_packages` beside your saves.
+
 ### Widescreen (`VIEW → WIDESCREEN`, experimental)
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).

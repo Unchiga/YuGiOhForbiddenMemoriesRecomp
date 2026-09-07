@@ -38,6 +38,8 @@ int psx_drop_missing_enabled(void);
 /* Load the ini placements if that has not happened yet. The tick does this
  * itself; the viewer needs it because it can be opened before the first duel. */
 void psx_drop_missing_ensure_loaded(void);
+/* Re-read drop_missing_cards.ini after it was replaced (a MOD package import). */
+void psx_drop_missing_reload(void);
 
 /* Apply this mod's placements to one duelist's tier, in place, over a plain
  * 722-entry weight array. Exposed so the viewer can show the table a player

@@ -20,6 +20,8 @@ void psx_card_shop_tick(void);
 
 /* MODS-menu row registration (called from the cheats/menu install path). */
 void psx_card_shop_register_menu(void);
+/* Re-read card_shop.ini after it was replaced (a MOD package import). */
+void psx_card_shop_reload_config(void);
 
 /* Debug server read-back. */
 int  psx_card_shop_state_json(char *out, unsigned cap);

@@ -359,6 +359,13 @@ static void ensure_loaded(void)
  * otherwise. */
 void psx_drop_missing_ensure_loaded(void) { ensure_loaded(); }
 
+/* The ini was replaced from outside (a MOD package import): read it again. */
+void psx_drop_missing_reload(void)
+{
+    g_loaded = 0;
+    ensure_loaded();
+}
+
 void psx_drop_missing_tick(void)
 {
     if (!psx_mod_game_started()) return;
