@@ -1837,8 +1837,8 @@ static void draw_editor(void)
         const int iw = right - L->info_x;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_art ? "Face art: yours" : "Face art: stock", s_edit.has_art ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_thumb ? "Duel thumbnail: yours" : "Duel thumbnail: stock", s_edit.has_thumb ? COL_EDITED : COL_DIM, fs); y += lh;
-        psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours" : "Title strip: from the name", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
-        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colors. The duel thumbnail is 40x32 in 64 colors and is made from the face unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
+        psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours (96x14)" : "Title strip: from the name (96x14)", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
+        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colors. The duel thumbnail is 40x32 in 64 colors and is made from the face unless you pick one. The title strip is the 96x14 name banner and is drawn from the name unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
     }
     }
     /* fields */

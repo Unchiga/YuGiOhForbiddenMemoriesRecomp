@@ -280,6 +280,18 @@ psx_card_effects_equip_fits(). Check in a duel with the randomizer loaded:
 `screenshot_present` shows the overlay (Mushroom Man + Mystical Elf -> Garvas
 under seed 2026).
 
+The mid-duel freeze, 2026-09-07: a reporter's freeze_report.txt named a
+savestate (openbios/state_800129D8_slot10.pst) that loads with
+`{"cmd":"savestate","op":"load","slot":10}` and reproduces the stuck duel
+(busy 0x00800190, four cards selected, effect index 2). `cdrom_state` on it
+showed the drive idle with a Pause (0x09) whose completion had been raised
+and acknowledged before it was presented, and clearing the wait bit only
+made the guest re-issue the script and stall on the gate. The already-paused
+Pause completion came 5000 cycles after the ack, the same number as the
+INT presentation delay, so INT2 landed at the instant INT3 was presented;
+psxrecomp/runtime/src/cdrom.c now gives it 131072 cycles like Init. Watch
+`cdrom_state`'s int_lost_unseen / int_clobbered [2] in effect-heavy duels.
+
 ## 7b. MOD package round trip (run before every release)
 
 `python3 tools/package_roundtrip.py --keep tools/fixtures/full-coverage-<date>.ygomods`
