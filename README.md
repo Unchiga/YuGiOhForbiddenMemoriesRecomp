@@ -183,6 +183,39 @@ Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
 everything here, **never shipped**. The manager reads them off your own disc.
 
+### CPU Manager (`VIEW → CPU MANAGER`)
+
+> **Experimental, expect bugs.** The newest window here.
+
+Every opponent, and the four things that make them: their portrait, their
+`WIN`/`LOSS` record, the pool their deck is drawn from, and the nine bytes the
+duel AI reads about them.
+
+**Decks.** A duelist does not have a deck, they have a **pool** of 722 weights
+out of 2048, and forty cards are drawn from it before each duel. `Decks` lists
+that pool heaviest first; click a weight to type a new one and the rest is
+rescaled so the total stays 2048, exactly as the Drop Table Manager does it.
+Right-click a card to drop it from the pool. The game still deals **at most
+three copies of any one card**, so a big weight buys frequency, not a
+solitaire deck.
+
+**AI.** `gDuel_aOpponentData` gives each duelist nine bytes; the first is the
+AI's hand size (5 for the early duelists, 20 for the last), the rest are read
+by the AI's own scripts. `AI` shows them with the disc's value beside yours,
+and the window names only the one the decompilation names - the others are
+shown as themselves rather than guessed at. They rise with the campaign, so
+they are the difficulty knobs even where the names are not known.
+
+**Record.** The `WIN` and `LOSS` on the title line are the save's own, the
+ones `FREE DUEL` shows. Click either to type a new one.
+
+Deck and AI edits are kept in `cpu_manager.ini` (hand-editable) and applied
+the moment they change: the AI table is written in memory and the deck goes
+back to the game through a sector override of that duelist's disc record, so
+the game loads your pool with its own loader. Nothing on your disc is
+touched. `Defaults` puts one duelist back, `Import…`/`Export…` share the lot,
+and an import is kept straight away.
+
 ### Card Manager (`VIEW → CARD MANAGER`)
 
 > **Experimental, expect bugs.** Much newer than the rest of this list. It

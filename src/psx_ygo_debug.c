@@ -32,6 +32,8 @@
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
 #include "psx_fill_library.h"
+#include "psx_cpu_data.h"
+#include "psx_cpu_manager.h"
 #include "psx_story_rewards.h"
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
@@ -622,6 +624,97 @@ static void handle_card_manager_shot(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
+/* cpu_manager — the window: open/close (open:1/0), view (0 decks, 1 AI),
+ * duelist, search, synthetic click/move/press/release/key/text and a canvas
+ * dump (shot). The reply is its state with the geometry a script clicks by. */
+static void handle_cpu_manager(int id, const char *json)
+{
+    char s[64], path[1024];
+    const int open = json_get_int(json, "open", -1);
+    if (open >= 0) psx_cpu_manager_request_open(open);
+    const char *search = json_get_str(json, "search", s, sizeof s);
+    if (json_get_int(json, "view", -1) >= 0 || json_get_int(json, "duelist", -1) >= 0 || search)
+        psx_cpu_manager_set(json_get_int(json, "view", -1), json_get_int(json, "duelist", -1), search);
+    const int x = json_get_int(json, "x", -1), y = json_get_int(json, "y", -1);
+    if (x >= 0 && y >= 0) {
+        const int btn = json_get_int(json, "button", 0);
+        const int ok = json_get_int(json, "move", 0)    ? psx_cpu_manager_move(x, y)
+                     : json_get_int(json, "press", 0)   ? psx_cpu_manager_press(x, y, btn)
+                     : json_get_int(json, "release", 0) ? psx_cpu_manager_release(x, y, btn)
+                                                        : psx_cpu_manager_click(x, y, btn);
+        if (!ok) { send_err(id, "window is closed"); return; }
+    }
+    const int k = json_get_int(json, "keycode", 0);
+    if (k && !psx_cpu_manager_key(k)) { send_err(id, "window is closed"); return; }
+    if (json_get_str(json, "text", s, sizeof s) && !psx_cpu_manager_text(s)) { send_err(id, "window is closed"); return; }
+    if (json_get_str(json, "shot", path, sizeof path) && !psx_cpu_manager_shot(path)) { send_err(id, "window is closed"); return; }
+    char buf[3072];
+    if (!psx_cpu_manager_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* cpu_data — the CPU duelists' decks, AI profiles and records.
+ * {"duelist":0-38} with "card"+"weight" edits a deck entry, "ai_field"+
+ * "ai_value" one AI byte (-1 clears the profile), "wins"/"losses" the save's
+ * record, "clear_deck":1 puts the deck back; {"save":1} writes the ini,
+ * {"export"/"import":path} the share pair. "deck":1 lists the pool. */
+static void handle_cpu_data(int id, const char *json)
+{
+    char path[1024], msg[256];
+    if (json_get_str(json, "import", path, sizeof path)) {
+        const int ok = psx_cpu_import_file(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
+    if (json_get_str(json, "export", path, sizeof path)) {
+        const int ok = psx_cpu_export_file(path, msg, sizeof msg);
+        send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+        return;
+    }
+    const int d = json_get_int(json, "duelist", -1);
+    if (d >= 0) {
+        const int card = json_get_int(json, "card", -1);
+        const int weight = json_get_int(json, "weight", -1);
+        if (card >= 1 && weight >= 0 && !psx_cpu_deck_set(d, card, weight)) {
+            send_err(id, "that weight cannot be balanced into 2048"); return;
+        }
+        if (json_get_int(json, "clear_deck", 0)) psx_cpu_deck_clear(d);
+        {
+            const int f = json_get_int(json, "ai_field", -1);
+            const int v = json_get_int(json, "ai_value", -1000);
+            if (f >= 0 && v > -1000) psx_cpu_ai_set(d, f, v);
+            if (json_get_int(json, "clear_ai", 0)) psx_cpu_ai_clear(d);
+        }
+        {
+            const int w = json_get_int(json, "wins", -1), l = json_get_int(json, "losses", -1);
+            if (w >= 0 || l >= 0) {
+                int cw = 0, cl = 0;
+                psx_cpu_record(d, &cw, &cl);
+                psx_cpu_record_set(d, w >= 0 ? w : cw, l >= 0 ? l : cl);
+            }
+        }
+        if (json_get_int(json, "deck", 0)) {
+            /* the pool itself, which does not fit the state json */
+            enum { CAP = 24u * 1024u };
+            char *big = (char *)malloc(CAP);
+            if (!big) { send_err(id, "oom"); return; }
+            uint16_t cards[722], weights[722];
+            const int n = psx_cpu_deck_list(d, cards, weights, 722);
+            unsigned p = (unsigned)snprintf(big, CAP, "\"duelist\":%d,\"cards\":%d,\"pool\":[", d, n);
+            for (int i = 0; i < n && p + 32u < CAP; i++)
+                p += (unsigned)snprintf(big + p, CAP - p, "%s[%u,%u]", i ? "," : "", cards[i], weights[i]);
+            snprintf(big + p, CAP - p, "]");
+            send_fmt("{\"id\":%d,\"ok\":true,%s}", id, big);
+            free(big);
+            return;
+        }
+    }
+    if (json_get_int(json, "save", 0) && !psx_cpu_save()) { send_err(id, "could not write cpu_manager.ini"); return; }
+    char buf[4096];
+    if (!psx_cpu_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
 /* story_rewards — the scripted card per duelist. {"duelist":0-38,"card":id}
  * sets one (card 0 clears, "every":1 repeats it on later campaign wins),
  * {"save":1} writes drop_table_edits.ini. The reply is the whole set plus
@@ -1058,6 +1151,8 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_missing_state", handle_drop_missing_state);
     (void)psx_debug_add_command("fill_library",      handle_fill_library);
     (void)psx_debug_add_command("story_rewards",     handle_story_rewards);
+    (void)psx_debug_add_command("cpu_data",          handle_cpu_data);
+    (void)psx_debug_add_command("cpu_manager",       handle_cpu_manager);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);

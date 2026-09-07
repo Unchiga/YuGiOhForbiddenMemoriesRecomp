@@ -244,7 +244,40 @@ life points (0x800EA024, player at 0x800EA004) does NOT end it, the game only
 checks on damage. Ask the player to fight one, and watch with a one-second
 poll of the bytes above plus the trunk byte (0x801D024F + card id).
 
-## 9. File dialogs
+## 9. The CPU Manager from a script
+
+`cpu_data` is the data layer, `cpu_manager` the window (`open`, `view` 0 decks
+/ 1 AI, `duelist`, `search`, synthetic click/move/press/release/key/text,
+`shot`, and a `geom` with the rects to click).
+
+```python
+dbg.q({'cmd':'cpu_data','duelist':2,'deck':1})            # Jono's pool
+dbg.q({'cmd':'cpu_data','duelist':2,'card':1,'weight':1984})
+dbg.q({'cmd':'cpu_data','duelist':2,'ai_field':0,'ai_value':16})
+dbg.q({'cmd':'cpu_data','duelist':2,'wins':12,'losses':4})
+dbg.q({'cmd':'cpu_data','save':1})                        # cpu_manager.ini
+```
+
+What the numbers are, all measured 2026-09-06:
+
+| | |
+| --- | --- |
+| duelist record | 6144 bytes, 3 sectors at WA_MRG sector 0x1D33 + 3*id, and WA_MRG starts at sector 10102 (live_probe's `WA`), so the absolute LBA is 17577 + 3*id |
+| inside it | deck pool at +0, then the three drop pools at +1460, +2920, +4380, each 722 u16 summing to 2048 |
+| AI profile | `gDuel_aOpponentData` 0x800917F0, 9 bytes per opponent id, EXE data (resident from boot, never reloaded) |
+| record | `gFreeDuel_aDuelistRecords` 0x801D071C, {u16 win, u16 loss} from +4 |
+| opponent's dealt deck | 0x80178038, 40 u16, readable once the duel is up |
+
+The deck override is verified by the module before it writes: it reads the
+stock sectors and refuses unless the three drop pools in them match the baked
+drop database. A wrong LBA therefore reports `refused` rather than corrupting
+a record - which is how the first LBA (missing WA_MRG's own base) was caught.
+
+The game deals AT MOST THREE copies of a card: a pool with one card at 1984 of
+2048 still dealt exactly three of it, the other 37 slots coming from the
+rescaled remainder.
+
+## 10. File dialogs
 
 Export/Import open an SDL3 save/open dialog, which goes through the KDE
 portal here. Nothing scripted can fill it in through the debug server. Options:
@@ -262,7 +295,7 @@ portal here. Nothing scripted can fill it in through the debug server. Options:
 The KDE dialog has once come up with an empty name field (only `.ygocards`);
 the manager fills in `edited-cards.ygocards` when that happens.
 
-## 10. In-game places where an edited card is visible
+## 11. In-game places where an edited card is visible
 
 - LIBRARY: art, title strip, level (stars), attribute orb, guardian stars,
   ATK/DEF, type, description, frame color (card view and grid tile).
@@ -277,7 +310,7 @@ description, ATK/DEF, both guardian stars, type, level, attribute, frame
 color (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
 title strip derived from the name, price and password on the PASSWORD screen.
 
-## 11. Reading duel results
+## 12. Reading duel results
 
 Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 5..9, magic 10..14; opponent +15): +0xC id, +0xE ATK, +0x10 DEF, +0x12 modifier,
@@ -285,7 +318,7 @@ Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 0x8009B1D5, terrain 0x8009B364, deck written at the grid: 0x801D0200.
 
-## 12. Stopping
+## 13. Stopping
 
 ```sh
 kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)

@@ -30,6 +30,11 @@ typedef struct {
     const char          *name;
     const PsxDropWeight *tier[PSX_DROP_DB_TIERS];  /* S/A POW, B/C/D, S/A TEC */
     uint16_t             count[PSX_DROP_DB_TIERS];
+    /* The DECK pool: the same shape, one array earlier in the duelist's disc
+     * record, and the pool the game draws the opponent's 40 cards from. Also
+     * sums to 2048. See the CPU Manager (psx_cpu_manager.c). */
+    const PsxDropWeight *deck;
+    uint16_t             deck_n;
 } PsxDropDbDuelist;
 
 extern const PsxDropDbDuelist PSX_DROP_DB[PSX_DROP_DB_DUELISTS];

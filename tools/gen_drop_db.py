@@ -65,8 +65,9 @@ ROSTER = [
 
 
 def load_tables(disc_path):
-    """[duelist][tier] -> tuple of 722 weights."""
+    """([duelist][tier] -> 722 weights, [duelist] -> 722 deck weights)."""
     tables = []
+    decks = []
     with open_disc(disc_path) as disc:
         print('gen_drop_db: reading %s (%s)' % (disc.path, disc.layout))
         for d in range(DUELISTS):
@@ -83,10 +84,21 @@ def load_tables(disc_path):
                         % (d, ROSTER[d], t, total, TIER_TOTAL))
                 tiers.append(w)
             tables.append(tiers)
-    return tables
+            # The deck pool sits one array BEFORE the first drop tier in the
+            # same record, same shape, and also sums to 2048 -- asserted here
+            # for all 39 the way the drop tiers are.
+            raw = disc.read(DROP0 + rec * REC - TIER, CARDS * 2)
+            deck = struct.unpack('<%dH' % CARDS, raw)
+            if sum(deck) != TIER_TOTAL:
+                raise SystemExit(
+                    'duelist %d (%s) deck pool sums to %d, not %d — not the '
+                    'expected disc layout, so nothing was written'
+                    % (d, ROSTER[d], sum(deck), TIER_TOTAL))
+            decks.append(deck)
+    return tables, decks
 
 
-def emit(tables, out_dir):
+def emit(tables, decks, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, 'psx_drop_db.c')
     L = []
@@ -102,9 +114,11 @@ def emit(tables, out_dir):
     L.append('')
 
     for d in range(DUELISTS):
-        for t in range(TIERS):
-            pairs = [(c + 1, w) for c, w in enumerate(tables[d][t]) if w]
-            L.append('static const PsxDropWeight DB_D%02d_T%d[] = {' % (d, t))
+        for t in range(TIERS + 1):
+            src = decks[d] if t == TIERS else tables[d][t]
+            pairs = [(c + 1, w) for c, w in enumerate(src) if w]
+            L.append('static const PsxDropWeight DB_D%02d_%s[] = {'
+                     % (d, 'DECK' if t == TIERS else 'T%d' % t))
             line = '   '
             for c, w in pairs:
                 item = ' {%3d,%4d},' % (c, w)
@@ -119,10 +133,12 @@ def emit(tables, out_dir):
     L.append('const PsxDropDbDuelist PSX_DROP_DB[PSX_DROP_DB_DUELISTS] = {')
     for d in range(DUELISTS):
         counts = [sum(1 for w in tables[d][t] if w) for t in range(TIERS)]
+        deck_n = sum(1 for w in decks[d] if w)
         L.append('    { "%s",' % ROSTER[d])
         L.append('      { DB_D%02d_T0, DB_D%02d_T1, DB_D%02d_T2 },'
                  % (d, d, d))
-        L.append('      { %d, %d, %d } },' % tuple(counts))
+        L.append('      { %d, %d, %d },' % tuple(counts))
+        L.append('      DB_D%02d_DECK, %d },' % (d, deck_n))
     L.append('};')
     L.append('')
     L.append('const char *const PSX_DROP_TIER_NAMES[PSX_DROP_DB_TIERS] = {')
@@ -140,12 +156,12 @@ def main():
     disc, out_dir = sys.argv[1], sys.argv[2]
     if not os.path.isfile(disc):
         raise SystemExit('no disc image at %s' % disc)
-    tables = load_tables(disc)
+    tables, decks = load_tables(disc)
     if '--check' in sys.argv:
-        print('gen_drop_db: %d duelists, all %d tiers sum to %d'
-              % (DUELISTS, DUELISTS * TIERS, TIER_TOTAL))
+        print('gen_drop_db: %d duelists, all %d tiers and %d deck pools sum to %d'
+              % (DUELISTS, DUELISTS * TIERS, DUELISTS, TIER_TOTAL))
         return
-    path = emit(tables, out_dir)
+    path = emit(tables, decks, out_dir)
     nz = sum(sum(1 for w in tables[d][t] if w)
              for d in range(DUELISTS) for t in range(TIERS))
     print('gen_drop_db: wrote %s (%d duelists, %d non-zero weights)'
