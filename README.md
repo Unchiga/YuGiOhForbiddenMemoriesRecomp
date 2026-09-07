@@ -490,8 +490,10 @@ compares every part, then imports the packages earlier versions wrote
 
 `python3 tools/randomizer.py --seed 2026` builds a whole-game randomizer as one
 `.ygomods` file, from this disc's own data (it needs the debug build running
-past the boot screen, see `tools/LIVE_TESTING.md`). Every monster's ATK, DEF,
-level, attribute and guardian stars are rolled, every card gets a random frame
+past the boot screen, see `tools/LIVE_TESTING.md`). Every monster's ATK and
+DEF are rolled outright from 0 to 4500 (a card the game can deal into a new
+game's first deck stays under 3000), its level, type, attribute and guardian
+stars are rolled, every card gets a random frame
 color, name color, price and password, a set of monsters gets battle rules,
 immunities and cast effects, a set of Magic cards gets a different effect, every
 equip card fits a random set of monsters (as many as in stock), and

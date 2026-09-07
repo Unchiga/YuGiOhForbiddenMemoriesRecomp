@@ -13,9 +13,12 @@ baked drop database (build/game-assets/psx_drop_db.c).
 
 What the package does, all from stock and all seeded:
 
-  cards        every monster's ATK and DEF move to 60..140 % of stock (steps
-               of 10, at most 5000), its level follows the new numbers, and
-               its attribute and both guardian stars are rolled; every card
+  cards        every monster's ATK and DEF are rolled outright, 0 to 4500 in
+               steps of 10 (a card the game can deal into a NEW GAME's first
+               deck stays at 2900 or under, so no start opens with a 3000+
+               card), its level follows the new numbers, and its type (any
+               of the twenty monster types), attribute and both guardian
+               stars are rolled; every card
                gets a random frame color, name color, price and password; a
                set of monsters gets battle rules, immunities and cast
                effects; a set of Magic cards gets a different effect. Every
@@ -60,8 +63,17 @@ NCARDS, TOTAL, NDUEL = 722, 2048, 39
 TYPE_MAGIC, TYPE_TRAP, TYPE_RITUAL, TYPE_EQUIP = 20, 21, 22, 23
 COLORS = ['yellow', 'green', 'pink', 'blue', 'purple', 'orange']
 ATTRS = ['Light', 'Dark', 'Earth', 'Water', 'Fire', 'Wind']
+TYPES = ['Dragon', 'Spellcaster', 'Zombie', 'Warrior', 'Beast-Warrior', 'Beast', 'Winged Beast', 'Fiend',
+         'Fairy', 'Insect', 'Dinosaur', 'Reptile', 'Fish', 'Sea Serpent', 'Machine', 'Thunder', 'Aqua',
+         'Pyro', 'Rock', 'Plant']
 STARS = ['Mars', 'Jupiter', 'Saturn', 'Uranus', 'Pluto', 'Neptune', 'Mercury', 'Sun', 'Moon', 'Venus']
 NAME_COLORS = ['white', 'yellow', 'blue', 'green', 'grey', 'orange', 'red']
+# Every card the game can deal into a NEW GAME's first deck: the seven starter
+# sets in the name-entry module (WA_MRG.MRG at 0xF92BD4, 7 x {u16 draws, u16
+# weight[722]}), any card with a weight in any set. Their ATK and DEF are
+# capped so a fresh game never opens with a card over 3000.
+STARTER_POOL = set([3, 5, 8, 9, 10, 23, 24, 25, 29, 30, 34, 40, 47, 48, 50, 53, 58, 59, 61, 65, 75, 76, 80, 100, 101, 102, 104, 105, 107, 108, 109, 110, 112, 113, 114, 115, 116, 118, 119, 120, 121, 122, 123, 129, 130, 132, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 164, 165, 167, 169, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 187, 188, 189, 190, 191, 192, 195, 196, 197, 198, 199, 200, 201, 202, 203, 205, 206, 207, 208, 209, 210, 211, 212, 214, 215, 218, 219, 220, 221, 222, 224, 225, 226, 227, 228, 229, 231, 232, 233, 234, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 250, 251, 253, 254, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 276, 277, 279, 280, 282, 283, 285, 289, 290, 291, 292, 293, 294, 295, 296, 298, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 319, 321, 322, 323, 324, 326, 327, 328, 330, 331, 332, 333, 334, 335, 336, 337, 381, 387, 393, 394, 395, 397, 398, 399, 402, 406, 410, 411, 414, 417, 420, 421, 422, 430, 431, 432, 435, 436, 444, 445, 446, 450, 451, 452, 455, 457, 461, 463, 469, 474, 475, 476, 477, 478, 480, 481, 484, 485, 486, 488, 489, 490, 492, 496, 501, 502, 503, 504, 505, 506, 510, 514, 516, 524, 527, 530, 534, 536, 537, 538, 539, 540, 543, 544, 546, 547, 548, 549, 550, 552, 553, 556, 558, 559, 560, 561, 563, 566, 567, 568, 569, 570, 573, 574, 576, 579, 580, 581, 583, 584, 585, 586, 588, 589, 590, 591, 592, 598, 599, 600, 601, 602, 604, 605, 606, 608, 609, 610, 611, 612, 615, 616, 620, 629, 634, 635, 642, 643, 644, 646, 647, 649, 652, 654, 659])
+STARTER_CAP, ATK_CAP = 2900, 4500
 
 
 # --- stock data -------------------------------------------------------------
@@ -437,12 +449,16 @@ def roll_cards(rng, cards, n_fx=160, n_battle=60, n_magic=40):
                  'price = %d' % price_roll(rng), 'password = %08d' % passwords[c - 1]]
         s = cards[c]
         if is_monster(cards, c):
-            atk = min(5000, max(0, int(round(s['atk'] * rng.uniform(0.6, 1.4) / 10)) * 10))
-            dfn = min(5000, max(0, int(round(s['dfn'] * rng.uniform(0.6, 1.4) / 10)) * 10))
+            # anything goes: Blue-eyes may come out at 200, Kuriboh at 4000.
+            # Only the cards a new game can deal stay under 3000.
+            cap = STARTER_CAP if c in STARTER_POOL else ATK_CAP
+            atk = rng.randrange(0, cap // 10 + 1) * 10
+            dfn = rng.randrange(0, cap // 10 + 1) * 10
             s1, s2 = rng.sample(STARS, 2)
             new_atk[c] = atk
             lines += ['attack = %d' % atk, 'defense = %d' % dfn, 'level = %d' % level_for(atk, dfn, rng),
-                      'attribute = %s' % rng.choice(ATTRS), 'star1 = %s' % s1, 'star2 = %s' % s2]
+                      'type = %s' % rng.choice(TYPES), 'attribute = %s' % rng.choice(ATTRS),
+                      'star1 = %s' % s1, 'star2 = %s' % s2]
             said = []
             if c in battle_cards:
                 rule, text = rng.choice(BATTLES)

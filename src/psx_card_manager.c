@@ -579,7 +579,13 @@ static int field_is_set(int f);
  * Ritual and Equip (20..23) have no ATK/DEF, stars, level or attribute
  * anywhere the game draws them, so those fields are monster-only. */
 static int effective_type(void) { return s_edit.type >= 0 ? s_edit.type : s_stock.type; }
-static int is_monster(void) { return effective_type() < 20; }
+/* While layout_compute measures the form, every card is measured as a
+ * monster: the monster form is the tallest, so the unit it settles on is the
+ * same whichever card is selected. Measuring the card's own form made the
+ * unit grow for a Magic card and the whole window re-flow on every
+ * selection (reported 2026-09-07). */
+static int s_measuring;
+static int is_monster(void) { return s_measuring || effective_type() < 20; }
 /* Cards the game's magic dispatcher knows: 301..350, 651..700, 721. */
 static int magic_dispatchable(int id) { return (id >= 301 && id <= 350) || (id >= 651 && id <= 700) || id == 721; }
 static int eff_effect(void) { return s_edit.effect >= 0 ? s_edit.effect : s_stock.effect; }
@@ -815,6 +821,7 @@ static void layout_compute(void)
 {
     const int tab = s_tab;
     s_u = s_u_base;
+    s_measuring = 1;
     for (int pass = 0; pass < 3; pass++) {
         int need = 0;
         for (int t = 0; t < 2; t++) {
@@ -830,6 +837,7 @@ static void layout_compute(void)
         if (u >= s_u) break;
         s_u = u;
     }
+    s_measuring = 0;
     layout_pass();
 }
 
