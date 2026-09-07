@@ -578,6 +578,20 @@ static unsigned char *read_file(const char *path, long *size)
 /* ---- PNG -> RGB at a fixed size --------------------------------------------
  * Box-filtered when shrinking, nearest when enlarging: card art is usually
  * a bigger scan, and averaging is what keeps it from sparkling. */
+static int load_png_rgb(const char *path, int W, int H, uint8_t *out);
+static void quantize(const uint8_t *rgb, int n, int ncol, uint8_t *idx_out, uint16_t *clut_out);
+
+int psx_card_packs_load_png_rgb(const char *path, int w, int h, uint8_t *rgb_out)
+{
+    return load_png_rgb(path, w, h, rgb_out);
+}
+
+void psx_card_packs_quantize(const uint8_t *rgb, int n_bytes, int ncolors,
+                             uint8_t *idx_out, uint16_t *clut_out)
+{
+    quantize(rgb, n_bytes, ncolors, idx_out, clut_out);
+}
+
 static int load_png_rgb(const char *path, int W, int H, uint8_t *out /* W*H*3 */)
 {
     long sz;

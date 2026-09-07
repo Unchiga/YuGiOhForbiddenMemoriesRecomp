@@ -679,6 +679,12 @@ static void handle_cpu_data(int id, const char *json)
             send_err(id, "that weight cannot be balanced into 2048"); return;
         }
         if (json_get_int(json, "clear_deck", 0)) psx_cpu_deck_clear(d);
+        if (json_get_str(json, "portrait", path, sizeof path)) {
+            const int ok = psx_cpu_portrait_set(d, path, msg, sizeof msg);
+            send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+            return;
+        }
+        if (json_get_int(json, "clear_portrait", 0)) psx_cpu_portrait_clear(d);
         {
             const int f = json_get_int(json, "ai_field", -1);
             const int v = json_get_int(json, "ai_value", -1000);

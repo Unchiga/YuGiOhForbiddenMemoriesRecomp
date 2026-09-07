@@ -277,6 +277,24 @@ The game deals AT MOST THREE copies of a card: a pool with one card at 1984 of
 2048 still dealt exactly three of it, the other 37 slots coming from the
 rescaled remainder.
 
+Portraits: forty 48x48 tiles at WA_MRG sector 0x1EAA (LBA 17952), 2432 bytes
+each -- 2304 six-bit indices then a 64-entry 15-bit CLUT with the STP bit set
+on every entry. `{"cmd":"cpu_data","duelist":N,"portrait":"file.png"}` replaces
+one (and `"clear_portrait":1` puts it back). The manager's own list reads the
+STOCK sectors, so a replacement is handed to it separately -- if the grid
+shows a new portrait and the window does not, that plumbing is what broke.
+
+Reading the AI: the handler table at gAiScript_apfnCommand (0x800916E0) is 67
+function pointers, one per opcode, and the symbols file names them. The duel's
+script is 0x1800 bytes at 0x801A8000, resident once a duel is up. Operand
+shapes come from the decompilation (count the AiScript_ReadByte /
+AiScript_ReadShort calls in each handler, IN ORDER -- Store reads a short then
+a byte, not the other way round), and for the seven handlers the decomp has
+not reached, from this build's own generated C by counting calls to
+0x8007058C / 0x800705AC inside the handler's address range. Field numbers in
+LoadOpponentData are INDIRECT (mem[] slots), so a read only means something
+once traced back to the Store that set the slot.
+
 ## 10. File dialogs
 
 Export/Import open an SDL3 save/open dialog, which goes through the KDE

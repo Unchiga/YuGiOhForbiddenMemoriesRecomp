@@ -36,6 +36,17 @@ const uint32_t *psx_duelist_portraits_get(int duelist);
 /* 1 once the tiles are decoded. */
 int psx_duelist_portraits_ready(void);
 
+/* Read the tiles again. The CPU Manager calls this when it has overridden a
+ * portrait's sectors, so the new art shows without a restart. */
+void psx_duelist_portraits_reload(void);
+
+/* A portrait the player replaced. The tiles here are decoded from the STOCK
+ * sectors -- that is the point of them, and a sector override is invisible to
+ * that read -- so the CPU Manager hands the replacement straight over, in the
+ * colours it quantised, which is what the game will draw. NULL puts the disc's
+ * own back. */
+void psx_duelist_portraits_override(int duelist, const uint32_t *argb48);
+
 #ifdef __cplusplus
 }
 #endif

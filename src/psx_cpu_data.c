@@ -23,12 +23,39 @@
  *
  * AI. gDuel_aOpponentData (0x800917F0) is 40 nine-byte profiles indexed by
  * opponent id, in the EXE's data, resident from boot and never reloaded.
- * Ai_GetHandSize returns b[0]; the AI scripts reach the rest through
- * AiScript_LoadOpponentData, which reads b[field+1] and multiplies b[1] by
- * 100 for field 0. The stock table rises with the campaign -- Simon
- * 5,20,10,1,1,0,0,25,50 against Nitemare 20,10,5,2,2,5,5,75,0 -- so the
- * bytes are the opponent's difficulty knobs even where their names are not
- * known.
+ * Ai_GetHandSize returns b[0]; the AI SCRIPTS reach the rest through
+ * AiScript_LoadOpponentData, which reads b[field + 1] -- and multiplies b[1]
+ * by 100 for field 0. The stock table rises with the campaign (Simon
+ * 5,20,10,1,1,0,0,25,50 against Nitemare 20,10,5,2,2,5,5,75,0), so the bytes
+ * are the opponent's difficulty knobs.
+ *
+ * WHAT EACH BYTE DOES, and how that was found. The AI is a bytecode VM: the
+ * 67-entry handler table at gAiScript_apfnCommand (0x800916E0) names every
+ * opcode, and the duel's script is the 0x1800 bytes at 0x801A8000. Reading
+ * the operand shape of each handler out of the decompilation (and, for the
+ * seven it has not reached yet, out of this build's own recompiled C, by
+ * counting their calls to AiScript_ReadByte) is enough to disassemble it.
+ * The field number is INDIRECT -- LoadOpponentData takes mem[] slots, not
+ * literals -- so each read was traced back to the Store that set the slot:
+ *
+ *   b[1]   the script's field 0, x100, compared against a life point total
+ *          (10/20/30 = 1000/2000/3000 LP) ahead of a weakest-monster search
+ *   b[2]   compared against the AI's remaining deck size immediately before
+ *          the fusion / combo search
+ *   b[3]   read into the slot the best-combo search is handed
+ *   b[4]   minus one, handed to EvaluateFusion: how deep it looks
+ *   b[8]   the first thing the duel script reads, before anything happens
+ *
+ * b[5] and b[6] are equal in every stock profile and rise 0 -> 5 across the
+ * campaign, but nothing in the resident script reads them, so they are left
+ * named for what they look like rather than dressed up.
+ *
+ * The script also opens with a chain that singles out opponent ids 15, 35,
+ * 36, 37 and 38 -- Pegasus, Heishin 2nd, Seto 3rd, DarkNite, Nitemare -- and
+ * sets one flag for them and another for everyone else. That is the game's
+ * own list of special opponents, and the community's "Pegasus reads your
+ * face-downs" is exactly those five. Nothing in the script reads the flag
+ * back, so what it turns on lives in native code and is not exposed here.
  *
  * RECORD. gFreeDuel_aDuelistRecords (0x801D071C) in the save: 40 x {u16 win,
  * u16 loss}, duelist ids from +4. The campaign does not touch it (only
@@ -47,7 +74,9 @@
 #endif
 
 #include "mod_plugins.h"
+#include "psx_card_packs.h"
 #include "psx_drop_db.h"
+#include "psx_duelist_portraits.h"
 #include "psx_drop_missing.h"
 #include "psx_game_hooks.h"
 #include "psx_ygo_cheats.h"      /* psx_ygo_save_is_live() */
@@ -80,11 +109,21 @@
 /* the save's records */
 #define RECORDS       0x801D071Cu
 
+/* the portrait tiles: WA_MRG sector 0x1EAA, forty 2432-byte tiles */
+#define TILE_LBA      17952u
+#define TILE_BYTES    2432u
+#define TILE_W        48
+#define TILE_PIXELS   (TILE_W * TILE_W)          /* 2304 indices */
+#define TILE_CLUT     64
+#define TILES         40u
+#define TILE_SECTORS  ((TILES * TILE_BYTES + SECTOR - 1u) / SECTOR)   /* 48 */
+
 /* ---- state ---------------------------------------------------------------- */
 
 typedef struct {
     uint16_t deck[NCARDS];       /* the edited pool, only when deck_set */
     uint8_t  deck_set;
+    uint8_t  portrait_set;       /* duelists/<id>/portrait.png exists */
     uint8_t  ai[PSX_CPU_AI_BYTES];
     uint8_t  ai_set;
     uint8_t  installed;          /* the override is in place for this duelist */
@@ -104,19 +143,19 @@ static int      g_refused;       /* records whose sectors did not match the DB *
 /* ---- the AI profile -------------------------------------------------------- */
 
 static const char *const AI_LABEL[PSX_CPU_AI_BYTES] = {
-    "Hand size", "Field B", "Field C", "Field D", "Field E",
-    "Field F", "Field G", "Field H", "Field I"
+    "Hand size", "Life point line", "Fusion deck gate", "Combo width",
+    "Fusion depth", "Rank 1", "Rank 2", "Opening value", "Field 7"
 };
 static const char *const AI_HINT[PSX_CPU_AI_BYTES] = {
-    "Ai_GetHandSize: how many cards the AI plays with. 5 for the first duelists, 20 for the last",
-    "Read as a percentage (the script multiplies it by 100). Stock 10, 20 or 30",
-    "Stock 5, 10 or 20",
-    "Stock 1 to 3",
-    "Stock 1 to 3",
-    "Rises with the campaign: 0 at the start, 5 for DarkNite and Nitemare",
-    "Always the same as the field above it in the stock table",
-    "Stock 25, 50 or 75",
-    "Stock 0, 25, 50 or 75"
+    "How many cards this opponent plays with: Ai_GetHandSize returns exactly this. 5 for the first duelists, 20 for the last",
+    "Multiplied by 100 and compared against a life point total, so 10 means 1000 LP. The comparison guards a weakest-monster search",
+    "Compared against how many cards are left in the AI's deck, just before it looks for a fusion. Stock 5, 10 or 20",
+    "Read just before the best-combo search and handed to it. Stock 1 to 3",
+    "Minus one, this is what the fusion evaluator is given: how far the AI looks for a fusion. Stock 1 to 3",
+    "Rises with the campaign, 0 at the start and 5 for DarkNite and Nitemare. Nothing in the resident duel script reads it",
+    "The same as Rank 1 in every stock duelist. Nothing in the resident duel script reads it either",
+    "The first thing the duel script reads about the opponent, before anything happens. Stock 25, 50 or 75",
+    "Stock 0, 25, 50 or 75. No use of it was found in the resident script"
 };
 
 const char *psx_cpu_ai_label(int f) { return (f >= 0 && f < PSX_CPU_AI_BYTES) ? AI_LABEL[f] : "?"; }
@@ -331,6 +370,160 @@ static int install_deck(int duelist)
     return 1;
 }
 
+/* ---- the portrait ----------------------------------------------------------
+ *
+ * Replacing one is the card-art pipeline pointed at a different target: the
+ * PNG is scaled to 48x48, quantised to 64 colors and written back as indices
+ * plus a CLUT. The whole 48-sector block is rebuilt from the stock sectors
+ * every time, so the overrides are always stock plus exactly the portraits
+ * the player has replaced -- there is no accumulated state to get wrong.
+ *
+ * The STP bit goes on every CLUT entry because the stock tiles carry it (the
+ * portraits are solid squares, and black without STP keys out), and
+ * psx_duelist_portraits.c refuses a block that does not have it. */
+
+static void portrait_dir(int duelist, char *out, size_t cap)
+{
+    const char *dir = psx_mod_player_data_dir();
+    snprintf(out, cap, "%s/duelists/%d", dir && dir[0] ? dir : ".", duelist + 1);
+}
+
+static void portrait_png(int duelist, char *out, size_t cap)
+{
+    char d[1024];
+    portrait_dir(duelist, d, sizeof d);
+    snprintf(out, cap, "%s/portrait.png", d);
+}
+
+static int file_exists(const char *p)
+{
+    FILE *f = fopen(p, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+int psx_cpu_portrait_edited(int duelist)
+{
+    psx_cpu_ensure_loaded();
+    return (duelist >= 0 && duelist < NDUEL) ? g_edit[duelist].portrait_set : 0;
+}
+
+/* Rebuild the whole tile block from stock, paint every replaced portrait into
+ * it, and override the sectors. Returns how many portraits were painted, or
+ * -1 when the stock sectors could not be read. */
+static int portraits_install(void)
+{
+    static uint8_t block[TILE_SECTORS * SECTOR];
+    int painted = 0, any = 0;
+    for (int d = 0; d < NDUEL; d++) any += g_edit[d].portrait_set != 0;
+    if (!any) {
+        for (uint32_t sct = 0; sct < TILE_SECTORS; sct++) psx_mod_cd_override_clear(TILE_LBA + sct);
+        return 0;
+    }
+    for (uint32_t sct = 0; sct < TILE_SECTORS; sct++)
+        if (!psx_mod_cd_read_stock_sector(TILE_LBA + sct, block + sct * SECTOR)) return -1;
+    for (int d = 0; d < NDUEL; d++) {
+        if (!g_edit[d].portrait_set) continue;
+        char png[1200];
+        portrait_png(d, png, sizeof png);
+        static uint8_t rgb[TILE_PIXELS * 3];
+        if (!psx_card_packs_load_png_rgb(png, TILE_W, TILE_W, rgb)) continue;
+        static uint8_t idx[TILE_PIXELS];
+        uint16_t clut[TILE_CLUT];
+        psx_card_packs_quantize(rgb, TILE_PIXELS * 3, TILE_CLUT, idx, clut);
+        uint8_t *tile = block + (uint32_t)(d + 1) * TILE_BYTES;
+        for (int i = 0; i < TILE_PIXELS; i++) tile[i] = (uint8_t)(idx[i] & 63u);
+        for (int k = 0; k < TILE_CLUT; k++) {
+            const uint16_t c = (uint16_t)(clut[k] | 0x8000u);   /* STP, as stock */
+            tile[TILE_PIXELS + 2 * k]     = (uint8_t)(c & 0xFFu);
+            tile[TILE_PIXELS + 2 * k + 1] = (uint8_t)(c >> 8);
+        }
+        {   /* hand the same pixels to the windows, in the colours the game
+             * will draw: they decode the STOCK sectors and cannot see an
+             * override. */
+            static uint32_t argb[TILE_PIXELS];
+            for (int i = 0; i < TILE_PIXELS; i++) {
+                const unsigned c = clut[idx[i] & 63u];
+                const unsigned r = (c & 31u) << 3, g = ((c >> 5) & 31u) << 3, b = ((c >> 10) & 31u) << 3;
+                argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
+            }
+            psx_duelist_portraits_override(d, argb);
+        }
+        painted++;
+    }
+    for (uint32_t sct = 0; sct < TILE_SECTORS; sct++)
+        if (!psx_mod_cd_override_set(TILE_LBA + sct, block + sct * SECTOR, SECTOR)) return -1;
+    psx_duelist_portraits_reload();
+    return painted;
+}
+
+int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned cap)
+{
+    psx_cpu_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL || !png_path || !png_path[0]) {
+        if (msg && cap) snprintf(msg, cap, "No picture to use");
+        return 0;
+    }
+    static uint8_t rgb[TILE_PIXELS * 3];
+    if (!psx_card_packs_load_png_rgb(png_path, TILE_W, TILE_W, rgb)) {
+        if (msg && cap) snprintf(msg, cap, "That file is not a picture this can read");
+        return 0;
+    }
+    /* Keep the player's own PNG: it is what survives a restart, and what
+     * they can replace by hand. */
+    char dir[1024], dest[1200];
+    const char *pd = psx_mod_player_data_dir();
+    char base[1100];
+    snprintf(base, sizeof base, "%s/duelists", pd && pd[0] ? pd : ".");
+#ifdef _WIN32
+    (void)_mkdir(base);
+#else
+    (void)mkdir(base, 0755);
+#endif
+    portrait_dir(duelist, dir, sizeof dir);
+#ifdef _WIN32
+    (void)_mkdir(dir);
+#else
+    (void)mkdir(dir, 0755);
+#endif
+    portrait_png(duelist, dest, sizeof dest);
+    {   /* copy it in, unless it is already the file we would write */
+        FILE *in = fopen(png_path, "rb");
+        if (!in) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
+        FILE *out = strcmp(png_path, dest) ? fopen(dest, "wb") : NULL;
+        if (out) {
+            char buf[65536];
+            size_t got;
+            while ((got = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, got, out);
+            fclose(out);
+        }
+        fclose(in);
+    }
+    g_edit[duelist].portrait_set = 1;
+    const int painted = portraits_install();
+    g_gen++;
+    if (msg && cap) {
+        if (painted < 0) snprintf(msg, cap, "The portrait sectors could not be written");
+        else snprintf(msg, cap, "Portrait replaced for %.24s", PSX_DROP_DB[duelist].name);
+    }
+    return painted >= 0;
+}
+
+int psx_cpu_portrait_clear(int duelist)
+{
+    psx_cpu_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
+    char png[1200];
+    portrait_png(duelist, png, sizeof png);
+    remove(png);
+    g_edit[duelist].portrait_set = 0;
+    psx_duelist_portraits_override(duelist, NULL);
+    (void)portraits_install();
+    g_gen++;
+    return 1;
+}
+
 /* ---- the record ------------------------------------------------------------ */
 
 int psx_cpu_record(int duelist, int *wins, int *losses)
@@ -461,6 +654,11 @@ void psx_cpu_ensure_loaded(void)
     if (g_loaded) return;
     g_loaded = 1;
     ini_path(g_ini_path, sizeof g_ini_path);
+    for (int d = 0; d < NDUEL; d++) {
+        char png[1200];
+        portrait_png(d, png, sizeof png);
+        g_edit[d].portrait_set = (uint8_t)file_exists(png);
+    }
     const int n = read_ini(g_ini_path);
     snprintf(g_status, sizeof g_status, n < 0 ? "no ini" : "%d entries from ini", n < 0 ? 0 : n);
     g_dirty = 0;
@@ -576,18 +774,29 @@ static void tick(void)
         if (!g_edit[d].deck_set || g_edit[d].installed) continue;
         if (install_deck(d)) g_edit[d].installed = 1;
     }
+    {   /* the portraits, once, when the disc answers */
+        static int done;
+        int want = 0;
+        for (int d = 0; d < NDUEL; d++) want += g_edit[d].portrait_set != 0;
+        if (want && !done && portraits_install() >= 0) done = 1;
+        if (!want) done = 0;
+    }
 }
 
 int psx_cpu_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 256u) return 0;
     psx_cpu_ensure_loaded();
-    int decks = 0, ai = 0;
-    for (int d = 0; d < NDUEL; d++) { decks += g_edit[d].deck_set != 0; ai += g_edit[d].ai_set != 0; }
+    int decks = 0, ai = 0, portraits = 0;
+    for (int d = 0; d < NDUEL; d++) {
+        decks += g_edit[d].deck_set != 0;
+        ai += g_edit[d].ai_set != 0;
+        portraits += g_edit[d].portrait_set != 0;
+    }
     unsigned n = (unsigned)snprintf(out, cap,
-        "\"decks\":%d,\"ai\":%d,\"dirty\":%d,\"gen\":%u,\"installs\":%d,\"refused\":%d,"
+        "\"decks\":%d,\"ai\":%d,\"portraits\":%d,\"dirty\":%d,\"gen\":%u,\"installs\":%d,\"refused\":%d,"
         "\"ai_ready\":%d,\"save_live\":%d,\"status\":\"%s\",\"duelists\":[",
-        decks, ai, g_dirty, g_gen, g_installs, g_refused, g_ai_stock_ready,
+        decks, ai, portraits, g_dirty, g_gen, g_installs, g_refused, g_ai_stock_ready,
         psx_ygo_save_is_live(), g_status);
     int first = 1;
     for (int d = 0; d < NDUEL && n + 220u < cap; d++) {

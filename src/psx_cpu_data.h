@@ -67,6 +67,16 @@ int  psx_cpu_deck_list(int duelist, uint16_t *cards, uint16_t *weights, int cap)
 int  psx_cpu_record(int duelist, int *wins, int *losses);
 int  psx_cpu_record_set(int duelist, int wins, int losses);
 
+/* ---- the portrait --------------------------------------------------------
+ * The 48x48 tile the FREE DUEL grid draws, forty of them at WA_MRG sector
+ * 0x1EAA: 2304 six-bit indices then a 64-entry 15-bit CLUT. A replacement is
+ * any PNG; it is scaled, quantised to 64 colors and written back through a
+ * sector override, and the PNG is kept in <player-data>/duelists/<id>/ so it
+ * comes back at the next launch. */
+int  psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned cap);
+int  psx_cpu_portrait_clear(int duelist);
+int  psx_cpu_portrait_edited(int duelist);
+
 /* ---- persistence ---------------------------------------------------------
  * One file for the window, cpu_manager.ini, the same way the Drop Table
  * Manager keeps drop_table_edits.ini. Import replaces every edit with the

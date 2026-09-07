@@ -51,6 +51,24 @@ static int load(void)
     return 1;
 }
 
+static uint32_t s_user[PSX_PORTRAIT_N][PSX_PORTRAIT_W * PSX_PORTRAIT_W];
+static uint8_t  s_user_set[PSX_PORTRAIT_N];
+
+void psx_duelist_portraits_override(int duelist, const uint32_t *argb48)
+{
+    if (duelist < 0 || duelist >= PSX_PORTRAIT_N) return;
+    if (!argb48) { s_user_set[duelist] = 0; return; }
+    memcpy(s_user[duelist], argb48, sizeof s_user[duelist]);
+    s_user_set[duelist] = 1;
+}
+
+void psx_duelist_portraits_reload(void)
+{
+    s_ready = 0;
+    s_gave_up = 0;
+    s_next_try = 0;
+}
+
 int psx_duelist_portraits_ready(void)
 {
     if (s_ready || s_gave_up) return s_ready;
@@ -66,6 +84,7 @@ int psx_duelist_portraits_ready(void)
 const uint32_t *psx_duelist_portraits_get(int duelist)
 {
     if (duelist < 0 || duelist >= PSX_PORTRAIT_N) return NULL;
+    if (s_user_set[duelist]) return s_user[duelist];   /* the player's own */
     if (!psx_duelist_portraits_ready()) return NULL;
     return s_px[duelist];
 }

@@ -199,21 +199,47 @@ Right-click a card to drop it from the pool. The game still deals **at most
 three copies of any one card**, so a big weight buys frequency, not a
 solitaire deck.
 
-**AI.** `gDuel_aOpponentData` gives each duelist nine bytes; the first is the
-AI's hand size (5 for the early duelists, 20 for the last), the rest are read
-by the AI's own scripts. `AI` shows them with the disc's value beside yours,
-and the window names only the one the decompilation names - the others are
-shown as themselves rather than guessed at. They rise with the campaign, so
-they are the difficulty knobs even where the names are not known.
+Turn on `All cards` to see all 722 beside the pool, with `0` on the ones this
+duelist cannot draw: type a weight on one of those, or right-click it, and it
+joins the deck. Right-click anything for the rest - remove a card, put the
+deck, the AI or both back to stock, clear a record.
 
-**Record.** The `WIN` and `LOSS` on the title line are the save's own, the
-ones `FREE DUEL` shows. Click either to type a new one.
+**AI.** `gDuel_aOpponentData` gives each duelist nine bytes, and the AI is a
+bytecode VM whose script can be disassembled, so most of them have a job:
+
+| | |
+|---|---|
+| `Hand size` | how many cards this opponent plays with; 5 early, 20 at the end |
+| `Life point line` | x100 and compared against a life point total, so 10 = 1000 LP |
+| `Fusion deck gate` | compared against the cards left in the AI's deck just before it looks for a fusion |
+| `Combo width` | handed to the best-combo search |
+| `Fusion depth` | minus one, how far the fusion evaluator looks |
+| `Rank 1` / `Rank 2` | rise 0 to 5 across the campaign; nothing in the duel script reads them |
+| `Opening value` | the first thing the duel script reads about the opponent |
+
+The window shows the disc's value beside yours, and the hint line says what
+each one does. The script also singles out **Pegasus, Heishin 2nd, Seto 3rd,
+DarkNite and Nitemare** by id and flags them; that is the game's own list of
+special opponents, and the flag is read by code outside the script.
+
+**Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
+the ones `FREE DUEL` shows. Click either and type.
+
+**Portraits.** Right-click a duelist and `Replace the portrait…`: any picture
+becomes their 48x48 tile, scaled and quantised to the 64 colours the tile
+holds, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
+`duelists/<id>/portrait.png`, so it comes back at the next launch and can be
+replaced by hand; `Portrait back to stock` removes it.
 
 Deck and AI edits are kept in `cpu_manager.ini` (hand-editable) and applied
-the moment they change: the AI table is written in memory and the deck goes
-back to the game through a sector override of that duelist's disc record, so
-the game loads your pool with its own loader. Nothing on your disc is
-touched. `Defaults` puts one duelist back, `Import…`/`Export…` share the lot,
+the moment they change: the AI table is written in memory, and the deck and
+the portrait go back to the game through sector overrides of that duelist's
+disc record and portrait tile, so the game loads them with its own loader.
+Nothing on your disc is touched.
+
+Renaming a duelist is **not** here: the name the `FREE DUEL` grid draws is
+not in the card-name blob or the dialogue bank, and it has not been found
+yet. `Defaults` puts one duelist back, `Import…`/`Export…` share the lot,
 and an import is kept straight away.
 
 ### Card Manager (`VIEW → CARD MANAGER`)

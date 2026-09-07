@@ -158,10 +158,21 @@ static int  s_hover_pane = -1, s_hover_row = -1, s_hover_btn = -1;
 static char s_msg[160];
 static uint32_t s_msg_until;
 
-/* the right pane's rows: the selected duelist's pool */
+/* the right pane's rows: the selected duelist's pool, or every card when
+ * ALL CARDS is on -- which is how a card that is NOT in the deck gets added,
+ * the same trick the Drop Table Manager's ALL CPU row uses. */
 static uint16_t s_card[NCARDS], s_weight[NCARDS];
 static int      s_rows_n;
+static int      s_all_cards;
 static unsigned s_seen_gen;
+
+/* Right-click menu: a handful of actions on whatever is under the pointer.
+ * One level, no submenus. */
+enum { CM_NONE = 0, CM_EDIT, CM_ADD, CM_REMOVE, CM_DECK_STOCK, CM_AI_STOCK,
+       CM_ALL_STOCK, CM_RECORD_CLEAR, CM_SELECT, CM_PORTRAIT, CM_PORTRAIT_STOCK };
+#define CMENU_MAX 10
+static struct { char label[64]; int action, a, b; } s_cm[CMENU_MAX];
+static int s_cm_n, s_cm_x, s_cm_y, s_cm_hover = -1;
 
 /* the number box: which row (or -1), and which field it edits */
 enum { ED_NONE = 0, ED_DECK, ED_AI, ED_WINS, ED_LOSSES };
@@ -172,7 +183,7 @@ static int  s_caret_on = 1;
 
 /* the file dialogs' answer */
 static char s_pick_path[1200];
-static int  s_pick_kind;                 /* 1 export, 2 import */
+static int  s_pick_kind;                 /* 1 export, 2 import, 3 portrait */
 static char s_pick_err[200];
 static int  s_pick_err_kind;
 
@@ -201,6 +212,20 @@ static void rebuild_rows(void)
     uint16_t c[NCARDS], w[NCARDS];
     const int n = psx_cpu_deck_list(s_sel, c, w, NCARDS);
     s_rows_n = 0;
+    if (s_all_cards) {
+        /* every card, with the pool's weight beside it and 0 for the ones
+         * this duelist cannot draw: type a weight on one of those and it
+         * joins the deck. */
+        for (int id = 1; id <= NCARDS; id++) {
+            if (s_search[0] && !name_matches(psx_card_packs_display_name(id), s_search)) continue;
+            s_card[s_rows_n] = (uint16_t)id;
+            s_weight[s_rows_n] = (uint16_t)psx_cpu_deck_weight(s_sel, id);
+            s_rows_n++;
+        }
+        if (s_scroll_right > s_rows_n - 1) s_scroll_right = 0;
+        s_dirty = 1;
+        return;
+    }
     for (int i = 0; i < n; i++) {
         if (s_search[0] && !name_matches(psx_card_packs_display_name(c[i]), s_search)) continue;
         s_card[s_rows_n] = c[i];
@@ -223,7 +248,7 @@ static void invalidate(void) { s_seen_gen = 0; rebuild_rows(); s_dirty = 1; }
 /* --- layout --------------------------------------------------------------- */
 
 typedef struct {
-    Rect bar, tab_decks, tab_ai, search, btn_save, btn_import, btn_export, btn_default;
+    Rect bar, tab_decks, tab_ai, search, btn_save, btn_import, btn_export, btn_default, btn_all;
     Rect pane[2], title[2], cols[2], rows[2], sb[2];
     int  row_h, nrows;
     int  foot_y, foot_h;
@@ -251,6 +276,8 @@ static void layout_compute(void)
     int rx = s_w - px(8.0f);
     int w = tw(fb, "Defaults") + px(18.0f);
     L->btn_default = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
+    w = tw(fb, "All cards") + px(18.0f);
+    L->btn_all = (Rect){ rx - w, by, w, bh };     rx -= w + px(4.0f);
     w = tw(fb, "Export" S_ELLIP) + px(18.0f);
     L->btn_export = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
     w = tw(fb, "Import" S_ELLIP) + px(18.0f);
@@ -420,6 +447,7 @@ static void draw_bar(void)
     draw_button(&L->btn_save, "Save", psx_cpu_dirty(), s_hover_btn == 2);
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
     draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
+    draw_button(&L->btn_all, "All cards", s_all_cards, s_hover_btn == 6);
     draw_button(&L->btn_default, "Defaults", 0, s_hover_btn == 5);
     (void)fs;
 }
@@ -457,7 +485,8 @@ static void draw_duelists(void)
     const Rect *C = &L->cols[0], *R = &L->rows[0];
     char side[48];
     int edited = 0;
-    for (int d = 0; d < NDUEL; d++) edited += psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL);
+    for (int d = 0; d < NDUEL; d++)
+        edited += psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL) || psx_cpu_portrait_edited(d);
     if (edited) snprintf(side, sizeof side, "%d edited", edited);
     else        snprintf(side, sizeof side, "stock");
     draw_panel(0, "39 duelists", COL_TEXT, side, edited ? COL_EDITED : COL_DIM);
@@ -476,8 +505,13 @@ static void draw_duelists(void)
         else if (s_hover_pane == 0 && r == s_hover_row)
             psx_ui_round_rect(&s_cv, R->x, y, R->w, L->row_h, L->row_h * 0.5f, COL_HOVER);
         draw_icon(L->d_icon_x, y + (L->row_h - icon) / 2, icon, d, bg);
+        if (psx_cpu_portrait_edited(d)) {
+            /* a small corner mark: this portrait is the player's */
+            const int m = px(3.0f);
+            psx_ui_fill(&s_cv, L->d_icon_x + icon - m, y + (L->row_h - icon) / 2, m, m, COL_EDITED);
+        }
         const int base = psx_ui_baseline_in(y, L->row_h, fr);
-        const int mine = psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL);
+        const int mine = psx_cpu_deck_edited(d) || psx_cpu_ai_edit(d, NULL) || psx_cpu_portrait_edited(d);
         psx_ui_text_clip(&s_cv, L->d_name_x, base, PSX_DROP_DB[d].name,
                          sel ? COL_ACCENT : (mine ? COL_EDITED : COL_TEXT), fr, L->d_name_r - L->d_name_x);
         char buf[24];
@@ -504,13 +538,19 @@ static void draw_record_cells(void)
     text_in(&lab, 0, "WIN", COL_DIM, fs);
     lab = (Rect){ L->rec_loss.x - lw, L->rec_loss.y, lw, L->rec_loss.h };
     text_in(&lab, 0, "LOSS", COL_DIM, fs);
+    /* Both are drawn as input wells, so they read as something to click
+     * rather than as a caption. */
     if (s_edit_kind == ED_WINS) draw_number_box(&L->rec_win);
     else {
+        psx_ui_round_rect(&s_cv, L->rec_win.x, L->rec_win.y + px(1.0f), L->rec_win.w,
+                          L->rec_win.h - px(2.0f), (float)px(U_R_BOX), COL_EDIT_BG);
         snprintf(buf, sizeof buf, have ? "%d" : S_DASH, wins);
         text_centered(&L->rec_win, buf, have ? COL_TEXT : COL_DIM, fb);
     }
     if (s_edit_kind == ED_LOSSES) draw_number_box(&L->rec_loss);
     else {
+        psx_ui_round_rect(&s_cv, L->rec_loss.x, L->rec_loss.y + px(1.0f), L->rec_loss.w,
+                          L->rec_loss.h - px(2.0f), (float)px(U_R_BOX), COL_EDIT_BG);
         snprintf(buf, sizeof buf, have ? "%d" : S_DASH, losses);
         text_centered(&L->rec_loss, buf, have ? COL_TEXT : COL_DIM, fb);
     }
@@ -621,10 +661,14 @@ static void draw_footer(void)
         return;
     }
     text_in(&f, 0, s_view == VIEW_AI
-            ? "Click a value to type a new one, Enter keeps it. These nine bytes are what the duel AI reads about this opponent."
-            : "Click a weight to type a new one, Enter keeps it. Weights are out of 2048; the game still draws at most three copies of any card.",
+            ? "Click a value to type a new one, Enter keeps it. Right-click for the menu. These nine bytes are what the duel AI reads about this opponent."
+            : (s_all_cards
+               ? "Every card: type a weight on one at 0 to add it to the deck, or right-click it. Weights are out of 2048."
+               : "Click a weight to type a new one, Enter keeps it. Right-click a row for more, or turn on All cards to add one. At most three copies of a card are ever dealt."),
             COL_DIM, fs);
 }
+
+static void draw_cmenu(void);
 
 static void draw(void)
 {
@@ -635,6 +679,60 @@ static void draw(void)
     draw_duelists();
     if (s_view == VIEW_AI) draw_ai(); else draw_deck();
     draw_footer();
+    draw_cmenu();
+}
+
+/* --- the right-click menu -------------------------------------------------- */
+
+static void cm_close(void) { if (s_cm_n) { s_cm_n = 0; s_cm_hover = -1; s_dirty = 1; } }
+
+static void cm_add(const char *label, int action, int a, int b)
+{
+    if (s_cm_n >= CMENU_MAX) return;
+    snprintf(s_cm[s_cm_n].label, sizeof s_cm[0].label, "%s", label);
+    s_cm[s_cm_n].action = action;
+    s_cm[s_cm_n].a = a;
+    s_cm[s_cm_n].b = b;
+    s_cm_n++;
+}
+
+static int cm_row_h(void) { return s_L.row_h + px(2.0f); }
+
+static Rect cm_rect(void)
+{
+    const PsxUiFace *fr = face_body();
+    int wide = 0;
+    for (int i = 0; i < s_cm_n; i++) wide = imax(wide, tw(fr, s_cm[i].label));
+    Rect r = { s_cm_x, s_cm_y, wide + 2 * px(U_PAD) + px(6.0f), s_cm_n * cm_row_h() + px(6.0f) };
+    if (r.w < px(150.0f)) r.w = px(150.0f);
+    if (r.x + r.w > s_w - px(4.0f)) r.x = s_w - px(4.0f) - r.w;
+    if (r.y + r.h > s_h - px(4.0f)) r.y = s_h - px(4.0f) - r.h;
+    if (r.x < 0) r.x = 0;
+    if (r.y < 0) r.y = 0;
+    return r;
+}
+
+static int cm_item_at(int x, int y)
+{
+    if (!s_cm_n) return -1;
+    const Rect r = cm_rect();
+    if (!in_rect(&r, x, y)) return -1;
+    const int i = (y - r.y - px(3.0f)) / cm_row_h();
+    return (i >= 0 && i < s_cm_n) ? i : -1;
+}
+
+static void draw_cmenu(void)
+{
+    if (!s_cm_n) return;
+    const Rect r = cm_rect();
+    const PsxUiFace *fr = face_body();
+    psx_ui_round_rect_shadow(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_BAR, px(4.0f));
+    psx_ui_round_rect(&s_cv, r.x, r.y, r.w, r.h, (float)px(U_R_BOX), COL_BAR);
+    for (int i = 0; i < s_cm_n; i++) {
+        const Rect row = { r.x + px(3.0f), r.y + px(3.0f) + i * cm_row_h(), r.w - px(6.0f), cm_row_h() };
+        if (i == s_cm_hover) psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h, row.h * 0.5f, COL_SEL_BG);
+        text_in(&row, px(6.0f), s_cm[i].label, s_cm[i].action == CM_NONE ? COL_DIM : COL_TEXT, fr);
+    }
 }
 
 /* --- input ----------------------------------------------------------------- */
@@ -681,6 +779,59 @@ static void edit_commit(void)
     }
 }
 
+static void do_portrait(void);
+
+static void cm_run(int i)
+{
+    if (i < 0 || i >= s_cm_n) return;
+    const int action = s_cm[i].action, a = s_cm[i].a, b = s_cm[i].b;
+    cm_close();
+    switch (action) {
+    case CM_SELECT:
+        if (a != s_sel) { s_sel = a; s_scroll_right = 0; invalidate(); }
+        break;
+    case CM_EDIT:
+        edit_begin(s_view == VIEW_AI ? ED_AI : ED_DECK, a, 0);
+        break;
+    case CM_ADD:
+        /* a starter weight, the way the drop editor adds a card at 20 */
+        if (psx_cpu_deck_set(s_sel, a, b)) {
+            invalidate();
+            say("Card added to the deck. Save to keep it.");
+        } else say("That weight cannot be balanced into 2048");
+        break;
+    case CM_REMOVE:
+        if (psx_cpu_deck_set(s_sel, a, 0)) { invalidate(); say("Card removed from the deck. Save to keep it."); }
+        break;
+    case CM_DECK_STOCK:
+        if (psx_cpu_deck_clear(a)) { invalidate(); say("Deck back to the disc's own. Save to keep it."); }
+        else say("That deck is already stock");
+        break;
+    case CM_AI_STOCK:
+        if (psx_cpu_ai_clear(a)) { s_dirty = 1; say("AI back to stock. Save to keep it."); }
+        else say("That AI profile is already stock");
+        break;
+    case CM_ALL_STOCK: {
+        const int x = psx_cpu_deck_clear(a), y = psx_cpu_ai_clear(a);
+        if (x || y) { invalidate(); say("Deck and AI back to stock. Save to keep it."); }
+        else say("That duelist is already stock");
+        break;
+    }
+    case CM_PORTRAIT:
+        if (a != s_sel) { s_sel = a; invalidate(); }
+        do_portrait();
+        break;
+    case CM_PORTRAIT_STOCK:
+        if (psx_cpu_portrait_clear(a)) { s_dirty = 1; say("Portrait back to the disc's own"); }
+        break;
+    case CM_RECORD_CLEAR:
+        if (psx_cpu_record_set(a, 0, 0)) { s_dirty = 1; say("Record cleared in the save"); }
+        else say("No save is loaded");
+        break;
+    default: break;
+    }
+}
+
 static int pane_at(int x, int y)
 {
     for (int p = 0; p < 2; p++) if (in_rect(&s_L.pane[p], x, y)) return p;
@@ -705,6 +856,7 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_import, x, y)) return 3;
     if (in_rect(&L->btn_export, x, y)) return 4;
     if (in_rect(&L->btn_default, x, y)) return 5;
+    if (in_rect(&L->btn_all, x, y))     return 6;
     return -1;
 }
 
@@ -744,6 +896,16 @@ static void do_export(void)
 #endif
 }
 
+static void do_portrait(void)
+{
+#if defined(PSX_SDL3)
+    static const SDL_DialogFileFilter filters[] = { { "Pictures", "png;jpg;jpeg;bmp" } };
+    SDL_ShowOpenFileDialog(pick_cb, (void *)(intptr_t)3, s_win, filters, 1, NULL, false);
+#else
+    say("No file dialog in this build: use the debug command cpu_data with portrait:<path>");
+#endif
+}
+
 static void do_import(void)
 {
 #if defined(PSX_SDL3)
@@ -760,14 +922,62 @@ static void finish_pick(int kind, const char *path)
 {
     char msg[200];
     if (kind == 1) (void)psx_cpu_export_file(path, msg, sizeof msg);
+    else if (kind == 3) { (void)psx_cpu_portrait_set(s_sel, path, msg, sizeof msg); s_dirty = 1; }
     else if (psx_cpu_import_file(path, msg, sizeof msg)) invalidate();
     say(msg);
+}
+
+/* Right-click: what can be done to whatever is under the pointer. */
+static void rclick(int x, int y)
+{
+    edit_end();
+    cm_close();
+    const int p = pane_at(x, y);
+    const int r = row_at(p, x, y);
+    if (r < 0) return;
+    s_cm_x = x; s_cm_y = y; s_cm_n = 0; s_cm_hover = -1;
+    char buf[64];
+    if (p == 0) {
+        const int d = s_scroll + r;
+        if (d >= NDUEL) return;
+        if (d != s_sel) {
+            snprintf(buf, sizeof buf, "Show %.24s", PSX_DROP_DB[d].name);
+            cm_add(buf, CM_SELECT, d, 0);
+        }
+        cm_add("Replace the portrait" S_ELLIP, CM_PORTRAIT, d, 0);
+        if (psx_cpu_portrait_edited(d)) cm_add("Portrait back to stock", CM_PORTRAIT_STOCK, d, 0);
+        cm_add("Deck back to stock", CM_DECK_STOCK, d, 0);
+        cm_add("AI back to stock", CM_AI_STOCK, d, 0);
+        cm_add("Both back to stock", CM_ALL_STOCK, d, 0);
+        cm_add("Clear the win / loss record", CM_RECORD_CLEAR, d, 0);
+    } else if (p == 1 && s_view == VIEW_AI) {
+        const int f = s_scroll_right + r;
+        if (f >= PSX_CPU_AI_BYTES) return;
+        cm_add("Type a value", CM_EDIT, f, 0);
+        cm_add("AI back to stock", CM_AI_STOCK, s_sel, 0);
+    } else if (p == 1) {
+        const int i = s_scroll_right + r;
+        if (i >= s_rows_n) return;
+        if (s_weight[i]) {
+            cm_add("Type a weight", CM_EDIT, i, 0);
+            cm_add("Remove from the deck", CM_REMOVE, s_card[i], 0);
+        } else {
+            /* an ALL CARDS row this duelist cannot draw */
+            snprintf(buf, sizeof buf, "Add %.24s at 20", psx_card_packs_display_name(s_card[i]));
+            cm_add(buf, CM_ADD, s_card[i], 20);
+            snprintf(buf, sizeof buf, "Add it at 100");
+            cm_add(buf, CM_ADD, s_card[i], 100);
+        }
+        cm_add("Deck back to stock", CM_DECK_STOCK, s_sel, 0);
+    }
+    if (s_cm_n) s_dirty = 1;
 }
 
 static void click(int x, int y, int button)
 {
     const Layout *L = &s_L;
     edit_end();
+    if (s_cm_n) { cm_run(cm_item_at(x, y)); cm_close(); return; }
     if (in_rect(&L->bar, x, y)) {
         switch (button_at(x, y)) {
         case 0: if (s_view != VIEW_DECKS) { s_view = VIEW_DECKS; s_scroll_right = 0; invalidate(); } break;
@@ -775,6 +985,7 @@ static void click(int x, int y, int button)
         case 2: say(psx_cpu_save() ? "Saved" : "Save failed"); break;
         case 3: do_import(); break;
         case 4: do_export(); break;
+        case 6: s_all_cards = !s_all_cards; s_scroll_right = 0; invalidate(); break;
         case 5: {
             const int a = psx_cpu_deck_clear(s_sel), b = psx_cpu_ai_clear(s_sel);
             if (a || b) { invalidate(); say("Back to the disc's own deck and AI. Save to keep it."); }
@@ -804,10 +1015,6 @@ static void click(int x, int y, int button)
         }
         const int i = s_scroll_right + r;
         if (i >= s_rows_n) return;
-        if (button == SDL_BUTTON_RIGHT) {
-            if (psx_cpu_deck_set(s_sel, s_card[i], 0)) { invalidate(); say("Card removed from the deck. Save to keep it."); }
-            return;
-        }
         edit_begin(ED_DECK, i, s_weight[i]);
     }
 }
@@ -887,6 +1094,7 @@ void psx_cpu_manager_close(void)
     s_w = s_h = 0;
     s_hover_pane = s_hover_row = s_hover_btn = -1;
     s_sb_drag = 0;
+    cm_close();
     edit_end();
 }
 
@@ -961,7 +1169,8 @@ static int on_event(const void *evp)
         if (ev->button.windowID != id) return 0;
         const int x = (int)ev->button.x, y = (int)ev->button.y;
         layout_compute();
-        if (ev->button.button == SDL_BUTTON_LEFT && sb_press(x, y)) return 1;
+        if (ev->button.button == SDL_BUTTON_RIGHT) { rclick(x, y); return 1; }
+        if (ev->button.button == SDL_BUTTON_LEFT && !s_cm_n && sb_press(x, y)) return 1;
         click(x, y, ev->button.button);
         return 1;
     }
@@ -973,6 +1182,11 @@ static int on_event(const void *evp)
         if (ev->motion.windowID != id) return 0;
         layout_compute();
         if (s_sb_drag) { sb_drag_to((int)ev->motion.y); return 1; }
+        if (s_cm_n) {
+            const int h = cm_item_at((int)ev->motion.x, (int)ev->motion.y);
+            if (h != s_cm_hover) { s_cm_hover = h; s_dirty = 1; }
+            return 1;
+        }
         hover_move((int)ev->motion.x, (int)ev->motion.y);
         return 1;
     }
@@ -1003,6 +1217,7 @@ static int on_event(const void *evp)
             if (key == SDLK_BACKSPACE) { if (s_edit_len) s_edit_buf[--s_edit_len] = 0; s_dirty = 1; return 1; }
             return 1;
         }
+        if (s_cm_n) { if (key == SDLK_ESCAPE) cm_close(); return 1; }
         if (key == SDLK_ESCAPE) { psx_cpu_manager_close(); return 1; }
         if (key == SDLK_BACKSPACE) {
             const size_t n = strlen(s_search);
@@ -1078,12 +1293,12 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
         "\"open\":%d,\"view\":\"%s\",\"sel\":%d,\"name\":\"%s\",\"rows\":%d,\"search\":\"%s\","
         "\"record\":[%d,%d],\"has_record\":%d,\"deck_edited\":%d,\"ai_edited\":%d,\"dirty\":%d,"
         "\"canvas\":[%d,%d],\"list_rows\":%d,\"hover\":[%d,%d],\"hover_btn\":%d,\"edit\":%d,"
-        "\"edit_row\":%d,\"edit_buf\":\"%s\",\"msg\":\"%s\"",
+        "\"edit_row\":%d,\"edit_buf\":\"%s\",\"all_cards\":%d,\"menu\":%d,\"msg\":\"%s\"",
         s_win != NULL, s_view == VIEW_AI ? "ai" : "decks", s_sel, PSX_DROP_DB[s_sel].name,
         s_view == VIEW_AI ? PSX_CPU_AI_BYTES : s_rows_n, s_search,
         wins, losses, have, psx_cpu_deck_edited(s_sel), psx_cpu_ai_edit(s_sel, NULL), psx_cpu_dirty(),
         s_w, s_h, s_win ? list_rows() : 0, s_hover_pane, s_hover_row, s_hover_btn,
-        s_edit_kind, s_edit_row, s_edit_buf, s_msg);
+        s_edit_kind, s_edit_row, s_edit_buf, s_all_cards, s_cm_n, s_msg);
     if (!s_win || n >= cap) return n < cap;
     n += (unsigned)snprintf(out + n, cap - n, ",\"geom\":{\"row_h\":%d", L->row_h);
     if (n < cap) n += rect_json(out + n, cap - n, "bar", &L->bar);
@@ -1094,6 +1309,7 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "import", &L->btn_import);
     if (n < cap) n += rect_json(out + n, cap - n, "export", &L->btn_export);
     if (n < cap) n += rect_json(out + n, cap - n, "defaults", &L->btn_default);
+    if (n < cap) n += rect_json(out + n, cap - n, "all_cards", &L->btn_all);
     if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
     if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);
     if (n < cap) n += rect_json(out + n, cap - n, "left_rows", &L->rows[0]);

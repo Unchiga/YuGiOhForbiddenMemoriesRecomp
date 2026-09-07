@@ -110,6 +110,15 @@ int  psx_card_packs_parse_immune(const char *v);
 /* 1 when any monster-effect field is set. */
 int  psx_card_packs_has_monster_effect(const PsxCardPack *c);
 
+/* ---- shared image helpers -------------------------------------------------
+ * The card art pipeline's two halves, exposed because the CPU Manager's
+ * portraits need exactly the same work: a PNG scaled into an RGB block, and
+ * a median-cut quantiser that returns indices plus a 15-bit CLUT. Neither
+ * knows anything about cards. */
+int  psx_card_packs_load_png_rgb(const char *path, int w, int h, uint8_t *rgb_out);
+void psx_card_packs_quantize(const uint8_t *rgb, int n_bytes, int ncolors,
+                             uint8_t *idx_out, uint16_t *clut_out);
+
 /* Frame colors: the disc carries six palettes (only four are used in stock:
  * monsters yellow, magic green, traps pink, rituals blue; purple and orange
  * sit unused). See psx_card_colors.c. */
