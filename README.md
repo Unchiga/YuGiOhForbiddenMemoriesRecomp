@@ -119,7 +119,7 @@ The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048. 20 is
 about 1%. Each band totals 2048, so what you add comes off that duelist's normal
 drops in proportion. Delete the file for the defaults back.
 
-### Fill library (`MODS → FILL LIBRARY`)
+### Library placeholders (`MODS → LIBRARY PLACEHOLDERS`)
 
 The LIBRARY knows three states per card: never met, **seen** but not owned (a
 fusion you watched resolve, drawn dim), and owned. This row makes every card
@@ -132,6 +132,22 @@ is still not yours and cannot go in a deck. Nothing is written to your save
 either: the marks exist only while the LIBRARY is on screen, which is the one
 screen with no `SAVE` on it, and the row puts your own list back bit for bit
 when you leave or turn it off.
+
+### Scripted story drops (in the Drop Table Manager)
+
+Give a duelist a card they are **guaranteed to drop when the campaign beats
+them**: Simon good for a Lady of Faith, Jono for a Baby Dragon, whatever you
+choose. Right-click a row in the Drop Table Manager to set or clear one, and
+pick whether it comes on the **first** campaign win only or on **every** one.
+
+There is no MODS row, because a duelist with no card set is the off switch: a
+stock install has none. The pairs are kept in `drop_table_edits.ini` with your
+weight edits, so one `Save` keeps them and `Export` shares them.
+
+It replaces the drop rather than adding to it, so with `CARD DROPS` on you
+still get the same number of cards - the scripted one plus the usual randoms.
+Free Duel is untouched: it is a story reward, so it only fires in the
+campaign.
 
 ### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
@@ -159,8 +175,8 @@ cannot balance is refused rather than fudged.
 **Nothing is written until `Save`**, which persists your table as
 `drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
 stock. `Export…` writes your table to a file to send to someone and `Import…`
-loads one back (unsaved, like any other edit), the same pair the Card and
-Fusion managers have. With `DROP MISSING CARDS` on, the manager shows and
+loads one back - an import is kept straight away, so a table someone sends you
+is live in the game and still there next launch. With `DROP MISSING CARDS` on, the manager shows and
 edits the table you will actually roll against.
 
 Card names and ATK/DEF come from the running game; the drop tables are baked

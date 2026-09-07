@@ -40,6 +40,10 @@
 typedef struct { uint16_t card; uint16_t w[3]; } Edit;
 static Edit     g_edit[NDUEL][MAX_EDITS];
 static int      g_n[NDUEL];
+/* The scripted first-win card per duelist, and whether it repeats. Same file,
+ * same Save, same Import / Export as the weights above. */
+static uint16_t g_reward[NDUEL];
+static uint8_t  g_reward_every[NDUEL];
 static int      g_loaded;
 static int      g_dirty;
 static unsigned g_gen = 1;
@@ -66,7 +70,11 @@ static int read_ini(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
-    for (int d = 0; d < NDUEL; d++) g_n[d] = 0;
+    for (int d = 0; d < NDUEL; d++) {
+        g_n[d] = 0;
+        g_reward[d] = 0;
+        g_reward_every[d] = 0;
+    }
     char line[256];
     int cur = -1, entries = 0;
     while (fgets(line, sizeof(line), f)) {
@@ -82,6 +90,18 @@ static int read_ini(const char *path)
             continue;
         }
         if (cur < 0) continue;
+        {   /* the section's scripted reward, if it has one */
+            int rc = 0;
+            char when[16];
+            if (sscanf(s, "card = %d", &rc) == 1) {
+                if (rc >= 1 && rc <= NCARDS) g_reward[cur] = (uint16_t)rc;
+                continue;
+            }
+            if (sscanf(s, "when = %15s", when) == 1) {
+                g_reward_every[cur] = (uint8_t)(strcmp(when, "every") == 0);
+                continue;
+            }
+        }
         int card = 0, w0 = 0, w1 = 0, w2 = 0;
         /* Fewer than four numbers is a malformed line, not a partial edit —
          * an entry is always the full vector (see the header comment). */
@@ -207,10 +227,20 @@ static int write_to(const char *path)
 ";\n"
 "; These edits apply on top of MODS > DROP MISSING CARDS when that row is on.\n"
 "; Delete a line (or the file) to fall back to the table underneath.\n"
+";\n"
+"; A section may also carry a SCRIPTED REWARD - the card that duelist is\n"
+"; guaranteed to drop when the campaign beats them:\n"
+";\n"
+";     card = 92        the card id\n"
+";     when = every     optional; without it, only the FIRST win gives it\n"
 "\n");
     for (int d = 0; d < NDUEL; d++) {
-        if (!g_n[d]) continue;
+        if (!g_n[d] && !g_reward[d]) continue;
         fprintf(f, "[%s]\n", PSX_DROP_DB[d].name);
+        if (g_reward[d]) {
+            fprintf(f, "card = %d\n", g_reward[d]);
+            if (g_reward_every[d]) fprintf(f, "when = every\n");
+        }
         for (int i = 0; i < g_n[d]; i++) {
             const Edit *e = &g_edit[d][i];
             fprintf(f, "%-3d = %4d, %4d, %4d\n",
@@ -305,8 +335,25 @@ int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
         if (msg && cap) snprintf(msg, cap, "Could not read that file");
         return 0;
     }
-    if (msg && cap)
-        snprintf(msg, cap, "Imported %d entr%s. Save to keep them.", n, n == 1 ? "y" : "ies");
+    /* An import STICKS. Every other manager's import already writes what it
+     * imported -- the Fusion Manager saves its edits, the Dialogue Manager
+     * imports with persist set, the Card Manager writes the card folders --
+     * and a table that vanished at the next launch unless the player also
+     * found the Save button was the odd one out. The live layer is already
+     * what the game rolls; this makes the file agree with it. */
+    const int kept = psx_drop_edits_save();
+    const int r = psx_drop_edits_reward_count();
+    if (msg && cap) {
+        if (!kept)
+            snprintf(msg, cap, "Imported %d entr%s, but %s could not be written",
+                     n, n == 1 ? "y" : "ies", INI_NAME);
+        else if (r)
+            snprintf(msg, cap, "Imported %d entr%s and %d scripted drop%s, and kept them",
+                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s");
+        else
+            snprintf(msg, cap, "Imported %d entr%s and kept them",
+                     n, n == 1 ? "y" : "ies");
+    }
     return 1;
 }
 
@@ -330,6 +377,36 @@ int psx_drop_edits_load_file(const char *name_or_path)
     g_dirty = 1;
     g_gen++;
     snprintf(g_status, sizeof(g_status), "loaded %d entries", n);
+    return n;
+}
+
+int psx_drop_edits_reward(int duelist, int *out_every)
+{
+    psx_drop_edits_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL) return 0;
+    if (out_every) *out_every = g_reward_every[duelist];
+    return g_reward[duelist];
+}
+
+int psx_drop_edits_reward_set(int duelist, int card, int every)
+{
+    psx_drop_edits_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL || card < 0 || card > NCARDS) return 0;
+    const uint8_t ev = (uint8_t)(card && every ? 1 : 0);
+    if (g_reward[duelist] == (uint16_t)card && g_reward_every[duelist] == ev)
+        return 0;
+    g_reward[duelist] = (uint16_t)card;
+    g_reward_every[duelist] = ev;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_reward_count(void)
+{
+    psx_drop_edits_ensure_loaded();
+    int n = 0;
+    for (int d = 0; d < NDUEL; d++) n += g_reward[d] != 0;
     return n;
 }
 

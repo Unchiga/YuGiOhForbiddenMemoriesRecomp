@@ -221,7 +221,30 @@ Entering the LIBRARY re-marks every owned card and every deck card as seen
 `{"cmd":"fill_library"}` reports seen / owned / cards without a screenshot,
 and `{"cmd":"fill_library","on":1}` drives the MODS row.
 
-## 8. File dialogs
+## 8. Scripted story drops
+
+`{"cmd":"story_rewards"}` reads the pairs and what the last drop decided;
+`{"cmd":"story_rewards","duelist":0-38,"card":id,"every":0|1}` sets one (card
+0 clears) and `"save":1` writes drop_table_edits.ini, which is where they live
+now -- there is no MODS row and no separate file.
+
+The gates, both measured 2026-09-06 in a campaign duel against Heishin:
+
+| byte | meaning |
+| --- | --- |
+| 0x8009B361 | opponent id, 1..39, and the DROP DB index + 1 |
+| 0x8009B365 | 0x80 while the duel came from the FREE DUEL screen (0x00 in the campaign) |
+| 0x801D06F4 | Free Duel unlock mask, MSB first: id -> byte id>>3, bit 0x80>>(id&7). Set AFTER the drop, so "clear" is "never beaten" |
+
+gFreeDuel_aDuelistRecords (0x801D071C) is NOT a first-win gate: a won campaign
+duel leaves it at 0 wins, because FreeDuel_Init is what updates it.
+
+Winning a duel from a script is the hard part -- writing 0 into the opponent's
+life points (0x800EA024, player at 0x800EA004) does NOT end it, the game only
+checks on damage. Ask the player to fight one, and watch with a one-second
+poll of the bytes above plus the trunk byte (0x801D024F + card id).
+
+## 9. File dialogs
 
 Export/Import open an SDL3 save/open dialog, which goes through the KDE
 portal here. Nothing scripted can fill it in through the debug server. Options:
@@ -239,7 +262,7 @@ portal here. Nothing scripted can fill it in through the debug server. Options:
 The KDE dialog has once come up with an empty name field (only `.ygocards`);
 the manager fills in `edited-cards.ygocards` when that happens.
 
-## 9. In-game places where an edited card is visible
+## 10. In-game places where an edited card is visible
 
 - LIBRARY: art, title strip, level (stars), attribute orb, guardian stars,
   ATK/DEF, type, description, frame colour (card view and grid tile).
@@ -254,7 +277,7 @@ description, ATK/DEF, both guardian stars, type, level, attribute, frame
 colour (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
 title strip derived from the name, price and password on the PASSWORD screen.
 
-## 10. Reading duel results
+## 11. Reading duel results
 
 Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 5..9, magic 10..14; opponent +15): +0xC id, +0xE ATK, +0x10 DEF, +0x12 modifier,
@@ -262,7 +285,7 @@ Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters
 defence). LP u16 at 0x800EA004 (player) / 0x800EA024 (opponent). Turn side
 0x8009B1D5, terrain 0x8009B364, deck written at the grid: 0x801D0200.
 
-## 11. Stopping
+## 12. Stopping
 
 ```sh
 kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)

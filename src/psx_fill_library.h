@@ -1,4 +1,4 @@
-/* psx_fill_library.h — MODS > FILL LIBRARY.
+/* psx_fill_library.h — MODS > LIBRARY PLACEHOLDERS.
  *
  * The LIBRARY lists all 722 cards in three states: never met (a blank entry),
  * SEEN but not owned (the card, drawn semi-transparent — a fusion result or a

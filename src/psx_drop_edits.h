@@ -64,8 +64,12 @@ int psx_drop_edits_save(void);
 /* Sharing, the same shape as the Card and Fusion managers': the player picks
  * a file. Export writes the current edit layer to path (a missing .ini is
  * added); import REPLACES the whole layer with that file's contents. Both
- * fill msg with the line the window shows. Importing marks the layer dirty;
- * nothing touches the live drop_table_edits.ini until the player saves.
+ * fill msg with the line the window shows.
+ *
+ * An import KEEPS what it imported: it writes drop_table_edits.ini itself, so
+ * the table is live in the running game and still there at the next launch,
+ * the way every other manager's import behaves. A missing or unreadable file
+ * changes nothing at all.
  *
  * share_dir is where the dialogs start: <player-data>/drop_tables, created
  * on demand. load_file is the raw import a bare name resolves against that
@@ -74,6 +78,23 @@ int  psx_drop_edits_export_file(const char *path, char *msg, unsigned cap);
 int  psx_drop_edits_import_file(const char *path, char *msg, unsigned cap);
 void psx_drop_edits_share_dir(char *out, unsigned cap);
 int  psx_drop_edits_load_file(const char *name_or_path);
+
+/* --- scripted story rewards ------------------------------------------------
+ *
+ * The card a duelist is guaranteed to drop when the CAMPAIGN beats them: the
+ * Drop Table Manager's other per-duelist setting, and the reason it lives in
+ * this file rather than one of its own. It is edited in the same window, kept
+ * by the same Save, and carried by the same Import / Export, so a table
+ * someone shares brings its scripted drops with it.
+ *
+ * card 0 means none. `every` 0 gives the card on the first campaign win only
+ * (the duelist's Free Duel unlock bit is what "first" means, see
+ * psx_story_rewards.c); `every` 1 gives it on every campaign win. Delivery
+ * lives in psx_story_rewards.c; this is only the storage.
+ */
+int psx_drop_edits_reward(int duelist, int *out_every);
+int psx_drop_edits_reward_set(int duelist, int card, int every);
+int psx_drop_edits_reward_count(void);
 
 /* Apply this duelist's edits to one tier, in place, over a plain 722-entry
  * weight array — the same contract as psx_drop_missing_transform: 1 means w

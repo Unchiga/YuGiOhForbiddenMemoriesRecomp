@@ -32,6 +32,7 @@
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
 #include "psx_fill_library.h"
+#include "psx_story_rewards.h"
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
@@ -621,6 +622,24 @@ static void handle_card_manager_shot(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
+/* story_rewards — the scripted card per duelist. {"duelist":0-38,"card":id}
+ * sets one (card 0 clears, "every":1 repeats it on later campaign wins),
+ * {"save":1} writes drop_table_edits.ini. The reply is the whole set plus
+ * what the last drop decided. */
+static void handle_story_rewards(int id, const char *json)
+{
+    const int d = json_get_int(json, "duelist", -1);
+    const int card = json_get_int(json, "card", -1);
+    if (d >= 0 && card >= 0)
+        psx_story_rewards_set(d, card, json_get_int(json, "every", 0));
+    if (json_get_int(json, "save", 0) && !psx_drop_edits_save()) {
+        send_err(id, "could not write drop_table_edits.ini"); return;
+    }
+    char buf[2048];
+    if (!psx_story_rewards_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
 /* fill_library — the MODS row that makes every card show in the LIBRARY.
  * {"on":1/0} drives the row; the reply is its state, plus how many cards the
  * save has seen and owns right now. */
@@ -1038,6 +1057,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_drops_state",  handle_card_drops_state);
     (void)psx_debug_add_command("drop_missing_state", handle_drop_missing_state);
     (void)psx_debug_add_command("fill_library",      handle_fill_library);
+    (void)psx_debug_add_command("story_rewards",     handle_story_rewards);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);

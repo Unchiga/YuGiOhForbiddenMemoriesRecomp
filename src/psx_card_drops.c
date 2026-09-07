@@ -22,6 +22,7 @@
 #include "mod_plugins.h"
 #include "psx_cd_overlay.h"
 #include "psx_game_hooks.h"
+#include "psx_story_rewards.h"
 #include "psx_video_menu.h"
 
 /* ---- MODS > CARD DROPS ----------------------------------------------------
@@ -456,7 +457,15 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
     s_cd_have_duel = 1;
     s_cd_page_duel = 1;
 
-    if (g_card_drops < 2) return;     /* 1 = the stock game, untouched */
+    /* MODS > STORY REWARDS steers the game's own in-flight roll onto a fixed
+     * card. It goes LAST, so the extras below roll from the stock table and
+     * only the game's own drop -- the one the results screen announces -- is
+     * the scripted one. psx_story_rewards.c puts the table back on the award
+     * that follows this call. */
+    if (g_card_drops < 2) {           /* 1 = the stock game, untouched */
+        psx_story_rewards_steer_roll(cpu, cpu->gpr[4] & 0xFFu);
+        return;
+    }
     int count = g_card_drops;
     if (count > PSX_VM_CARD_DROPS_MAX) count = PSX_VM_CARD_DROPS_MAX;
 
@@ -507,6 +516,7 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
                                       6));
     *cpu = saved;
     s_cd_granted += granted;
+    psx_story_rewards_steer_roll(cpu, tier);
 
     if (granted > 0) {
         char msg[48];
@@ -566,6 +576,9 @@ void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
     }
     if (s_cd_copies_this_duel[id] < 255u) s_cd_copies_this_duel[id]++;
     s_cd_awarded_total++;
+    /* The game has read its card out of the steered table; put the table back
+     * before anything else looks at it. */
+    psx_story_rewards_restore_table();
 }
 
 /* Chest display-list builder entry: arm the overlay for this build.

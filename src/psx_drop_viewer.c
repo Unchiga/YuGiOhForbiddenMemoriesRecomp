@@ -57,6 +57,7 @@
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
 #include "psx_drop_missing.h"
+#include "psx_story_rewards.h"
 #include "psx_duelist_icon_cache.h"
 #include "psx_duelist_icons.h"
 #include "psx_duelist_portraits.h"
@@ -285,7 +286,7 @@ static uint32_t s_msg_until;
 
 /* Right-click context menu: a handful of actions on whatever was under the
  * pointer. One level, no submenus — band choices are spelled out as items. */
-enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE };
+enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE, CM_STORY };
 #define CMENU_MAX 12
 static struct {
     char label[64];
@@ -858,6 +859,19 @@ static void cmenu_run(int i)
     case CM_EDIT_WEIGHT: edit_begin(a); break;
     case CM_MOVE_BAND:   move_row_band(a, b); break;
     case CM_REMOVE:      remove_row_band(a); break;
+    case CM_STORY:
+        /* a = duelist, b = card (0 clears), c = 1 for every win */
+        if (psx_story_rewards_set(a, b, c)) {
+            char m[120];
+            if (b) snprintf(m, sizeof m, "%.20s gives %.24s on %s campaign win. Save to keep it.",
+                            PSX_DROP_DB[a].name, psx_card_packs_display_name(b),
+                            c ? "every" : "the first");
+            else   snprintf(m, sizeof m, "%.20s gives no scripted card any more. Save to keep it.",
+                            PSX_DROP_DB[a].name);
+            say(m);
+            invalidate();
+        }
+        break;
     default: break;
     }
 }
@@ -1079,15 +1093,21 @@ static void draw_drop_rows(int name_of_card)
          * card. It exists to be a drop target (and a quick-add on click), so
          * it draws dimmed with no numbers. */
         const int grey = d->tier < 0;
+        /* The scripted first-win pair's row is drawn amber -- the rank column
+         * has no room for a tag, and the panel title spells the pair out in
+         * words anyway. Dim while MODS > STORY REWARDS is off, because then
+         * the pair is set but not in play. */
+        const int story = psx_story_rewards_get(d->duelist, NULL) == d->card;
+        const uint32_t namecol = grey ? COL_DIM : (story ? COL_WARN : COL_TEXT);
         if (name_of_card) {
             char idb[8];
             snprintf(idb, sizeof idb, "%d", d->card);
             text_right(L->r_id_r, base, idb, COL_DIM, fr);
-            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_packs_display_name(d->card), COL_TEXT, fr, L->r_name_r - L->r_name_x);
+            psx_ui_text_clip(&s_cv, L->r_name_x, base, psx_card_packs_display_name(d->card), namecol, fr, L->r_name_r - L->r_name_x);
         } else {
             draw_icon(L->r_icon_x, y + (L->row_h - icon) / 2, icon, d->duelist, bg);
             psx_ui_text_clip(&s_cv, L->r_name_x, base, PSX_DROP_DB[d->duelist].name,
-                             grey ? COL_DIM : COL_TEXT, fr, L->r_name_r - L->r_name_x);
+                             namecol, fr, L->r_name_r - L->r_name_x);
         }
         if (grey) {
             psx_ui_text(&s_cv, L->r_rank_x, base, S_DASH, COL_DIM, fr);
@@ -1205,8 +1225,14 @@ static void draw_duelists_view(void)
     const PsxUiFace *fr = face_body();
     char sel[96], ls[32], rs[32];
     const int ec = psx_drop_edits_count(s_sel_duelist);
-    if (ec) snprintf(sel, sizeof sel, "%s " S_DASH " %d edit%s", PSX_DROP_DB[s_sel_duelist].name, ec, ec == 1 ? "" : "s");
-    else    snprintf(sel, sizeof sel, "%s", PSX_DROP_DB[s_sel_duelist].name);
+    int sr_every = 0;
+    const int sr = psx_story_rewards_get(s_sel_duelist, &sr_every);
+    int tn = snprintf(sel, sizeof sel, "%s", PSX_DROP_DB[s_sel_duelist].name);
+    if (ec && tn < (int)sizeof sel)
+        tn += snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %d edit%s", ec, ec == 1 ? "" : "s");
+    if (sr && tn < (int)sizeof sel)
+        snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %s win: %.24s",
+                 sr_every ? "every" : "first", psx_card_packs_display_name(sr));
     uint32_t rcol = COL_DIM;
     const char *rside = right_side(rs, sizeof rs, &rcol);
     draw_panel(0, "39 duelists", COL_TEXT, left_side(ls, sizeof ls), COL_DIM);
@@ -1603,6 +1629,25 @@ static void rclick(int x, int y)
                 cmenu_add(buf, CM_MOVE_BAND, i, t, 0);
             }
             cmenu_add("Remove from the band", CM_REMOVE, i, 0, 0);
+            /* MODS > STORY REWARDS: the card this duelist is guaranteed to
+             * drop the first time the campaign beats them. A row names both
+             * halves of the pair in either view -- BY CARD rows are the
+             * duelists who drop the selected card, BY DUELIST rows are the
+             * cards the selected duelist drops. */
+            {
+                const int d = s_rows[i].duelist, c = s_rows[i].card;
+                int ev = 0;
+                if (psx_story_rewards_get(d, &ev) == c) {
+                    cmenu_add(ev ? "Give it on the first win only"
+                                 : "Give it on every campaign win",
+                              CM_STORY, d, c, !ev);
+                    cmenu_add("Stop giving this card", CM_STORY, d, 0, 0);
+                } else {
+                    snprintf(buf, sizeof buf, "Give this on the first win vs %.20s",
+                             PSX_DROP_DB[d].name);
+                    cmenu_add(buf, CM_STORY, d, c, 0);
+                }
+            }
         } else if (s_view == VIEW_DUELISTS) {
             /* Empty space in a duelist's table: offer to add the card that
              * is selected in the BY CARD view. */
@@ -1633,6 +1678,19 @@ static void rclick(int x, int y)
                 snprintf(buf, sizeof buf, "Add %d %.24s (%s)", s_sel_card,
                          psx_card_packs_display_name(s_sel_card), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, d, s_sel_card, t);
+            }
+            {
+                int ev = 0;
+                if (psx_story_rewards_get(d, &ev) == s_sel_card) {
+                    cmenu_add(ev ? "Give it on the first win only"
+                                 : "Give it on every campaign win",
+                              CM_STORY, d, s_sel_card, !ev);
+                    cmenu_add("Stop giving this card", CM_STORY, d, 0, 0);
+                } else {
+                    snprintf(buf, sizeof buf, "Give it on the first win vs %.20s",
+                             PSX_DROP_DB[d].name);
+                    cmenu_add(buf, CM_STORY, d, s_sel_card, 0);
+                }
             }
         }
     }

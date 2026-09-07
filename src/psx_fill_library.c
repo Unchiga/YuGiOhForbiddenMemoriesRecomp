@@ -1,4 +1,4 @@
-/* psx_fill_library.c — see psx_fill_library.h.
+/* psx_fill_library.c — MODS > LIBRARY PLACEHOLDERS. See psx_fill_library.h.
  *
  * WHERE "SEEN" LIVES
  * ------------------
@@ -238,14 +238,14 @@ static void row_changed(int value)
     s_on = value ? 1 : 0;
     if (!s_on && s_active) revert(psx_ygo_save_is_live());
     if (psx_video_menu_is_restoring()) return;
-    host_osd_push(s_on ? "Fill library: on, open the LIBRARY to see it"
-                       : "Fill library: off, your own list is back", 1600);
+    host_osd_push(s_on ? "Library placeholders: on, open the LIBRARY to see them"
+                       : "Library placeholders: off, your own list is back", 1600);
 }
 
 void psx_fill_library_register_menu(void)
 {
     const int row = psx_video_menu_add_option(
-        PSX_VM_MENU_MODS, "Fill library", HINTS[1],
+        PSX_VM_MENU_MODS, "Library placeholders", HINTS[1],
         ONOFF, 2, "fill_library", 0, row_changed);
     psx_video_menu_set_row_hints(row, HINTS);
 }
