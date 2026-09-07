@@ -397,35 +397,43 @@ def price_roll(rng):
 # Every cast the card.ini `on_*` and `effect` keys accept, with what it says
 # on the card. `bad` marks the ones that hurt their owner: a randomized game is
 # meant to have those too.
-CAST_GOOD = [('heal 500', 'gain 500 LP'), ('heal 1000', 'gain 1000 LP'), ('heal 2000', 'gain 2000 LP'),
-             ('damage 500', 'the foe loses 500 LP'), ('damage 1000', 'the foe loses 1000 LP'),
-             ('damage 2000', 'the foe loses 2000 LP'),
-             ('raigeki', 'destroy every foe monster'), ('dark_hole', 'destroy every monster'),
-             ('dragon_jar', 'destroy every foe Dragon'), ('stop_defense', 'foe monsters go to attack mode'),
-             ('flip', 'foe monsters flip face down'), ('weaken 500', 'foe monsters lose 500 ATK'),
-             ('weaken 1000', 'foe monsters lose 1000 ATK'), ('swords', 'Swords of Revealing Light'),
-             ('cursebreaker', 'Cursebreaker'), ('harpie', 'destroy foe magic and traps'),
-             ('destroy_strongest', 'destroy the strongest foe monster'),
-             ('destroy_atk 1500', 'destroy foe monsters of 1500+ ATK'),
-             ('destroy_atk 2500', 'destroy foe monsters of 2500+ ATK'), ('gamble', 'Time Wizard coin flip')]
-CAST_BAD = [('lose_lp 500', 'you lose 500 LP'), ('lose_lp 1000', 'you lose 1000 LP'),
-            ('lose_lp 2000', 'you lose 2000 LP'), ('destroy_own', 'destroy your own monsters'),
-            ('destroy_own_lp', 'destroy your own monsters and lose half their ATK in LP'),
-            ('coin_lp', 'coin flip: tails, lose half your LP'),
-            ('weaken -500', 'foe monsters gain 500 ATK'),
-            ('50%: raigeki; else: destroy_own_lp', 'coin flip: heads destroys every foe monster, tails your own and half their ATK in LP'),
-            ('50%: heal 2000; else: lose_lp 2000', 'coin flip: heads you gain 2000 LP, tails you lose 2000'),
-            ('50%: destroy_strongest; else: destroy_own', 'coin flip: heads destroys the strongest foe, tails your own monsters')]
-TRIGGERS = [('on_summon', 'When summoned'), ('on_flip', 'When flipped up'),
-            ('on_attack', 'When it attacks'), ('on_death', 'When destroyed'),
-            ('each_turn', 'Each of your turns'), ('opp_turn', 'Each foe turn')]
-BATTLES = [('indestructible', 'Cannot be destroyed in battle'), ('mutual', 'Both monsters die when it battles'),
-           ('slayer', 'Destroys any monster it battles')]
-IMMUNES = [('traps', 'Immune to traps'), ('magic', 'Immune to magic'), ('traps, magic', 'Immune to traps and magic')]
-BONUSES = [('500', 'ATK and DEF +500 on the field'), ('1000', 'ATK and DEF +1000 on the field'),
-           ('-500', 'ATK and DEF -500 on the field'), ('-1000', 'ATK and DEF -1000 on the field'),
-           ('300 per ally', 'ATK and DEF +300 per ally'), ('300 per enemy', 'ATK and DEF +300 per foe monster'),
-           ('-200 per enemy', 'ATK and DEF -200 per foe monster'), ('200 per hand', 'ATK and DEF +200 per card in hand')]
+CAST_GOOD = [('heal 500', 'gain 500 LP', '+500 LP'), ('heal 1000', 'gain 1000 LP', '+1000 LP'),
+             ('heal 2000', 'gain 2000 LP', '+2000 LP'),
+             ('damage 500', 'the foe loses 500 LP', 'foe -500 LP'), ('damage 1000', 'the foe loses 1000 LP', 'foe -1000 LP'),
+             ('damage 2000', 'the foe loses 2000 LP', 'foe -2000 LP'),
+             ('raigeki', 'destroy every foe monster', 'kill all foes'), ('dark_hole', 'destroy every monster', 'kill everything'),
+             ('dragon_jar', 'destroy every foe Dragon', 'kill foe Dragons'),
+             ('stop_defense', 'foe monsters to attack mode', 'foes to ATK mode'),
+             ('flip', 'foe monsters flip face down', 'foes face down'),
+             ('weaken 500', 'foe monsters lose 500 ATK', 'foes -500 ATK'),
+             ('weaken 1000', 'foe monsters lose 1000 ATK', 'foes -1000 ATK'),
+             ('swords', 'Swords of Revealing Light', 'Swords'), ('cursebreaker', 'Cursebreaker', 'Cursebreaker'),
+             ('harpie', 'destroy foe magic and traps', 'kill foe M/T'),
+             ('destroy_strongest', 'destroy the strongest foe', 'kill best foe'),
+             ('destroy_atk 1500', 'destroy foes of 1500+ ATK', 'kill foes 1500+'),
+             ('destroy_atk 2500', 'destroy foes of 2500+ ATK', 'kill foes 2500+'),
+             ('gamble', 'Time Wizard coin flip', 'T.Wizard coin')]
+CAST_BAD = [('lose_lp 500', 'you lose 500 LP', 'you -500 LP'), ('lose_lp 1000', 'you lose 1000 LP', 'you -1000 LP'),
+            ('lose_lp 2000', 'you lose 2000 LP', 'you -2000 LP'),
+            ('destroy_own', 'destroy your own monsters', 'kill own'),
+            ('destroy_own_lp', 'destroy your own, lose half their ATK in LP', 'kill own, lose LP'),
+            ('coin_lp', 'coin flip: tails, lose half your LP', 'coin: tails -1/2 LP'),
+            ('weaken -500', 'foe monsters gain 500 ATK', 'foes +500 ATK'),
+            ('50%: raigeki; else: destroy_own_lp', 'coin: heads kill all foes, tails your own', 'coin: kill foes/own'),
+            ('50%: heal 2000; else: lose_lp 2000', 'coin: heads +2000 LP, tails -2000', 'coin: +/-2000 LP'),
+            ('50%: destroy_strongest; else: destroy_own', 'coin: heads kill best foe, tails your own', 'coin: kill best/own')]
+TRIGGERS = [('on_summon', 'When summoned', 'Summon'), ('on_flip', 'When flipped up', 'Flip'),
+            ('on_attack', 'When it attacks', 'Attack'), ('on_death', 'When destroyed', 'Death'),
+            ('each_turn', 'Each of your turns', 'Your turn'), ('opp_turn', 'Each foe turn', 'Foe turn')]
+BATTLES = [('indestructible', 'Cannot be destroyed in battle', 'No battle death'),
+           ('mutual', 'Both monsters die when it battles', 'Mutual death'),
+           ('slayer', 'Destroys any monster it battles', 'Slays in battle')]
+IMMUNES = [('traps', 'Immune to traps', 'No traps'), ('magic', 'Immune to magic', 'No magic'),
+           ('traps, magic', 'Immune to traps and magic', 'No traps/magic')]
+BONUSES = [('500', 'ATK and DEF +500 on the field', '+500 on field'), ('1000', 'ATK and DEF +1000 on the field', '+1000 on field'),
+           ('-500', 'ATK and DEF -500 on the field', '-500 on field'), ('-1000', 'ATK and DEF -1000 on the field', '-1000 on field'),
+           ('300 per ally', 'ATK and DEF +300 per ally', '+300 per ally'), ('300 per enemy', 'ATK and DEF +300 per foe monster', '+300 per foe'),
+           ('-200 per enemy', 'ATK and DEF -200 per foe monster', '-200 per foe'), ('200 per hand', 'ATK and DEF +200 per card in hand', '+200 per hand card')]
 TERRAINS = ['Forest', 'Wasteland', 'Mountain', 'Sogen', 'Umi', 'Yami']
 # Magic and Ritual cards: (effect, amount or None, text). destroy_type and
 # field take a type or terrain rolled at generation time.
@@ -449,8 +457,7 @@ TRAP_IDS = range(681, 687)       # the six the game's attack check reads a ceili
 FIELD_IDS = range(330, 336)      # Forest .. Yami
 
 
-def card_text(sentences, width=20, lines=6):
-    """The card shows six lines of twenty characters; | is a line break."""
+def wrap_lines(sentences, width=20):
     words = ' '.join(sentences).split()
     out, cur = [], ''
     for w in words:
@@ -462,7 +469,33 @@ def card_text(sentences, width=20, lines=6):
             cur = (cur + ' ' + w).strip()
     if cur:
         out.append(cur)
-    return '|'.join(out[:lines])
+    return out
+
+
+def card_text(sentences, width=20, lines=6):
+    """The card shows six lines of twenty characters; | is a line break."""
+    return '|'.join(wrap_lines(sentences, width)[:lines])
+
+
+def fits(sentences, width=20, lines=6):
+    return len(wrap_lines(sentences, width)) <= lines
+
+
+def settle(items):
+    """items: [(ini lines, full sentence, terse sentence)] in the order they
+    were rolled. Every effect is kept if the six lines can hold it: the full
+    wording first, the terse wording for the whole card when the full one
+    overflows, and only then is the last effect dropped. Returns the kept
+    ini lines and the sentences."""
+    while items:
+        for k in (1, 2):
+            texts = [it[k] for it in items]
+            if fits(texts):
+                return [l for it in items for l in it[0]], texts
+        if len(items) == 1:
+            break
+        items = items[:-1]
+    return [l for it in items for l in it[0]], [it[2] for it in items]
 
 
 def short_name(cards, c, n=14):
@@ -494,10 +527,7 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
 
     def a_cast():
         bad = rng.random() < 0.35
-        rule, text = rng.choice(CAST_BAD if bad else CAST_GOOD)
-        if bad:
-            stats['bad'] += 1
-        return rule, text
+        return rng.choice(CAST_BAD if bad else CAST_GOOD)      # (rule, full, terse)
 
     for c in range(1, NCARDS + 1):
         lines = ['color = %s' % rng.choice(COLORS), 'name_color = %s' % rng.choice(NAME_COLORS),
@@ -513,27 +543,40 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
             lines += ['attack = %d' % atk, 'defense = %d' % dfn, 'level = %d' % level_for(atk, dfn, rng),
                       'type = %s' % rng.choice(TYPES), 'attribute = %s' % rng.choice(ATTRS),
                       'star1 = %s' % s1, 'star2 = %s' % s2]
-            if c in battle_cards:
-                rule, text = rng.choice(BATTLES)
-                lines.append('battle = %s' % rule); said.append(text + '.'); stats['battles'] += 1
-                if rng.random() < 0.5:
-                    rule, text = rng.choice(IMMUNES)
-                    lines.append('immune = %s' % rule); said.append(text + '.')
+            items = []
             if c in fx_cards:
                 trigs = rng.sample(TRIGGERS, 2 if rng.random() < 0.33 else 1)
-                for trig, when in trigs:
-                    rule, text = a_cast()
-                    lines.append('%s = %s' % (trig, rule)); said.append('%s: %s.' % (when, text)); stats['casts'] += 1
+                for trig, when, when_t in trigs:
+                    rule, full, terse = a_cast()
+                    items.append((['%s = %s' % (trig, rule)], '%s: %s.' % (when, full), '%s: %s.' % (when_t, terse)))
+            if c in battle_cards:
+                rule, full, terse = rng.choice(BATTLES)
+                items.append((['battle = %s' % rule], full + '.', terse + '.'))
+                if rng.random() < 0.5:
+                    rule, full, terse = rng.choice(IMMUNES)
+                    items.append((['immune = %s' % rule], full + '.', terse + '.'))
             if c in bonus_cards:
-                rule, text = rng.choice(BONUSES)
-                lines.append('bonus = %s' % rule); said.append(text + '.'); stats['bonuses'] += 1
+                rule, full, terse = rng.choice(BONUSES)
+                items.append((['bonus = %s' % rule], full + '.', terse + '.'))
+            if items:
+                kept, texts = settle(items)
+                lines += kept
+                said += texts
+                stats['casts'] += sum(1 for l in kept if l.split(' =')[0] in ('on_summon', 'on_flip', 'on_attack', 'on_death', 'each_turn', 'opp_turn'))
+                stats['bad'] += sum(1 for l in kept if any(b in l for b in ('lose_lp', 'destroy_own', 'coin_lp', 'weaken -')))
+                stats['battles'] += sum(1 for l in kept if l.startswith('battle'))
+                stats['bonuses'] += sum(1 for l in kept if l.startswith('bonus'))
         elif s['type'] in (TYPE_MAGIC, TYPE_RITUAL):
             if s['type'] == TYPE_RITUAL and rng.random() < 0.5:
                 mats = [rng.choice(monsters) for _ in range(3)]
                 res = rng.choice(strong)
                 lines.append('effect = ritual')
                 lines.append('ritual = %d, %d, %d -> %d' % (mats[0], mats[1], mats[2], res))
-                said.append('Ritual: %s + %s + %s -> %s.' % (short_name(cards, mats[0], 9), short_name(cards, mats[1], 9), short_name(cards, mats[2], 9), short_name(cards, res, 20)))
+                for nm in (9, 7, 5):
+                    text = 'Ritual: %s + %s + %s -> %s.' % (short_name(cards, mats[0], nm), short_name(cards, mats[1], nm), short_name(cards, mats[2], nm), short_name(cards, res, 20))
+                    if fits([text]):
+                        break
+                said.append(text)
                 stats['rituals'] += 1
             else:
                 fx, amount, text = rng.choice(MAGIC_FX)
@@ -549,10 +592,15 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
                 stats['spells'] += 1
             if c in FIELD_IDS:
                 boosts = [(t, rng.choice([-500, -300, 0, 300, 500, 1000])) for t in TYPES]
-                lines.append('boost = ' + ', '.join('%s %+d' % (t, v) for t, v in boosts if v))
-                top = sorted((b for b in boosts if b[1]), key=lambda b: -abs(b[1]))[:3]
-                said.append('Field: ' + ', '.join('%s %+d' % (t, v) for t, v in top) + '.')
-                stats['fields'] += 1
+                top = sorted((b for b in boosts if b[1]), key=lambda b: -abs(b[1]))
+                for k in (3, 2, 1):
+                    text = 'Field: ' + ', '.join('%s %+d' % (t, v) for t, v in top[:k]) + ' and more.'
+                    if fits(said + [text]):
+                        break
+                if fits(said + [text]):
+                    lines.append('boost = ' + ', '.join('%s %+d' % (t, v) for t, v in boosts if v))
+                    said.append(text)
+                    stats['fields'] += 1
         elif s['type'] == TYPE_TRAP and c in TRAP_IDS:
             ceil = rng.randrange(3, 46) * 100      # 300 .. 4500: a 0 would never fire
             lines.append('trap_atk_max = %d' % ceil)
