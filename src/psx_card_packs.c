@@ -590,10 +590,10 @@ int psx_card_packs_load_png_rgb(const char *path, int w, int h, uint8_t *rgb_out
     return load_png_rgb(path, w, h, rgb_out);
 }
 
-void psx_card_packs_quantize(const uint8_t *rgb, int n_bytes, int ncolors,
+void psx_card_packs_quantize(const uint8_t *rgb, int n_pixels, int ncolors,
                              uint8_t *idx_out, uint16_t *clut_out)
 {
-    quantize(rgb, n_bytes, ncolors, idx_out, clut_out);
+    quantize(rgb, n_pixels, ncolors, idx_out, clut_out);
 }
 
 static int load_png_rgb(const char *path, int W, int H, uint8_t *out /* W*H*3 */)
@@ -629,9 +629,21 @@ static int load_png_rgb(const char *path, int W, int H, uint8_t *out /* W*H*3 */
     return 1;
 }
 
-/* ---- median-cut quantiser --------------------------------------------------
+/* ---- median-cut quantiser, refined -----------------------------------------
  * RGB -> <= ncol palette indices and a 15-bit CLUT. Index 0 is kept opaque
- * black (0x8000) when it is black, since 0x0000 would be transparent. */
+ * black (0x8000) when it is black, since 0x0000 would be transparent.
+ *
+ * Median cut alone paints every pixel with the AVERAGE of the box it fell in,
+ * and a box is only narrow along the axes it was split on: a pixel can sit
+ * far from its own box's average and right next to another entry's. On a
+ * soft picture (a photo, an anime frame) that put more than half the pixels
+ * on the wrong entry and showed as green specks across a face and stripes
+ * through hair (a replaced FREE DUEL portrait, reported 2026-09-08). So the
+ * cut only seeds the palette: a few rounds of nearest-entry reassignment and
+ * re-averaging (k-means, in the 5-bit colours the game will draw) move each
+ * pixel to the entry closest to it and pull the entries onto the pixels they
+ * actually hold. Card art is 9792 pixels x 256 entries, a few million
+ * distance checks a round, well under a frame. */
 typedef struct { int lo, hi; } Box;
 static const uint8_t *s_qpx;
 static int  s_qorder[ART_BYTES];
@@ -642,8 +654,21 @@ static int cmp_px(const void *a, const void *b)
     const uint8_t *pb = s_qpx + (size_t)(*(const int *)b) * 3u;
     return (int)pa[s_qaxis] - (int)pb[s_qaxis];
 }
+
+/* 8-bit channel -> the 5-bit level whose <<3 decode is nearest. */
+static unsigned q5(long v)
+{
+    long l = (v + 4) >> 3;
+    return (unsigned)(l > 31 ? 31 : l);
+}
+
+#define QUANT_ROUNDS 6
+
 static void quantize(const uint8_t *rgb, int n, int ncol, uint8_t *idx_out, uint16_t *clut_out)
 {
+    if (n > ART_BYTES) n = ART_BYTES;           /* s_qorder's size; n is PIXELS */
+    if (ncol > 256) ncol = 256;
+    if (n <= 0 || ncol <= 0) return;
     s_qpx = rgb;
     for (int i = 0; i < n; i++) s_qorder[i] = i;
     Box boxes[256]; int nb = 1; boxes[0].lo = 0; boxes[0].hi = n;
@@ -665,15 +690,47 @@ static void quantize(const uint8_t *rgb, int n, int ncol, uint8_t *idx_out, uint
         const int mid = (boxes[best].lo + boxes[best].hi) / 2;
         boxes[nb].lo = mid; boxes[nb].hi = boxes[best].hi; boxes[best].hi = mid; nb++;
     }
+    /* Seed: each box's average, as the 8-bit colour its 5-bit entry decodes
+     * to, so the distances below are measured against what will be drawn. */
+    uint8_t pal[256][3];
     for (int b = 0; b < nb; b++) {
         long r = 0, g = 0, bl = 0; const int cnt = boxes[b].hi - boxes[b].lo;
         for (int i = boxes[b].lo; i < boxes[b].hi; i++) {
             const uint8_t *p = rgb + (size_t)s_qorder[i] * 3u;
             r += p[0]; g += p[1]; bl += p[2];
-            idx_out[s_qorder[i]] = (uint8_t)b;
         }
         if (cnt) { r /= cnt; g /= cnt; bl /= cnt; }
-        uint16_t c = (uint16_t)((r >> 3) | ((g >> 3) << 5) | ((bl >> 3) << 10));
+        pal[b][0] = (uint8_t)(q5(r) << 3); pal[b][1] = (uint8_t)(q5(g) << 3); pal[b][2] = (uint8_t)(q5(bl) << 3);
+    }
+    /* Refine: nearest entry for every pixel, then every entry to the mean of
+     * its pixels. An entry that ends up with no pixels keeps its colour. */
+    static long sum[256][4];
+    for (int round = 0; round < QUANT_ROUNDS; round++) {
+        memset(sum, 0, sizeof(long) * 4u * (size_t)nb);
+        int moved = 0;
+        for (int i = 0; i < n; i++) {
+            const uint8_t *p = rgb + (size_t)i * 3u;
+            int best = 0; long bd = 1L << 30;
+            for (int b = 0; b < nb; b++) {
+                const long dr = (long)p[0] - pal[b][0], dg = (long)p[1] - pal[b][1], db = (long)p[2] - pal[b][2];
+                const long d = dr * dr + dg * dg + db * db;
+                if (d < bd) { bd = d; best = b; }
+            }
+            if (round && idx_out[i] != (uint8_t)best) moved = 1;
+            idx_out[i] = (uint8_t)best;
+            sum[best][0] += p[0]; sum[best][1] += p[1]; sum[best][2] += p[2]; sum[best][3]++;
+        }
+        if (round && !moved) break;
+        if (round == QUANT_ROUNDS - 1) break;    /* keep the palette the indices were chosen against */
+        for (int b = 0; b < nb; b++) {
+            if (!sum[b][3]) continue;
+            pal[b][0] = (uint8_t)(q5(sum[b][0] / sum[b][3]) << 3);
+            pal[b][1] = (uint8_t)(q5(sum[b][1] / sum[b][3]) << 3);
+            pal[b][2] = (uint8_t)(q5(sum[b][2] / sum[b][3]) << 3);
+        }
+    }
+    for (int b = 0; b < nb; b++) {
+        uint16_t c = (uint16_t)((pal[b][0] >> 3) | ((pal[b][1] >> 3) << 5) | ((pal[b][2] >> 3) << 10));
         if (c == 0) c = 0x8000;
         clut_out[b] = c;
     }

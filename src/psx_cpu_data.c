@@ -480,7 +480,15 @@ static int portraits_install(void)
         if (!psx_card_packs_load_png_rgb(png, TILE_W, TILE_W, rgb)) continue;
         static uint8_t idx[TILE_PIXELS];
         uint16_t clut[TILE_CLUT];
-        psx_card_packs_quantize(rgb, TILE_PIXELS * 3, TILE_CLUT, idx, clut);
+        /* PIXELS, not bytes. With the byte count the quantiser ran over
+         * 6912 "pixels": it read on past rgb into the tile block, and wrote
+         * indices past idx into rgb -- which sits right after it -- so the
+         * first 32 rows of the picture were being replaced by index bytes
+         * while it was still being read. On the grid that was green specks
+         * across the face with a one-pass quantiser, and 30-40 rows of
+         * noise over a face once the quantiser made a second pass (found
+         * 2026-09-08, from a player's Duel Master K). */
+        psx_card_packs_quantize(rgb, TILE_PIXELS, TILE_CLUT, idx, clut);
         uint8_t *tile = block + (uint32_t)(d + 1) * TILE_BYTES;
         for (int i = 0; i < TILE_PIXELS; i++) tile[i] = (uint8_t)(idx[i] & 63u);
         for (int k = 0; k < TILE_CLUT; k++) {

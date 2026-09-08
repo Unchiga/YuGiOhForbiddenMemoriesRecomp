@@ -116,7 +116,10 @@ int  psx_card_packs_has_monster_effect(const PsxCardPack *c);
  * a median-cut quantiser that returns indices plus a 15-bit CLUT. Neither
  * knows anything about cards. */
 int  psx_card_packs_load_png_rgb(const char *path, int w, int h, uint8_t *rgb_out);
-void psx_card_packs_quantize(const uint8_t *rgb, int n_bytes, int ncolors,
+/* n_pixels PIXELS (rgb holds 3 bytes each; idx_out holds one byte each), at
+ * most the card face's 9792. Passing the byte count here once made the
+ * quantiser run three times past both buffers (see psx_cpu_data.c). */
+void psx_card_packs_quantize(const uint8_t *rgb, int n_pixels, int ncolors,
                              uint8_t *idx_out, uint16_t *clut_out);
 
 /* Frame colors: the disc carries six palettes (only four are used in stock:
