@@ -125,15 +125,35 @@
  * and the duelist names take the top of the tail (see the header). */
 #define NAMES_BASE     0x801D9800u
 #define NAMES_LIMIT    PSX_CARD_PACKS_NAMES_LIMIT
-/* Descriptions: offsets are relative to 0x801C0000, so the strings must sit
- * in that 64 KB. The stock texts end at 0x801CD59E; psx_card_extend's
- * relocated tables run 0x801CD5A0..~0x801CEB90 and the parked free-duel
- * rows experiment (tools/free_duel_rows/) claimed 0x801CFE00, which leaves
- * this gap. */
+/* Descriptions: the u16 at DESC_TABLE + 2*id is an offset from DESC_SEGMENT
+ * (Text_LookupString, ids >= 0xD000 use the 0x801C base), so a text can only
+ * live inside that 64 KB. The stock texts sit back to back at
+ * 0x801C09F5..0x801CD59F, 52138 bytes for the 722 cards (measured 2026-09-07
+ * in a reporter's savestate RAM and on this box: the table is strictly
+ * increasing and every string ends where the next begins), and nothing but
+ * that table refers to them. psx_card_extend's relocated tables start at
+ * 0x801CD5A0, the parked free-duel rows experiment (tools/free_duel_rows/)
+ * claimed 0x801CFE00, and the 4608 bytes between 0x801CEC00 and there are
+ * free.
+ *
+ * Until 2026-09-07 every replacement went into that free gap and the rest
+ * silently kept the stock text: a whole-game package with 551 descriptions
+ * showed 68 of them (the lowest ids) and stock for the others, in the
+ * Library, Build Deck and the duel alike (a randomizer tester's report; the
+ * savestate they sent had exactly 68 table entries pointing into the gap,
+ * and so did this box). So the bank itself is re-laid (DescBank below):
+ * every card's effective text, the replacement or the stock bytes, is packed
+ * back to back from the first stock address, overflowing into the gap, and
+ * the table is repointed. The stock bytes are snapshotted from RAM in the
+ * first pass, before anything is written, and validated first. A savestate
+ * puts the stock bank back; the per-frame pass compares the 722 table
+ * entries and rewrites the image when any differ. */
 #define DESC_TABLE     0x801C0200u        /* + id*2, entry index 0x100+id */
 #define DESC_SEGMENT   0x801C0000u
-#define DESC_BASE      0x801CEC00u
-#define DESC_LIMIT     0x801CFE00u
+#define DESC_BANK_END  0x801CD5A0u        /* psx_card_extend's STATS_NEW */
+#define DESC_GAP_LO    0x801CEC00u
+#define DESC_GAP_HI    0x801CFE00u
+#define DESC_BANK_CAP  (DESC_BANK_END - 0x801C0800u)   /* the image from the first string */
 #define DESC_COLS      20
 #define DESC_LINES     6
 
@@ -157,17 +177,24 @@ static int encode_char(char c)
 int psx_card_packs_encode_char(char c) { return encode_char(c); }
 
 /* Game text -> ASCII, FE -> '|', unknown glyphs -> '?'. */
-static void decode_text(uint32_t addr, char *out, size_t cap)
+static void decode_bytes(const uint8_t *p, uint32_t len, char *out, size_t cap)
 {
     size_t n = 0;
-    for (uint32_t i = 0; n + 1 < cap && i < 512; i++) {
-        const uint8_t b = psx_mod_read_byte(addr + i);
+    for (uint32_t i = 0; n + 1 < cap && i < len; i++) {
+        const uint8_t b = p[i];
         if (b == 0xFF) break;
         if (b == 0xFE) { out[n++] = '|'; continue; }
         if (b >= 0xF0) { i++; continue; }          /* control code + operand */
         out[n++] = (b < sizeof CODE_TABLE && CODE_TABLE[b]) ? CODE_TABLE[b] : '?';
     }
     out[n] = 0;
+}
+static void decode_text(uint32_t addr, char *out, size_t cap)
+{
+    uint8_t buf[512];
+    uint32_t i;
+    for (i = 0; i < sizeof buf; i++) { buf[i] = psx_mod_read_byte(addr + i); if (buf[i] == 0xFF) break; }
+    decode_bytes(buf, i < sizeof buf ? i + 1u : (uint32_t)sizeof buf, out, cap);
 }
 
 /* Description text -> game bytes. "|" or a literal "\n" breaks a line; with
@@ -532,6 +559,7 @@ typedef struct {
     uint32_t str_addr;
     uint8_t  denc[PSX_CARD_PACK_DESC_MAX + DESC_LINES + 2];
     int      denc_len;                /* incl. the 0xFF, 0 = stock description */
+    int      desc_placed;             /* the replacement is in the bank (else it kept stock for room) */
     uint32_t desc_addr;
     /* disc-side */
     int      rec_override;            /* the 7 record sectors are overridden */
@@ -549,6 +577,129 @@ static int      s_menu_row = -1;
 static unsigned s_generation;
 static uint32_t s_names_next = NAMES_BASE;
 static int      s_pw_dirty;           /* the price/password sectors need a rebuild */
+
+/* ---- the description bank ---------------------------------------------------- */
+typedef struct {
+    int      ok;                        /* 1 snapshot valid, -1 refused, 0 not yet */
+    int      laid;                      /* an image exists */
+    uint32_t lo;                        /* address of the first stock string */
+    uint32_t stock_n;                   /* stock bytes from lo */
+    uint16_t stock_off[CARD_COUNT + 1];
+    uint16_t stock_len[CARD_COUNT + 1]; /* incl. the 0xFF */
+    uint8_t  stock[DESC_BANK_CAP];
+    uint8_t  img[DESC_BANK_CAP];        /* wanted bytes from lo */
+    uint8_t  gap[DESC_GAP_HI - DESC_GAP_LO];
+    uint32_t img_n, gap_n;
+    uint16_t off[CARD_COUNT + 1];       /* wanted table entries */
+    int      placed, dropped;           /* replacements in the image / kept stock for room */
+    int      dirty;                     /* the image changed: write everything */
+} DescBank;
+static DescBank s_bank;
+static const uint8_t *bank_stock_text(int id) { return s_bank.stock + (s_bank.stock_off[id] - (s_bank.lo - DESC_SEGMENT)); }
+
+/* The stock bank, read once from RAM before anything is written to it. It is
+ * validated structurally (every entry past the previous string's end, every
+ * string 0xFF-ended inside the bank) rather than against a checksum, so a
+ * different print of the EXE would still be accepted if it kept the shape. */
+static int bank_snapshot(void)
+{
+    if (s_bank.ok) return s_bank.ok > 0;
+    if (!psx_card_db_ready()) return 0;
+    const uint32_t lo = DESC_SEGMENT + psx_mod_read_half(DESC_TABLE + 2u);
+    uint32_t prev_end = lo;
+    if (lo < DESC_BANK_END - DESC_BANK_CAP || lo >= DESC_BANK_END) goto bad;
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        const uint32_t a = DESC_SEGMENT + psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u);
+        uint32_t n = 0;
+        if (a < prev_end) goto bad;                     /* increasing, no overlap */
+        while (n < 512u && a + n < DESC_BANK_END && psx_mod_read_byte(a + n) != 0xFFu) n++;
+        if (n >= 512u || a + n >= DESC_BANK_END) goto bad;
+        n++;                                            /* the 0xFF */
+        s_bank.stock_off[id] = (uint16_t)(a - DESC_SEGMENT);
+        s_bank.stock_len[id] = (uint16_t)n;
+        prev_end = a + n;
+    }
+    s_bank.lo = lo;
+    s_bank.stock_n = prev_end - lo;
+    for (uint32_t i = 0; i < s_bank.stock_n; i++) s_bank.stock[i] = psx_mod_read_byte(lo + i);
+    s_bank.ok = 1;
+    fprintf(stderr, "card packs: description bank %08X..%08X, %u bytes, %u free in the gap\n",
+            lo, prev_end, s_bank.stock_n, (unsigned)(DESC_GAP_HI - DESC_GAP_LO));
+    return 1;
+bad:
+    s_bank.ok = -1;
+    fprintf(stderr, "card packs: the description table is not the stock layout; descriptions stay stock\n");
+    return 0;
+}
+
+/* Pack every card's effective text, in id order, into the bank and then the
+ * gap. A replacement is taken only while the stock texts of every card after
+ * it still fit in what is left (plus room for the one string that may not
+ * fit at the bank's tail and moves to the gap), so a stock text is never
+ * pushed out: at worst a replacement stays stock and is counted in dropped. */
+static void bank_layout(void)
+{
+    static uint8_t  img[DESC_BANK_CAP], gap[DESC_GAP_HI - DESC_GAP_LO];
+    static uint16_t off[CARD_COUNT + 1];
+    static uint32_t suffix[CARD_COUNT + 2];
+    if (s_bank.ok <= 0) return;
+    const uint32_t img_cap = DESC_BANK_END - s_bank.lo, gap_cap = (uint32_t)sizeof gap;
+    uint32_t img_n = 0, gap_n = 0;
+    int placed = 0, dropped = 0;
+    suffix[CARD_COUNT + 1] = 0;
+    for (int id = CARD_COUNT; id >= 1; id--) suffix[id] = suffix[id + 1] + s_bank.stock_len[id];
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        Pack *pk = s_packs[id];
+        const uint8_t *src = bank_stock_text(id);
+        uint32_t n = s_bank.stock_len[id], at;
+        int repl = 0;
+        if (pk && pk->present && pk->denc_len > 0) {
+            const uint32_t room = (img_cap - img_n) + (gap_cap - gap_n);
+            if ((uint32_t)pk->denc_len + suffix[id + 1] + 512u <= room) { src = pk->denc; n = (uint32_t)pk->denc_len; repl = 1; }
+            else dropped++;
+        }
+        if (img_n + n <= img_cap)      { memcpy(img + img_n, src, n); at = s_bank.lo + img_n; img_n += n; }
+        else if (gap_n + n <= gap_cap) { memcpy(gap + gap_n, src, n); at = DESC_GAP_LO + gap_n; gap_n += n; }
+        else {
+            /* the margin above makes this unreachable for a stock text; a
+             * replacement that lands here is dropped like the others */
+            if (repl) { repl = 0; dropped++; src = bank_stock_text(id); n = s_bank.stock_len[id]; }
+            if (img_n + n <= img_cap) { memcpy(img + img_n, src, n); at = s_bank.lo + img_n; img_n += n; }
+            else { memcpy(gap + gap_n, src, n); at = DESC_GAP_LO + gap_n; gap_n += n; }
+        }
+        off[id] = (uint16_t)(at - DESC_SEGMENT);
+        if (pk) { pk->desc_addr = at; pk->desc_placed = repl; }
+        if (repl) placed++;
+    }
+    if (!s_bank.laid || img_n != s_bank.img_n || gap_n != s_bank.gap_n ||
+        memcmp(off, s_bank.off, sizeof off) != 0 || memcmp(img, s_bank.img, img_n) != 0 ||
+        memcmp(gap, s_bank.gap, gap_n) != 0) {
+        memcpy(s_bank.img, img, img_n); memcpy(s_bank.gap, gap, gap_n); memcpy(s_bank.off, off, sizeof off);
+        s_bank.img_n = img_n; s_bank.gap_n = gap_n;
+        s_bank.dirty = 1;
+    }
+    s_bank.placed = placed; s_bank.dropped = dropped; s_bank.laid = 1;
+    if (dropped) fprintf(stderr, "card packs: %d descriptions kept stock, no room in the bank\n", dropped);
+}
+
+/* Per frame: the 722 table entries are the check (a savestate restores the
+ * whole bank at once, so they cannot be right while the strings are wrong);
+ * strings first, table last, when anything differs. */
+static void bank_assert(void)
+{
+    if (s_bank.ok <= 0 || !s_bank.laid) return;
+    int mismatch = s_bank.dirty;
+    for (int id = 1; id <= CARD_COUNT && !mismatch; id++)
+        if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != s_bank.off[id]) mismatch = 1;
+    if (!mismatch) return;
+    for (uint32_t i = 0; i < s_bank.img_n; i++)
+        if (psx_mod_read_byte(s_bank.lo + i) != s_bank.img[i]) psx_mod_write_byte(s_bank.lo + i, s_bank.img[i]);
+    for (uint32_t i = 0; i < s_bank.gap_n; i++)
+        if (psx_mod_read_byte(DESC_GAP_LO + i) != s_bank.gap[i]) psx_mod_write_byte(DESC_GAP_LO + i, s_bank.gap[i]);
+    for (int id = 1; id <= CARD_COUNT; id++)
+        if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != s_bank.off[id]) psx_mod_write_half(DESC_TABLE + (uint32_t)id * 2u, s_bank.off[id]);
+    s_bank.dirty = 0;
+}
 
 /* ---- small file helpers --------------------------------------------------- */
 static void pack_path(int id, const char *file, char *out, size_t cap)
@@ -1183,9 +1334,14 @@ static int take_stock(Pack *pk)
     pk->stock_word    = psx_mod_read_word(STATS_STOCK + (uint32_t)(id - 1) * 4u);
     pk->stock_aux     = psx_mod_read_byte(AUX_STOCK + (uint32_t)id);
     pk->stock_nameoff = psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u);
-    pk->stock_descoff = psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u);
     snprintf(pk->stock_name, sizeof pk->stock_name, "%s", psx_card_db_name(id));
-    decode_text(DESC_SEGMENT + pk->stock_descoff, pk->stock_desc, sizeof pk->stock_desc);
+    if (bank_snapshot()) {
+        pk->stock_descoff = s_bank.stock_off[id];
+        decode_bytes(bank_stock_text(id), s_bank.stock_len[id], pk->stock_desc, sizeof pk->stock_desc);
+    } else {
+        pk->stock_descoff = psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u);
+        decode_text(DESC_SEGMENT + pk->stock_descoff, pk->stock_desc, sizeof pk->stock_desc);
+    }
     pk->stock_ok = 1;
     return 1;
 }
@@ -1320,18 +1476,15 @@ static void layout_names(void)
         a += (uint32_t)n + 1u;
     }
     s_names_next = a;
-    uint32_t d = DESC_BASE;
     for (int id = 1; id <= CARD_COUNT; id++) {
         Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
         pk->denc_len = 0;
+        pk->desc_placed = 0;
         if (!pk->cfg.description[0]) continue;
-        const int n = encode_desc(pk->cfg.description, pk->denc, (int)sizeof pk->denc);
-        if (d + (uint32_t)n > DESC_LIMIT) continue;                  /* out of room: keep stock */
-        pk->denc_len = n;
-        pk->desc_addr = d;
-        d += (uint32_t)n;
+        pk->denc_len = encode_desc(pk->cfg.description, pk->denc, (int)sizeof pk->denc);
     }
+    if (bank_snapshot()) bank_layout();
 }
 
 /* ---- apply / restore ---------------------------------------------------------- */
@@ -1392,17 +1545,11 @@ static void assert_ram(void)
         } else if (psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u) != pk->stock_nameoff) {
             psx_mod_write_half(NAMEOFF_TABLE + (uint32_t)id * 2u, pk->stock_nameoff);
         }
-        if (pk->denc_len) {
-            for (int k = 0; k < pk->denc_len; k++)
-                if (psx_mod_read_byte(pk->desc_addr + (uint32_t)k) != pk->denc[k])
-                    psx_mod_write_byte(pk->desc_addr + (uint32_t)k, pk->denc[k]);
-            const uint16_t want = (uint16_t)(pk->desc_addr - DESC_SEGMENT);
-            if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != want)
-                psx_mod_write_half(DESC_TABLE + (uint32_t)id * 2u, want);
-        } else if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != pk->stock_descoff) {
-            psx_mod_write_half(DESC_TABLE + (uint32_t)id * 2u, pk->stock_descoff);
-        }
     }
+    /* the packs may have loaded before the card table was resident: lay the
+     * bank out the first time the snapshot exists */
+    if (bank_snapshot() && !s_bank.laid) bank_layout();
+    bank_assert();
 }
 
 static void note_mtimes(Pack *pk)
@@ -1510,6 +1657,7 @@ int psx_card_packs_stock(int id, PsxCardStock *out)
     }
     snprintf(out->name, sizeof out->name, "%s", name);
     if (pk && pk->stock_ok) snprintf(out->description, sizeof out->description, "%s", pk->stock_desc);
+    else if (bank_snapshot()) decode_bytes(bank_stock_text(id), s_bank.stock_len[id], out->description, sizeof out->description);
     else decode_text(DESC_SEGMENT + psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u), out->description, sizeof out->description);
     out->attack = (int)(w & 0x1FFu) * 10;
     out->defense = (int)((w >> 9) & 0x1FFu) * 10;
@@ -1637,14 +1785,17 @@ int psx_card_packs_thumb_rgb(int id, uint8_t *out)
 
 int psx_card_packs_state_json(char *out, unsigned cap)
 {
-    unsigned n = (unsigned)snprintf(out, cap, "\"dir\":\"%s\",\"dev\":%d,\"generation\":%u,\"overrides\":%u,\"packs\":[",
-                                    s_dir, s_dev, s_generation, cdrom_override_count());
+    unsigned n = (unsigned)snprintf(out, cap, "\"dir\":\"%s\",\"dev\":%d,\"generation\":%u,\"overrides\":%u,"
+                                    "\"descriptions\":{\"bank\":%d,\"placed\":%d,\"dropped\":%d,\"bank_used\":%u,\"bank_cap\":%u,\"gap_used\":%u,\"gap_cap\":%u},\"packs\":[",
+                                    s_dir, s_dev, s_generation, cdrom_override_count(),
+                                    s_bank.ok, s_bank.placed, s_bank.dropped, s_bank.img_n, s_bank.ok > 0 ? DESC_BANK_END - s_bank.lo : 0u,
+                                    s_bank.gap_n, (unsigned)(DESC_GAP_HI - DESC_GAP_LO));
     int first = 1;
     for (int id = 1; id <= CARD_COUNT && n + 64 < cap; id++) {
         const Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
         n += (unsigned)snprintf(out + n, cap - n, "%s{\"id\":%d,\"name\":\"%s\",\"rec\":%d,\"thumb\":%d,\"renamed\":%d,\"desc\":%d}",
-                                first ? "" : ",", id, pk->cfg.name, pk->rec_override, pk->thumb_override, pk->enc_len > 0, pk->denc_len > 0);
+                                first ? "" : ",", id, pk->cfg.name, pk->rec_override, pk->thumb_override, pk->enc_len > 0, pk->desc_placed);
         first = 0;
     }
     n += (unsigned)snprintf(out + n, cap - n, "]");

@@ -24,7 +24,22 @@ rebuild stop the old one first: `pkill -x Yu_Gi_Oh_Forbid` (the process name
 is cut to 15 characters; `pkill -f` on the full name kills your own shell too).
 
 Player data lives in `~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/`
-(the runtime prints `psxrecomp: player data in ...` at start). Your own edited
+(the runtime prints `psxrecomp: player data in ...` at start). That folder is
+the player's live game: for anything that imports, reverts or loads a
+stranger's savestate, launch with a separate folder and leave the real one
+alone (2026-09-07 ground rule):
+
+```sh
+mkdir -p /tmp/ygo-sandbox/openbios
+cp "$HOME/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/card1.mcd" /tmp/ygo-sandbox/
+./Play.sh -dbg --no-launcher --memcard-dir /tmp/ygo-sandbox
+```
+
+`--memcard-dir` carries the mods' player folder with it (packs, inis,
+savestates under `openbios/`), so a reporter's `state_800129D8_slotN.pst`
+goes into `/tmp/ygo-sandbox/openbios/` and loads with
+`{"cmd":"savestate","op":"load","slot":N}`. Kill your own instance by pid
+(`kill $(cat game.pid)`), never by name. Your own edited
 cards are `cards/<id>/`; the Card Effects set is `mods/card_effects/cards/<id>/`.
 Which one is live is the Card Manager's "Dev Card Effects" button.
 
@@ -189,7 +204,11 @@ Save (btn 0). The state json's `msg` is the status line; `edited` says whether
 the selected card has a pack; `name`, `desc`, `atk` ... are the editor's values.
 
 Packs without the window: `{"cmd":"card_packs"}` lists loaded packs and the
-live directory, `{"cmd":"card_packs_reload"}` re-reads them (add `"card":id`
+live directory (its `descriptions` object says whether the description bank
+snapshot was taken, how many package descriptions are in guest RAM and how
+many were kept stock for lack of room: a whole-game package must read
+`placed` = its description count and `dropped` 0; before 2026-09-07 only the
+first 68 fit, see the DescBank notes in psx_card_packs.c), `{"cmd":"card_packs_reload"}` re-reads them (add `"card":id`
 for one). Hand-written `card.ini` files are picked up on their own within a
 second (known cards) or ten (new folders).
 
@@ -291,6 +310,43 @@ Pause completion came 5000 cycles after the ack, the same number as the
 INT presentation delay, so INT2 landed at the instant INT3 was presented;
 psxrecomp/runtime/src/cdrom.c now gives it 131072 cycles like Init. Watch
 `cdrom_state`'s int_lost_unseen / int_clobbered [2] in effect-heavy duels.
+
+The SECOND mid-duel freeze (evening of 2026-09-07, a 0.5.7 report with the
+hard randomizer package, a fusion that summoned Nekogal #2 with an on-summon
+Dark Hole) is a different wait. The "effect index" at 0x8009B100 is the
+state of the CD transfer pump (func_8001455C, disassembled from the SLUS
+with `mips-linux-gnu-objdump -D -b binary -m mips:3000 -EL
+--adjust-vma=0x8000F800`): state 4 issues ReadS (0x1B) with mode 0x4A for an
+XA clip (filter file/channel from descriptor+0x38/+0x39, busy bit 12 set on
+its ack), state 5 loads a 600-tick countdown into 0x8009B0EC, and state 6
+polls GetlocL (busy bit 11 while one is in flight; the callback stores
+CdPosToInt of the answer at 0x800E9E90) until that position reaches
+0x800E9E94, or the countdown, decremented every other vblank, runs out.
+Dark Hole's clip is MASTER.XA file 20 channel 2 at LBA 201552, EOF sector
+201872, end field 201888; at 75 sectors a second it lasts 4.5 s and the pump
+pauses the drive at 201890 (measured here from hand and from a fusion, at
+1x and 2x). In the reporter's state the drive was at 202108 and still
+reading, the polled position was 201576 (the response FIFO still held that
+very GetlocL answer, 44:49:51), and the busy word had last changed 847
+frames before the report when the next GetlocL was queued: that poll never
+came back. The countdown stood at 191, so their game would have moved on
+300 vblanks later by itself; loaded here it did exactly that, on the old
+5000-cycle Pause build as well as the fixed one, so the Pause latency fix is
+not involved. The state's clock section (10.56 G cycles for 37398 frames,
+half the stock 564480 per vblank) says the reporter played at GAME > SPEED
+2x, which makes the guest see the real-time XA stream at half rate and
+fires the 900-vblank detector after 7.5 s of wall clock, before the game's
+own release at 1200. Not reproduced here. psx_freeze_report.c now releases
+that state directly (state 6, stream up, polled position short of the end
+while the emulated drive is 32+ sectors past it for 120 vblanks: the
+drive's position is stored where the lost answer would have gone), the
+report carries the game version, the speed multiplier, the drive's state
+(pending / queued command, the response FIFO, the INT counters) and the
+transfer descriptor, and psxrecomp's cdrom.c counts a command written over
+an unexecuted queued one (`cdrom_state` queue_overwrites), which is the one
+place the runtime could lose that poll. Every reporter's .pst is read
+without launching the game by `python3 tools/freeze_state.py <pst>`; see
+section 16.
 
 ## 7b. MOD package round trip (run before every release)
 
@@ -492,6 +548,24 @@ Entertainment Japan" forever. That still is the finale, not a hang: the
 frame counter runs and the log is quiet. A player has to reset from there.
 Slot files for a player's state go in the openbios/ folder beside yours;
 slots are 0..11.
+
+## 16. Freeze reports collected
+
+Every freeze_report.txt a tester posts goes with its .pst into ~/Downloads;
+`python3 tools/freeze_state.py <pst>` prints the row below from the file
+(build marks, blocker words, transfer descriptor, drive state, response
+FIFO). Load it in the sandbox game only when a live look is needed.
+
+| report | build, package, speed | busy 0x8009B0F4 | index 0x8009B100 | drive: pending command, what it was doing | last five state changes (frame: busy idx) | what it was |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-09-07 afternoon, first reporter's slot 10 (the state the Pause fix was made from; file no longer at hand) | 0.5.6 era test build, hard randomizer | 0x00800190 | 2 | Pause (0x09) complete raised and acked before it was presented, drive idle | (see the paragraph in section 7) | INT2 lost at the instant INT3 was presented: psxrecomp f003d3b9 |
+| 2026-09-06 20:17, state_800129D8_slot00.pst | before 0.5.7 (stock heal cap word), stock descriptions | 0x00000000 | 2 | Pause done, drive idle at 24606 | none: mode 0xCF, not a duel | not a freeze state: a plain savestate posted with the earlier report |
+| 2026-09-07 17:29, freeze_report.txt + state_800129D8_slot10.pst | 0.5.7 (heal cap rewritten), hard randomizer (68 table entries in the old gap), speed 2x (clock ratio 0.50) | 0x00081810: wait 0x10, stream 0x1000, poll 0x800, pump 0x80000 | 6 | Pause (0x09) done long before; the drive reading XA (ReadS 0x1B, mode 0x4A, filter 20/2) at 202108, setloc 201552 | 36508: 0x81810 6, 36509: 0x81010 6, 36538: 0x81810, 36539: 0x81010, 36546: 0x81810, 36547: 0x81010, 36551: 0x81810 (unchanged to the report at 37398) | a GetlocL poll never answered: polled position 201576 against an end of 201888, countdown 191 of 600 left; the game frees itself 300 vblanks after the report |
+
+Common factor so far: both real freezes are the duel's effect scripts
+waiting on a CD response (a Pause completion, a GetlocL answer) that the
+guest never saw; both leave 0x8009B0F4 with bit 4 set and the duel drawing
+the same frame. The CD counters in the new report block say which.
 
 ## 15. Stopping
 

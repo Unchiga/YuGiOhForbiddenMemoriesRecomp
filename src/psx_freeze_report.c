@@ -38,6 +38,10 @@
 #include "savestate.h"
 #include "cdrom.h"
 #include "debug_server.h"
+#include "cdrom.h"
+#include "psx_update_check.h"
+/* main.cpp: the GAME > SPEED multiplier the player picked and the one in force. */
+extern int psx_game_speed_state(int *requested, int *effective, double *device_pct, int *cooldown_ms);
 
 #include "psx_ui_font8.inc"    /* FONT8[95][8], ASCII 32..126 */
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
@@ -62,6 +66,23 @@
 #define FR_RECORDS       0x801A7AE4u  /* card records, 28-byte stride        */
 #define FR_REC_STRIDE    28u
 #define FR_REC_COUNT     24
+
+/* The CD transfer the effect scripts wait on (file_cd_transfer.c in the
+ * decomp; the pump at 0x8001455C, disassembled 2026-09-07). State 6 has an
+ * XA clip streaming (busy bit 12) and polls the drive with GetlocL (busy bit
+ * 11 while one is in flight; its callback stores CdPosToInt of the answer at
+ * descriptor+0x30) until that position reaches descriptor+0x34, with a
+ * 600-tick countdown at 0x8009B0EC behind it. */
+#define FR_XFER_DESC       0x800E9E60u  /* gFile_PrimaryTransferDescriptor  */
+#define FR_XFER_SECTOR     (FR_XFER_DESC + 0x24u)
+#define FR_XFER_POS        (FR_XFER_DESC + 0x30u)  /* D_800E9E90, last polled  */
+#define FR_XFER_END        (FR_XFER_DESC + 0x34u)
+#define FR_XFER_STATE      (FR_XFER_DESC + 0x46u)
+#define FR_XFER_COUNTDOWN  0x8009B0ECu
+#define FR_XFER_RETRIES    0x8009B130u
+#define FR_BUSY_BIT_STREAM 0x00001000u  /* the XA read is up (state 5 set it) */
+#define FR_BUSY_BIT_POLL   0x00000800u  /* a GetlocL is in flight             */
+#define FR_XFER_STATE_XA   6u
 
 /* Guest vblanks the predicate must hold before firing. These are GUEST time,
  * not wall time: the hook runs on the guest's cadence, so at game speed 3 the
@@ -223,6 +244,8 @@ static void banner_set(const char *l0, const char *l1, const char *l2)
 static unsigned s_fire_count;
 static int      s_gate_hold; /* consecutive vblanks the stale gate has held */
 static unsigned s_repairs;   /* stale gates cleared this session            */
+static int      s_poll_hold; /* consecutive vblanks the stale poll has held */
+static unsigned s_poll_repairs; /* XA position polls released this session  */
 
 static void write_report(int slot, const char *slot_path, const FrSample *now)
 {
@@ -262,7 +285,21 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
     fprintf(f, "freeze #        : %u this session\n", s_fire_count);
     fprintf(f, "gates repaired  : %u this session (stale CD gate, bit 10)\n",
             s_repairs);
+    fprintf(f, "stalls released : %u this session (stale XA position poll)\n",
+            s_poll_repairs);
     fprintf(f, "guest frame     : %llu\n", (unsigned long long)now->frame);
+    /* Which build and which speed: the first report without them cost an
+     * afternoon of telling 0.5.6 from 0.5.7 by a patched instruction in the
+     * savestate's RAM, and the speed multiplier is what made the guest see
+     * the drive at half rate (2026-09-07). */
+    fprintf(f, "game version    : %s\n", psx_update_check_current_version());
+    {
+        int req = 1, eff = 1, cd_ms = 0;
+        double pct = 100.0;
+        (void)psx_game_speed_state(&req, &eff, &pct, &cd_ms);
+        fprintf(f, "game speed      : %dx requested, %dx effective, device time %.0f%%\n",
+                req, eff, pct);
+    }
     fprintf(f, "held for        : %d guest vblanks, in a duel\n\n",
             FR_HOLD_IN_DUEL);
 
@@ -305,6 +342,42 @@ static void write_report(int slot, const char *slot_path, const FrSample *now)
         fprintf(f, "%-10llu %08X %08X %04X %04X %-5d %02X   %02X  %-4u %u\n",
                 (unsigned long long)s->frame, s->busy, s->busy2, s->idx,
                 s->flags, s->phase, s->mode, s->sub, s->turn, s->sel);
+    }
+
+    {
+        CDROMDebugState cd;
+        int t;
+        cdrom_debug_snapshot(&cd);
+        fprintf(f, "\n-- the drive ----------------------------------------------\n");
+        fprintf(f, "stat %02X  irq enable %02X flag %02X  mode %02X  i_stat %08X  present delay %d\n",
+                cd.stat_reg, cd.irq_enable, cd.irq_flag, cd.mode_reg, cd.i_stat,
+                cd.irq_present_delay);
+        fprintf(f, "reading %d cmd %02X  position %d  last sector %d  filter %u/%u  read delay %d\n",
+                cd.reading, cd.read_cmd,
+                (cd.read_min * 60 + cd.read_sec) * 75 + cd.read_sect - 150,
+                cd.last_sector_lba, cd.filter_file, cd.filter_channel, cd.read_delay);
+        fprintf(f, "pending %02X active %d delay %d phase %d   queued %02X pending %d   queue overwrites %llu\n",
+                cd.pending_cmd, cd.pending_pending, cd.pending_delay, cd.pending_phase,
+                cd.queued_cmd, cd.queued_pending,
+                (unsigned long long)cd.cmd_queue_overwrites);
+        fprintf(f, "response fifo read %d of %d :", cd.response_read, cd.response_count);
+        for (t = 0; t < 16; t++) fprintf(f, " %02X", cd.response_fifo[t]);
+        fprintf(f, "\nINT raised/presented/acked unpresented/lost unseen:");
+        for (t = 1; t <= 5; t++)
+            fprintf(f, "  INT%d %llu/%llu/%llu/%llu", t,
+                    (unsigned long long)cd.int_raised[t],
+                    (unsigned long long)cd.int_presented[t],
+                    (unsigned long long)cd.int_acked_unpresented[t],
+                    (unsigned long long)cd.int_lost_unseen[t]);
+        fprintf(f, "\n");
+
+        fprintf(f, "\n-- the transfer -------------------------------------------\n");
+        fprintf(f, "state [0x8009B100]: %u  countdown [0x8009B0EC]: %u  retries [0x8009B130]: %u\n",
+                psx_mod_read_half(FR_EFFECT_IDX), psx_mod_read_half(FR_XFER_COUNTDOWN),
+                psx_mod_read_word(FR_XFER_RETRIES));
+        fprintf(f, "descriptor [0x800E9E60]: sector %d  polled position %d  end %d  state %u\n",
+                (int)psx_mod_read_word(FR_XFER_SECTOR), (int)psx_mod_read_word(FR_XFER_POS),
+                (int)psx_mod_read_word(FR_XFER_END), psx_mod_read_byte(FR_XFER_STATE));
     }
 
     fprintf(f, "\n-- this build ---------------------------------------------\n");
@@ -453,6 +526,56 @@ static int repair_stale_gate(const FrSample *now)
     return 1;
 }
 
+/* ---- the second repair --------------------------------------------------- *
+ *
+ * The other freeze (reported 2026-09-07 on 0.5.7, game speed 2x, from a
+ * fusion that summoned a monster with an on-summon cast): the effect script
+ * plays an XA clip through a waited transfer. Transfer state 6 polls the
+ * drive with GetlocL, and the callback stores the answer at descriptor+0x30;
+ * the pump releases the wait once that reaches descriptor+0x34, or when a
+ * 600-tick countdown (1200 vblanks: the pump runs every other one) runs out.
+ * In the reporter's state the drive had streamed 236 sectors past the end,
+ * the stored position was 24 sectors past the START (the response FIFO still
+ * held that very answer, 44:49:51), and the busy word had not changed for
+ * 847 frames: the last GetlocL never came back. Their game would have moved
+ * on by itself 300 vblanks later, on the countdown, and the report had
+ * already fired at 900. Loaded here the countdown did exactly that.
+ *
+ * So: state 6 with the stream up, the polled position short of the end,
+ * and the emulated drive itself well past it. A healthy poll lags the drive
+ * by a sector or two and the pump releases the moment it crosses the end,
+ * so two seconds of the drive sitting past it with the field short is not a
+ * state the game can be in on its own. Storing the drive's position is what
+ * the lost answer would have done; the pump then pauses the drive and hands
+ * the effect its completion, the way it does every other time. */
+static int repair_stale_poll(const FrSample *now)
+{
+    CDROMDebugState cd;
+    int32_t pos, end;
+
+    if (now->idx != FR_XFER_STATE_XA || !(now->busy & FR_BUSY_BIT_STREAM)) {
+        s_poll_hold = 0;
+        return 0;
+    }
+    pos = (int32_t)psx_mod_read_word(FR_XFER_POS);
+    end = (int32_t)psx_mod_read_word(FR_XFER_END);
+    if (end <= 0 || pos >= end) { s_poll_hold = 0; return 0; }
+    cdrom_debug_snapshot(&cd);
+    if (cd.last_sector_lba < end + 32) { s_poll_hold = 0; return 0; }
+    if (++s_poll_hold < FR_HOLD_REPAIR * 4) return 0;
+    s_poll_hold = 0;
+
+    psx_mod_write_word(FR_XFER_POS, (uint32_t)cd.last_sector_lba);
+    s_poll_repairs++;
+    fprintf(stderr,
+            "freeze-repair: XA position poll stale at %d with the drive at %d, "
+            "end %d; drive position stored (frame %llu, release #%u)\n",
+            pos, cd.last_sector_lba, end, (unsigned long long)now->frame,
+            s_poll_repairs);
+    s_hold = 0;
+    return 1;
+}
+
 static void freeze_tick(void)
 {
     FrSample now;
@@ -467,6 +590,10 @@ static void freeze_tick(void)
         s_last = now;
         s_have_last = 1;
     }
+
+    /* Not scoped to the duel: the predicate names one transfer state and a
+     * drive that has provably passed the end, wherever the clip plays. */
+    if (!s_fired && repair_stale_poll(&now)) return;
 
     stuck = ((now.busy & FR_BUSY_WAIT) | now.busy2) != 0u &&
             now.mode == FR_MODE_IN_DUEL;
