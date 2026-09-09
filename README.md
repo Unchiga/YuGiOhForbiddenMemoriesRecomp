@@ -290,7 +290,7 @@ An edited card is a folder in your player-data:
 cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         color = purple       frame (yellow, green, pink, blue, purple, orange)
                         name_color = red     the name's text (white, yellow, blue, green, grey, orange, red)
-                        description = Text with|a line break   (| = new line; no | = wrapped at 20)
+                        description = Text with|a line break   (| = new line; no | = wrapped at 20, 7 lines)
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
@@ -391,7 +391,7 @@ delivering punishing
 blows.
 ```
 
-Edit it in any editor (a card shows six lines of twenty characters) and `Import
+Edit it in any editor (a card shows seven lines of twenty characters) and `Import
 Descriptions` reads it back: only the cards that differ are written. It shows
 live.
 

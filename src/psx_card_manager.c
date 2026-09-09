@@ -627,7 +627,7 @@ static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab;
 
 /* The help under the buttons, per tab */
 static const char *const HELP_TEXT[2] = {
-    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, six lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
+    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, seven lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
     "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.",
 };
 #define HELP_LINES 5
@@ -675,7 +675,7 @@ static void layout_pass(void)
     }
     /* fields */
     const int label_w = px(U_LABEL_W), box_h = px(U_BOX_H), step_w = px(U_STEP_W), sgap = px(3.0f);
-    const int desc_h = psx_ui_font_line_height(face_body()) * 6 + px(6.0f);   /* the game's six lines */
+    const int desc_h = psx_ui_font_line_height(face_body()) * PSX_CARD_PACK_DESC_LINES + px(6.0f);   /* the game's seven lines */
     const int rules_here = s_tab == 1 && is_monster();
     int trow_y = 0, trow_x = 0;
     if (rules_here) {
@@ -1580,7 +1580,7 @@ static void do_effect_text(void)
     int lines = 0, longest = 0, wide = 0;
     const int fits = psx_card_packs_desc_layout(out, &lines, &longest, &wide);
     if (replaced) say("The old text and the effect did not both fit: the description is now the effect text");
-    else if (!fits) say("Effect text added; the card shows 6 lines, so trim the text above it");
+    else if (!fits) say("Effect text added; the card shows 7 lines, so trim the text above it");
     else say("Effect text added to the description");
 }
 
@@ -1940,7 +1940,7 @@ static void draw_editor(void)
             for (char *q = fx; *q; q++) if (*q == '|') *q = ' ';
             int lines = 0, longest = 0, wide = 0;
             const int fits = psx_card_packs_desc_layout(fx, &lines, &longest, &wide);
-            char head[96]; snprintf(head, sizeof head, fits ? "Card text (%d of 6 lines):" : "Card text: %d lines, the card shows 6 (trim the description or the rules):", lines);
+            char head[96]; snprintf(head, sizeof head, fits ? "Card text (%d of 7 lines):" : "Card text: %d lines, the card shows 7 (trim the description or the rules):", lines);
             psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), head, fits ? COL_DIM : COL_WARN, fs);
             draw_wrapped(ex, L->preview_y + psx_ui_font_line_height(fs), right - ex, fx, COL_TEXT, fs, 3);
         } else psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), "Card text: none yet.", COL_DIM, fs);
