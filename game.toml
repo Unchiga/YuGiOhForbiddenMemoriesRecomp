@@ -223,3 +223,6 @@ multitap_analog = true
 require_cue = true
 required_tracks = 1
 required_disc_fp = "a828d94c24f6df7e040b1164c8ac59eff83f1107c43dba139e3cd5a0127161c4"
+# 2P DUEL loads one save per player: seat 2 offers its own memory card as
+# soon as it sits down (the lobby glyph starts lit; either side can turn it off).
+guest_memcard_default = true

@@ -25,6 +25,7 @@
 #include "psx_rank_meter.h"
 #include "psx_rng_view.h"
 #include "psx_ygo_overlays.h"
+#include "psx_ygo_netplay.h"
 
 /* Sprite-watch group the card-view plates are tracked in. The meter sits beside
  * the FIELD box, and a card view drawn over that box must hide it. */
@@ -76,6 +77,21 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
     (void)psx_guest_overlay_register(&rank);
     (void)psx_guest_overlay_register(&drops);
     (void)psx_guest_overlay_register(&fusion);
+    /* NETPLAY: the hidden-information cover. Registered after every other
+     * duel overlay so it paints over them: a card back must hide the fusion
+     * assistant's badges on that card too. */
+    {
+        PsxGuestOverlay cover = {
+            psx_ygo_netplay_cover_image,
+            psx_ygo_netplay_cover_origin,
+            NULL,
+            psx_ygo_netplay_cover_needs_present,
+            -1,
+            NULL,
+        };
+        (void)psx_guest_overlay_register(&cover);
+        psx_ygo_netplay_install_hooks();
+    }
     /* CARD SHOP: the shopkeeper-menu fifth row and its pack panel. Drawn on
      * campaign menu screens, which draw nothing above them. */
     {
