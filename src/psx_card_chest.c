@@ -101,6 +101,7 @@ enum {
 };
 
 #include "psx_card_chest_sites.h"
+#include "psx_ygo_netplay.h"
 
 static const uint16_t SECTION_SHIFT[] = {
     [SEC_A]        = (uint16_t)SH_A,
@@ -377,6 +378,7 @@ static void mirror_deck_scroll(void)
 
 static void card_chest_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) {
         s_patched = 0;
         return;

@@ -77,6 +77,7 @@
 #include "psx_card_packs.h"
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
+#include "psx_ygo_netplay.h"
 
 #define NDUEL         PSX_DROP_DB_DUELISTS      /* 39 */
 #define NCARDS        PSX_DROP_DB_CARDS         /* 722 */
@@ -130,6 +131,7 @@ int psx_story_rewards_set(int duelist, int card, int every)
 
 void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu;
     g_last_card = 0;
     if (tier >= TIER_N) return;
@@ -159,6 +161,7 @@ void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
 
 void psx_story_rewards_restore_table(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!g_steered) return;
     g_steered = 0;
     for (int i = 0; i < NCARDS; i++)

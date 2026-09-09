@@ -50,6 +50,7 @@
 #include "psx_game_hooks.h"
 #include "psx_video_menu.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
+#include "psx_ygo_netplay.h"
 
 #define INI_NAME "drop_missing_cards.ini"
 #define MAX_ADDS 64
@@ -432,6 +433,7 @@ void psx_drop_missing_reload(void)
 
 void psx_drop_missing_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     /* The tick also carries the viewer's drop-table edits into the game (see
      * apply_tier), so it keeps watching when the mod row is off but edits

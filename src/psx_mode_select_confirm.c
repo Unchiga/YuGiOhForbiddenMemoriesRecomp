@@ -62,6 +62,7 @@
 #include "psx_rank_sprites.h"   /* PsxSprite */
 #include "psx_shop_skin.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_netplay.h"
 
 #define MENU_ID_ADDR         0x80184594u   /* leave destination */
 #define MENU_ID_LOAD         0x01u
@@ -139,6 +140,7 @@ static void prompt_close(void) {
 /* Entry of the routine that reads the raw pad buffer, in guest context and
  * upstream of everything derived from it. */
 static void on_frame_entry(struct CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     const uint16_t hw    = psx_mod_read_half(RAW_PAD_BTN_ADDR);
     const uint16_t newly = (uint16_t)(~hw & s_raw_prev);
@@ -184,6 +186,7 @@ static void on_frame_entry(struct CPUState *cpu, uint32_t address) {
 }
 
 static void guard_tick(void) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) { prompt_close(); s_have_prev = 0; return; }
 
     const uint8_t id = psx_mod_read_byte(MENU_ID_ADDR);

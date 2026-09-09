@@ -90,6 +90,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
 #include "../psxrecomp/runtime/third_party/stb_truetype.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- guest facts ---------------------------------------------------------- */
 #define CARD_COUNT     722
@@ -1870,6 +1871,7 @@ void psx_card_packs_register_menu(void)
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static unsigned frames;
     static int booted;
     if (!psx_mod_game_started()) return;

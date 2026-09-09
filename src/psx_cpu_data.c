@@ -99,6 +99,7 @@
 #include "psx_game_hooks.h"
 #include "psx_textfile.h"
 #include "psx_ygo_cheats.h"      /* psx_ygo_save_is_live() */
+#include "psx_ygo_netplay.h"
 
 #define NDUEL      PSX_DROP_DB_DUELISTS      /* 39 */
 #define NCARDS     PSX_DROP_DB_CARDS         /* 722 */
@@ -517,6 +518,7 @@ static int portraits_install(void)
 
 int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned cap)
 {
+    if (psx_ygo_netplay_session()) { if (msg) snprintf(msg, cap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !png_path || !png_path[0]) {
         if (msg && cap) snprintf(msg, cap, "No picture to use");
@@ -569,6 +571,7 @@ int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned 
 
 int psx_cpu_portrait_clear(int duelist)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
     char png[1200], dir[1024];
@@ -700,6 +703,7 @@ int psx_cpu_record(int duelist, int *wins, int *losses)
 
 int psx_cpu_record_set(int duelist, int wins, int losses)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (duelist < 0 || duelist >= NDUEL || !psx_ygo_save_is_live()) return 0;
     if (wins < 0) wins = 0;
     if (losses < 0) losses = 0;
@@ -1038,6 +1042,7 @@ static void ensure_dir(const char *d)
 
 int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
 {
+    if (psx_ygo_netplay_session()) { if (msg) snprintf(msg, cap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (!path || !path[0]) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
     int with_portraits = 0, portraits_in = 0, bad = 0;
@@ -1152,6 +1157,7 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
  * the sector store keeps it until it is cleared. */
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static unsigned seen_gen;
     static int seen_ai_ready;
     if (!psx_mod_game_started()) return;

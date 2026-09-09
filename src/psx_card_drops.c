@@ -24,6 +24,7 @@
 #include "psx_game_hooks.h"
 #include "psx_story_rewards.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- MODS > CARD DROPS ----------------------------------------------------
  *
@@ -441,6 +442,7 @@ int psx_card_drops_test_roll(CPUState *cpu, int tier, int do_award,
 }
 
 void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_ROLL_FN || s_cd_busy) return;
     s_cd_calls++;
     s_cd_last_ra = cpu->gpr[31];
@@ -558,6 +560,7 @@ static int cd_owned_in_deck(uint32_t id)
  * site), and they must count as New exactly like the game's own drop. The $ra
  * filter is what keeps password buys, starter decks, etc. out. */
 void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_AWARD_FN) return;
     if (cpu->gpr[31] != PSX_DROP_AWARD_SITE) return;  /* not the duel drop */
     const uint32_t id = cpu->gpr[4] & 0xFFFFu;
@@ -593,6 +596,7 @@ void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
  * state, so nothing here reaches a save file. */
 void psx_mod_card_drops_on_chest_build(CPUState *cpu,
                                                   uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_CHEST_BUILD_FN) return;
     s_cd_chest_builds++;
     s_cd_chest_armed = s_cd_have_duel;
@@ -609,6 +613,7 @@ void psx_mod_card_drops_on_chest_build(CPUState *cpu,
  * screen. */
 void psx_mod_card_drops_on_chest_sort(CPUState *cpu,
                                                  uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_CHEST_SORT_FN || !s_cd_chest_armed) return;
     if (cpu->gpr[31] != PSX_DROP_CHEST_SORT_SITE1 &&
         cpu->gpr[31] != PSX_DROP_CHEST_SORT_SITE2) return;
@@ -890,6 +895,7 @@ static uint32_t s_cd_p3_state_ticks;
 
 void psx_mod_card_drops_on_results_state(CPUState *cpu,
                                                     uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_RESULTS_STATE_FN) return;
     const uint32_t result = psx_mod_read_word(PSX_DROP_RESULT_PTR);
     if (result) s_cd_p3_prev_page = psx_mod_read_byte(result + PSX_DROP_PAGE_OFF);
@@ -900,6 +906,7 @@ void psx_mod_card_drops_on_results_state(CPUState *cpu,
  * DROPS page is the one on screen AND the results state function is still
  * running (staleness catches the Cross exit, which fires no page apply). */
 void psx_card_drops_tick(void) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static uint32_t last_ticks;
     static int stale;
     if (s_cd_p3_state_ticks != last_ticks) {
@@ -939,6 +946,7 @@ void psx_card_drops_tick(void) {
 
 void psx_mod_card_drops_on_page_apply(CPUState *cpu,
                                                  uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_PAGE_APPLY_FN) return;
     /* Gate shut: also forget that the page was ever showing. Returning early
      * without clearing this left `active` true from a PREVIOUS duel's visit,
@@ -1002,6 +1010,7 @@ void psx_mod_card_drops_on_page_apply(CPUState *cpu,
 
 void psx_mod_card_drops_on_widget_draw(CPUState *cpu,
                                                   uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_WIDGET_DRAW_FN) return;
     if (!s_cd_p3_pending) return;
     if ((cpu->gpr[4] & 0xFFFFFFFFu) != PSX_DROP_WIDGET0) return;
@@ -1075,6 +1084,7 @@ void psx_card_drops_p3_state(int *active, int *sub, int *subs,
 void psx_card_drops_layout(int text_y, int split, int name_x,
                                       int num_x, int spr_x, int spr_y,
                                       int spr_dy) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (text_y != PSX_CD_OVERLAY_KEEP) s_cd_p3_text_y = text_y;
     if (split  != PSX_CD_OVERLAY_KEEP) s_cd_p3_split  = split;
     if (name_x != PSX_CD_OVERLAY_KEEP && name_x >= 0 && name_x <= 255)

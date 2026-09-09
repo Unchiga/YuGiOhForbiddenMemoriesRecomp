@@ -60,6 +60,7 @@
 #include "psx_video_menu.h"
 #include "psx_ygo_cheats.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
+#include "psx_ygo_netplay.h"
 
 /* ---- measured addresses -------------------------------------------------- */
 #define SHOP_STATE_ADDR   0x8009B23Au   /* campaign overlay state: 0xE00D   */
@@ -791,6 +792,7 @@ static void sfx_req(uint8_t id) {
  * play_se here, in guest context, snapshot/restore around the nested call
  * so the driver call in flight is untouched (the card_drops $ra rule). */
 void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_enabled) { s_sfx_n = 0; s_award_n = 0; s_view = 0; return; }
     if (s_sfx_n || s_award_n) {
@@ -1257,6 +1259,7 @@ static void restore_stock_code(void) {
 }
 
 void psx_card_shop_tick(void) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!s_enabled) { restore_stock_code(); return; }
     /* Stage the stream, the label-table entry and the four code immediates
      * from the moment the game is up, NOT only while the gate is open.

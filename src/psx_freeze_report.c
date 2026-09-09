@@ -41,6 +41,7 @@
 
 #include "psx_ui_font8.inc"    /* FONT8[95][8], ASCII 32..126 */
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
+#include "psx_ygo_netplay.h"
 
 /* ---- what the freeze looks like ---------------------------------------- */
 
@@ -427,6 +428,7 @@ static void fire(const FrSample *now)
  */
 static int repair_stale_gate(const FrSample *now)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     uint32_t before, after;
 
     if (!(now->busy & FR_BUSY_BIT_GATE)) { s_gate_hold = 0; return 0; }

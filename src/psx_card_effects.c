@@ -63,6 +63,7 @@
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
 #include "psx_lp_popup.h"
+#include "psx_ygo_netplay.h"
 
 #define CARD_COUNT 722
 #define SECTOR 2048
@@ -507,6 +508,7 @@ static void eq_apply(void)
 
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     s_frame++;
     take_stock();
@@ -604,6 +606,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
 
 static void hook_magic(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_stock_ok) return;
     const int id = (int)(int16_t)cpu->gpr[4];
@@ -650,6 +653,7 @@ int psx_card_effects_equip_fits(int equip, int mon)
 
 int psx_card_effects_cast(int fx, int amount, int target, int terrain)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!s_stock_ok) return 0;
     const int proxy = fx_prepare(fx, amount, target, terrain, 1);
     if (proxy < 0) return 0;
@@ -666,6 +670,7 @@ int psx_card_effects_cast(int fx, int amount, int target, int terrain)
  * the scratch group, and set the bonus for the equip being resolved. */
 static void hook_equip(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_stock_ok) return;
     const int a = (int)cpu->gpr[4], b = (int)cpu->gpr[5];

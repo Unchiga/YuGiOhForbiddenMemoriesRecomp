@@ -53,6 +53,7 @@
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
 #include "psx_lp_popup.h"
+#include "psx_ygo_netplay.h"
 
 #define CARD_COUNT 722
 
@@ -362,6 +363,7 @@ static void turn_tick(void)
 
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     s_frame++;
     const unsigned gen = psx_card_packs_generation();
@@ -386,6 +388,7 @@ static void tick(void)
 /* ---- hooks ------------------------------------------------------------------------ */
 static void hook_summon(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     static int last_row = -1, last_id = -1;
     const unsigned st = psx_mod_read_byte(STATE_BYTE);
@@ -407,6 +410,7 @@ static int battle_kind(int id) { const Mfx *m = mfx(id); return (m && m->cfg.bat
 
 static void hook_attack(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     const unsigned act = psx_mod_read_half(ACTION);
     const unsigned st = psx_mod_read_byte(STATE_BYTE);
@@ -463,6 +467,7 @@ static void hook_attack(struct CPUState *cpu, uint32_t address)
 
 static void hook_action11(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     if (!s_bat.pathA || !s_bat.decided) return;
     if (psx_mod_read_half(ACTION) & 0x8000u) return;
@@ -476,6 +481,7 @@ static void hook_action11(struct CPUState *cpu, uint32_t address)
 
 static void hook_trap(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     const uint32_t obj = cpu->gpr[4];
     if (!obj) return;
@@ -490,6 +496,7 @@ static void hook_trap(struct CPUState *cpu, uint32_t address)
 
 static void hook_destroy(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     const uint32_t a0 = cpu->gpr[4];
     if (a0 < ROWS || a0 >= ROWS + 30u * ROW_STRIDE) return;
@@ -513,6 +520,7 @@ static void hook_destroy(struct CPUState *cpu, uint32_t address)
  * before the field phase sees it. */
 static void hook_after_fx(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     if (s_casting && s_flipped && psx_mod_read_half(FX_STATE) == 0) { unflip(); ev("unflip", 0, 0, 0); }
 }

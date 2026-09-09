@@ -100,6 +100,7 @@
 #include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- the game side ------------------------------------------------------------ */
 #define BANK_BASE    0x801B0000u
@@ -1171,10 +1172,15 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
 #undef WARN
 }
 
-int psx_dialogue_import(const char *path, char *err, unsigned errcap) { return import_file(path, 1, err, errcap); }
+int psx_dialogue_import(const char *path, char *err, unsigned errcap)
+{
+    if (psx_ygo_netplay_session()) { if (err) snprintf(err, errcap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
+    return import_file(path, 1, err, errcap);
+}
 
 void psx_dialogue_clear(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
     { char why[64]; (void)rebuild_bank(why, sizeof why); }   /* nothing left: the stock bank comes back */
     restore_bank();
@@ -1267,6 +1273,7 @@ int psx_dialogue_state_json(char *out, unsigned cap)
 /* ---- the frame hook ------------------------------------------------------------------ */
 static void dialogue_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static int booted;
     if (!psx_mod_game_started()) return;
     if (!booted) {
