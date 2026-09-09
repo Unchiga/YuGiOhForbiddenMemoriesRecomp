@@ -835,16 +835,41 @@ static int cd_p3_compose(uint8_t *buf, int cap, int sub) {
     return len;
 }
 
-/* Copy the current sub-page's stream into guest scratch and point the dead
- * name-table entry T[0] at it. Card id 0 does not exist, so entry 0 is never
- * resolved by the game itself; with it repointed, string id 0x8000 (card 0's
- * name) IS the CARD DROPS page. A savestate load restores the entry, and the
- * next publish re-poke makes that self-healing. A staged debug stream takes
- * precedence over the composer (escape experiments). */
+/* Copy the current sub-page's stream into guest scratch and point name-table
+ * entry T[0] at it: with it repointed, string id 0x8000 (card 0's name) IS
+ * the CARD DROPS page. A staged debug stream takes precedence over the
+ * composer (escape experiments).
+ *
+ * Entry 0 is NOT dead. Card id 0 does not exist, but the LIBRARY resolves
+ * string 0x8000 (stock: the empty string, a lone 0xFF at 0x801D6000) when it
+ * opens, and its text box is built by a loop that spins until the stream
+ * ends. Left pointing at the page, the library walked the drops text
+ * instead, hit a wait-for-choice code, and the screen stayed black until the
+ * player killed the game (issue #16: the reporter had just farmed several
+ * copies in one duel). The entry lives in the savestate too, so a state
+ * taken after such a duel carried the hang across restarts. The stock value
+ * is remembered at the first publish and put back by cd_p3_unpublish() from
+ * the leave paths and the frame tick whenever the page is not on screen. */
+#define PSX_DROP_NAME0_STOCK_OFF  0x6000u   /* EXE value of T[0] */
+static uint16_t s_cd_p3_name0_stock = PSX_DROP_NAME0_STOCK_OFF;
+static int      s_cd_p3_name0_saved;
+
+static void cd_p3_unpublish(void) {
+    if (psx_mod_read_half(PSX_DROP_NAME_TBL) == PSX_DROP_P3_SCRATCH_OFF)
+        psx_mod_write_half(PSX_DROP_NAME_TBL, s_cd_p3_name0_stock);
+}
+
 static uint32_t cd_p3_publish_stream(int sub) {
     uint8_t buf[PSX_DROP_P3_SCRATCH_MAX];
     const uint8_t *src;
     int len;
+    if (!s_cd_p3_name0_saved) {
+        const uint16_t cur = psx_mod_read_half(PSX_DROP_NAME_TBL);
+        /* A loaded state may already carry the scratch offset; keep the EXE
+         * value then rather than remembering the poison as stock. */
+        if (cur != PSX_DROP_P3_SCRATCH_OFF) s_cd_p3_name0_stock = cur;
+        s_cd_p3_name0_saved = 1;
+    }
     if (s_cd_p3_test_len > 0) {
         src = s_cd_p3_test;
         len = s_cd_p3_test_len;
@@ -896,6 +921,11 @@ void psx_card_drops_tick(void) {
     }
     uint8_t rows[PSX_CD_OVERLAY_ROWS] = { 0 };
     const int on = s_cd_p3_active && stale < 8;
+    /* Off the page (another page, a loaded state) or the results screen gone
+     * for a second (Cross exit fires no apply): give string 0x8000 back to
+     * the game. The 64-frame mark, not the overlay's 8, so a hitch on a slow
+     * machine between the page turn and its draw cannot blank the page. */
+    if (!s_cd_p3_active || stale >= 64) cd_p3_unpublish();
     if (on) {
         int ids[PSX_DROP_CARD_ID_MAX];
         const int n = cd_p3_row_ids(ids, PSX_DROP_CARD_ID_MAX);
@@ -914,7 +944,7 @@ void psx_mod_card_drops_on_page_apply(CPUState *cpu,
      * without clearing this left `active` true from a PREVIOUS duel's visit,
      * and the overlay tick reads it — so a duel that awarded a single card
      * could paint that card's "New!" sprite onto the stock summary page. */
-    if (!cd_p3_gate()) { s_cd_p3_active = 0; return; }
+    if (!cd_p3_gate()) { s_cd_p3_active = 0; cd_p3_unpublish(); return; }
     const uint32_t result = psx_mod_read_word(PSX_DROP_RESULT_PTR);
     if (!result) return;
     const uint16_t pad = psx_mod_read_half(PSX_DROP_PAD_NEW_ADDR);
@@ -923,7 +953,9 @@ void psx_mod_card_drops_on_page_apply(CPUState *cpu,
     /* The screen init also applies page 0; no press means it is not a page
      * TURN, so it is never ours to redirect. Entering the screen fresh also
      * resets the sub-page. */
-    if (!left && !right) { s_cd_p3_active = 0; s_cd_p3_sub = 0; return; }
+    if (!left && !right) {
+        s_cd_p3_active = 0; s_cd_p3_sub = 0; cd_p3_unpublish(); return;
+    }
     const int page = (int)(int8_t)(cpu->gpr[4] & 0xFFu);
     const int prev = (int)s_cd_p3_prev_page;
     /* Row data can change between visits (a re-rolled rebuild); recount every
@@ -955,14 +987,16 @@ void psx_mod_card_drops_on_page_apply(CPUState *cpu,
         cpu->gpr[4] = (uint32_t)leave_to;
         psx_mod_write_byte(result + PSX_DROP_PAGE_OFF, (uint8_t)leave_to);
         s_cd_p3_active = 0;
+        cd_p3_unpublish();
         return;
     }
-    if (!enter) { s_cd_p3_active = 0; return; }         /* stock landing */
+    if (!enter) { s_cd_p3_active = 0; cd_p3_unpublish(); return; } /* stock landing */
+    /* Active before the publish, so no tick between the two can undo it. */
+    s_cd_p3_active = 1;
     cd_p3_publish_stream(s_cd_p3_sub);
     cpu->gpr[4] = 3;
     psx_mod_write_byte(result + PSX_DROP_PAGE_OFF, 3u);
     s_cd_p3_pending = 1;
-    s_cd_p3_active = 1;
     s_cd_p3_applies++;
 }
 

@@ -329,6 +329,21 @@ life points (0x800EA024, player at 0x800EA004) does NOT end it, the game only
 checks on damage. Ask the player to fight one, and watch with a one-second
 poll of the bytes above plus the trunk byte (0x801D024F + card id).
 
+Scripted win, measured 2026-09-09 against Simon with a deck of 40 Blue-Eyes
+(id 1) on a full Free Duel grid (RIGHT from Build Deck is Simon there): turn
+1 summon (duel_turns.summon(0)), `write_mem` 0x800EA024 = 0x0064 (LP 100),
+START. Turn 2: summon again, then UP (the camera shows the OPPONENT's rows),
+DOWN (your monster row, cursor on the Blue-Eyes), X (the target cursor jumps
+to the opponent's monster), X. A face-down defender dies without damage, so
+repeat on turn 3 with the field empty: the direct hit takes LP to 0 and the
+RESULTS OF DUEL screen follows ~15 s later. RIGHT from the summary is the
+CARD DROPS page when `card_drops_set` drops >= 2 awarded more than one card.
+
+While that page is on screen, name-table entry 0 (0x801D5800) reads 0x9800,
+the page's stream; everywhere else it must read 0x6000. The LIBRARY resolves
+string 0x8000 when it opens and spins forever on the drops stream (issue
+#16, the black screen), so check the entry after leaving the results.
+
 ## 9. The CPU Manager from a script
 
 `cpu_data` is the data layer, `cpu_manager` the window (`open`, `view` 0 decks
