@@ -189,7 +189,7 @@ int psx_card_share_export(const char *path, char *msg, unsigned cap)
     int ids[CARD_COUNT], n = 0;
     for (int id = 1; id <= CARD_COUNT; id++) if (card_edited(id, dir)) ids[n++] = id;
     int drops = 0;
-    if (psx_drop_edits_any()) { psx_drop_edits_save(); drops = 1; }
+    if (psx_drop_edits_has_export_content()) { psx_drop_edits_save(); drops = 1; }
     {
         static char m[8192];
         unsigned k = (unsigned)snprintf(m, sizeof m,
@@ -411,7 +411,7 @@ int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
         info->card_ids[info->card_n++] = id;
         if (psx_card_packs_get(id, NULL)) info->replace_ids[info->replace_n++] = id;
     }
-    info->drops_here = psx_drop_edits_any();
+    info->drops_here = psx_drop_edits_has_export_content();
     info->ok = 1;
     free(b);
     return 1;

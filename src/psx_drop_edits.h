@@ -35,6 +35,12 @@ void psx_drop_edits_ensure_loaded(void);
  * when the mod row is off. */
 int psx_drop_edits_any(void);
 
+/* Any content owned by this manager that must survive sharing? Unlike
+ * psx_drop_edits_any(), this includes scripted rewards. Reward-only edits do
+ * not need the live random-table watcher, but they do belong in every Drop
+ * Tables, .ygocards and .ygomods export. */
+int psx_drop_edits_has_export_content(void);
+
 /* Entries recorded for one duelist. */
 int psx_drop_edits_count(int duelist);
 

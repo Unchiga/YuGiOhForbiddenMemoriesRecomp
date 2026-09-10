@@ -142,6 +142,14 @@ int psx_drop_edits_any(void)
     return 0;
 }
 
+int psx_drop_edits_has_export_content(void)
+{
+    psx_drop_edits_ensure_loaded();
+    for (int d = 0; d < NDUEL; d++)
+        if (g_n[d] || g_reward[d]) return 1;
+    return 0;
+}
+
 int psx_drop_edits_count(int duelist)
 {
     psx_drop_edits_ensure_loaded();
@@ -325,11 +333,18 @@ int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
     }
     const char *base = base_name(p);
     const int n = entry_total();
+    const int r = psx_drop_edits_reward_count();
     /* Exporting is a copy for someone else; it neither saves the live ini
      * nor clears the unsaved-changes marker. */
     snprintf(g_status, sizeof(g_status), "exported %.60s", base);
-    if (msg && cap)
-        snprintf(msg, cap, "Exported %d entr%s as %.48s", n, n == 1 ? "y" : "ies", base);
+    if (msg && cap) {
+        if (r)
+            snprintf(msg, cap, "Exported %d weight entr%s and %d scripted drop%s as %.40s",
+                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s", base);
+        else
+            snprintf(msg, cap, "Exported %d weight entr%s as %.48s",
+                     n, n == 1 ? "y" : "ies", base);
+    }
     return 1;
 }
 

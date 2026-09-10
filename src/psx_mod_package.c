@@ -268,7 +268,7 @@ int psx_mod_package_export(const char *path, char *msg, unsigned cap)
             char pth[1300]; snprintf(pth, sizeof pth, "%s/%d/card.ini", own, id);
             edited = file_exists(pth);
         }
-        if (edited || psx_drop_edits_any()) {
+        if (edited || psx_drop_edits_has_export_content()) {
             scratch_path("cards.ygocards", tmp, sizeof tmp);
             psx_card_share_own_set(1);
             const int wrote = psx_card_share_export(tmp, why, sizeof why);
