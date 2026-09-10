@@ -4,9 +4,9 @@ TCP debug server and decodes CD DMA transfers into card records."""
 import os, sys, time, json
 # live_probe.py: drive the DEBUG build (./Play.sh -dbg) over the TCP debug server and decode CD reads.
 # Usage: python3 tools/live_probe.py wait|frame|press <btn[:frames]>...|shot <tag>|log|rd <hex> <n>|raw <json>
-sys.path.insert(0, os.path.expanduser('~/YuGiOhForbiddenMemoriesRecomp/psxrecomp/tools'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'psxrecomp', 'tools'))
 import debug_client as dc
-H, P = '127.0.0.1', 4370
+H, P = '127.0.0.1', int(os.environ.get('YGOFM_DEBUG_PORT', '4370'))
 SHOT = os.environ.get('SHOTDIR', '/tmp')
 B = dict(select=0x0001, start=0x0008, up=0x0010, right=0x0020, down=0x0040,
          left=0x0080, l2=0x0100, r2=0x0200, l1=0x0400, r1=0x0800,

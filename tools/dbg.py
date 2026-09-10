@@ -10,7 +10,7 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_REPO, 'psxrecomp', 'tools'))
 import debug_client as dc
 
-H, P = '127.0.0.1', 4370
+H, P = '127.0.0.1', int(os.environ.get('YGOFM_DEBUG_PORT', '4370'))
 
 def q(c):
     try:

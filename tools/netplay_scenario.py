@@ -44,11 +44,19 @@ def wait_for(H, pred, what, limit=60):
             return True
         time.sleep(1)
     log('  TIMEOUT:', what, '|', state(H))
-    return False
+    raise RuntimeError('timeout: ' + what)
 
 
 def shots(tag):
     return [np.inst(0).shot(tag), np.inst(1).shot(tag)]
+
+
+def end_turn(player, host):
+    # A confirmation may already have selected the summoned monster by the
+    # time its animation settles. START is ignored in attack-target mode.
+    if phase(host) == 5 and host.b(0x8009B174) & 0x7f == 6:
+        player.press('circle', 6, 1.5)
+    player.press('start', 12, 1.0)
 
 
 def main():
@@ -85,7 +93,7 @@ def main():
     H.press('cross', 6, 1.5); H.press('right', 6, 1.0); H.press('cross', 6, 3.0); H.press('cross', 6, 3.0); H.press('cross', 6, 5.0)
     wait_for(H, lambda: phase(H) == 5, 'P1 placed', 30)
     shots('s_p1_placed')
-    H.press('start', 12, 1.0)
+    end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up', 90)
     time.sleep(3)
     shots('s_p2_turn')
@@ -101,7 +109,7 @@ def main():
     if phase(H) == 8:
         G.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P2 field cursor', 30)
-    G.press('start', 12, 1.0)
+    end_turn(G, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 0, 'P1 hand up (2)', 90)
     time.sleep(3)
 
@@ -111,7 +119,7 @@ def main():
     if phase(H) == 8:
         H.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P1 field cursor (2)', 30)
-    H.press('start', 12, 1.0)
+    end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up (2)', 90)
     time.sleep(3)
 
@@ -134,6 +142,8 @@ def main():
             found = True; break
         G.press('right', 6, 0.8)
     log('target under cursor', found)
+    if not found:
+        raise RuntimeError('attack target was not selected')
     shots('s_target')
     G.press('cross', 6, 1.0)
     wait_for(H, lambda: phase(H) == 0xD, 'duel over (phase D)', 90)
@@ -200,4 +210,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        for slot in (0, 1):
+            np.inst(slot).q({'cmd': 'quit_graceful'})

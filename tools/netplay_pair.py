@@ -30,7 +30,9 @@ REPO = os.path.dirname(TOOLS)
 sys.path.insert(0, os.path.join(REPO, 'psxrecomp', 'tools'))
 import debug_client as dc
 
-EXE = os.path.join(REPO, 'build-dbg', 'Yu_Gi_Oh_Forbidden_Memories_Recompiled')
+EXE = os.environ.get('NETPAIR_EXE') or os.path.join(REPO, 'build-dbg', 'Yu_Gi_Oh_Forbidden_Memories_Recompiled')
+DISC = os.environ.get('NETPAIR_DISC')
+SEED = os.environ.get('NETPAIR_SEED')
 DATA = os.path.expanduser('~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled')
 ROOT = os.environ.get('NETPAIR_DIR') or os.path.join(
     os.environ.get('CLAUDE_SCRATCHPAD', '/tmp'), 'netpair')
@@ -103,14 +105,14 @@ class Inst:
             pass
         r = self.q({'cmd': 'screenshot_present', 'path': p})
         if not r.get('ok'):
-            self.q({'cmd': 'screenshot', 'path': p})
+            raise RuntimeError('composed capture unavailable: %r' % r)
         t0 = time.time()
         while time.time() - t0 < wait:
             if os.path.exists(p) and os.path.getsize(p) > 0:
                 time.sleep(0.2)
                 return p
             time.sleep(0.1)
-        return p
+        raise RuntimeError('composed capture timed out: ' + p)
 
     def shot_fb(self, tag):
         """Plain framebuffer screenshot (no overlays): for screen detection."""
@@ -167,7 +169,8 @@ def inst(slot):
 
 def cards(code=None):
     """Seed the two card dirs from the personal card 1. Never writes DATA."""
-    src = os.path.join(DATA, 'card1.mcd')
+    validate_root()
+    src = SEED or os.path.join(DATA, 'card1.mcd')
     blank = os.path.join(DATA, 'card2.mcd.blank-backup-2026-09-09')
     if not os.path.exists(blank):
         blank = None
@@ -190,9 +193,28 @@ def cards(code=None):
     print('cards seeded under', ROOT)
 
 
+def validate_root():
+    from pathlib import Path
+    root, personal = Path(ROOT).resolve(), Path(DATA).resolve()
+    if root == personal or personal in root.parents:
+        raise ValueError('NETPAIR_DIR must be outside personal player data')
+
+
 def pids():
-    out = subprocess.run(['pgrep', '-f', EXE], capture_output=True, text=True).stdout.split()
-    return [int(p) for p in out if p.isdigit() and int(p) != os.getpid()]
+    # Only this pair's children; never kill another test using the same build.
+    from pathlib import Path
+    dirs = {str(Path(ROOT, n).resolve()) for n in NAMES.values()}
+    result = []
+    for proc in Path('/proc').iterdir():
+        if not proc.name.isdigit(): continue
+        try:
+            args = (proc/'cmdline').read_bytes().split(b'\0')
+            args = [a.decode() for a in args if a]
+            if not args or Path(args[0]).resolve() != Path(EXE).resolve(): continue
+            ix = args.index('--memcard-dir')
+            if str(Path(args[ix+1]).resolve()) in dirs: result.append(int(proc.name))
+        except (OSError, ValueError, IndexError): pass
+    return result
 
 
 def stop():
@@ -210,12 +232,15 @@ def stop():
 
 
 def start(extra=(), guest_memcard=True, env_extra=None):
+    validate_root()
     stop()
     procs = []
     for s in (0, 1):
         i = Inst(s)
         os.makedirs(i.dir, exist_ok=True)
         env = dict(os.environ)
+        env.pop('APPIMAGE', None)
+        env.pop('APPDIR', None)
         env['PSX_NET_TRANSPORT'] = 'lan'
         env['PSX_NET_GUEST_MEMCARD'] = '1' if guest_memcard else '0'
         if env_extra:
@@ -224,7 +249,8 @@ def start(extra=(), guest_memcard=True, env_extra=None):
                 '--net-bind', '127.0.0.1:%d' % UDP[s],
                 '--net-peer', '127.0.0.1:%d' % UDP[1 - s],
                 '--net-session-id', str(SESSION),
-                '--memcard-dir', i.dir, '--debug-port', str(i.port)] + list(extra)
+                '--memcard-dir', i.dir, '--debug-port', str(i.port),
+                '--renderer', 'opengl'] + (['--disc', DISC] if DISC else []) + list(extra)
         log = open(i.log, 'w')
         procs.append(subprocess.Popen(args, cwd=os.path.dirname(EXE), env=env,
                                       stdout=log, stderr=subprocess.STDOUT))
