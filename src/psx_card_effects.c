@@ -38,7 +38,8 @@
  *     handler runs (D_8009B220 bit 0x8000), then put back;
  *   - an equip's type list is answered from an entry hook on
  *     equip_table_lookup: the rebuilt table starts with a scratch group
- *     {0xFFFE, 1, 0}, and when the pair is allowed the hook points that
+ *     {0xFFFE, 1, 0}, omits each overridden stock group, and when an explicit
+ *     id/type/attribute list allows the pair the hook points that scratch
  *     group at the pair, so the stock scan says yes. The hook also sets the
  *     bonus immediates for the equip being resolved.
  *   Immediates are written with psx_mod_write_code_word, which sends that
@@ -290,7 +291,6 @@ const char *psx_card_effects_note(int id, int type)
 static void rebuild_equip_override(void)
 {
     static uint8_t stock[EQUIP_SECTORS * SECTOR], out[EQUIP_SECTORS * SECTOR];
-    static uint8_t seen[CARD_COUNT + 1];
     int any = 0;
     for (int id = 1; id <= CARD_COUNT; id++) {
         const Fx *f = fx_of(id);
@@ -306,7 +306,6 @@ static void rebuild_equip_override(void)
         for (int s = 0; s < EQUIP_SECTORS && ok; s++) ok = psx_mod_cd_read_stock_sector(EQUIP_LBA(k) + (uint32_t)s, stock + s * SECTOR);
         if (!ok) return;
         memset(out, 0xFF, sizeof out);
-        memset(seen, 0, sizeof seen);
         int o = 0, dropped = 0;
         #define PUT16(v) do { out[o++] = (uint8_t)(v); out[o++] = (uint8_t)((v) >> 8); } while (0)
         PUT16(SCRATCH_KEY); PUT16(1); PUT16(0);
@@ -318,26 +317,16 @@ static void rebuild_equip_override(void)
             const int cnt = stock[p + 2] | (stock[p + 3] << 8);
             const int glen = 4 + 2 * cnt;
             const Fx *f = (key >= 1 && key <= CARD_COUNT) ? fx_of(key) : NULL;
-            if (f && f->cfg.equips_set) {
-                seen[key] = 1;
-                if (f->cfg.equip_n > 0) {
-                    if (o + 4 + 2 * f->cfg.equip_n + 2 <= EQUIP_USED) {
-                        PUT16(key); PUT16(f->cfg.equip_n);
-                        for (int i = 0; i < f->cfg.equip_n; i++) PUT16(f->cfg.equip_ids[i]);
-                    } else dropped++;
-                }
+            if (f && (f->cfg.equips_set || f->cfg.equip_types)) {
+                /* The entry hook answers every overridden group through the
+                 * scratch record. Omitting it here is both exact for an empty
+                 * list and lets a 621-monster batch list fit: expanding that
+                 * list into the stock table can exceed the guest's fixed
+                 * 0x2100-byte buffer and used to drop an entire group. */
             } else if (o + glen + 2 <= EQUIP_USED) {
                 memcpy(out + o, stock + p, (size_t)glen); o += glen;
             } else dropped++;
             p += glen;
-        }
-        for (int id = 1; id <= CARD_COUNT; id++) {
-            const Fx *f = fx_of(id);
-            if (!f || !f->cfg.equips_set || seen[id] || f->cfg.equip_n <= 0) continue;
-            if (o + 4 + 2 * f->cfg.equip_n + 2 <= EQUIP_USED) {
-                PUT16(id); PUT16(f->cfg.equip_n);
-                for (int i = 0; i < f->cfg.equip_n; i++) PUT16(f->cfg.equip_ids[i]);
-            } else dropped++;
         }
         PUT16(0);
         #undef PUT16
@@ -663,10 +652,15 @@ int psx_card_effects_equip_scratch(void) { return s_equip_override; }
 
 int psx_card_effects_equip_fits(int equip, int mon)
 {
-    const Fx *f = fx_of(equip);
-    if (!f || !(f->cfg.equips_set || f->cfg.equip_types)) return -1;
-    for (int i = 0; i < f->cfg.equip_n; i++) if (f->cfg.equip_ids[i] == mon) return 1;
-    const uint32_t m = f->cfg.equip_types;
+    /* Read the authoritative pack, not the per-frame effect snapshot. The
+     * FM Editor is usable before gameplay has reached psx_mod_game_started(),
+     * and Save reloads the pack synchronously; consulting s_fx here made the
+     * editor show the previous list until the intro finished. The guest hook
+     * and every editor view now answer from the same current data. */
+    PsxCardPack c;
+    if (!psx_card_packs_get(equip, &c) || !(c.equips_set || c.equip_types)) return -1;
+    for (int i = 0; i < c.equip_n; i++) if (c.equip_ids[i] == mon) return 1;
+    const uint32_t m = c.equip_types;
     if (!m) return 0;
     if (m & PSX_CARD_PACK_EQUIP_ALL) return 1;
     const int tb = card_type(mon);
@@ -706,12 +700,8 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
     if (s_equip_override) {
         const uint16_t k0 = psx_mod_read_half(EQUIP_RAM), c0 = psx_mod_read_half(EQUIP_RAM + 2);
         if (c0 == 1 && (k0 == SCRATCH_KEY || k0 == s_scratch_key)) {
-            int yes = 0;
-            if (fa && tb >= 0 && tb < 20) {
-                const uint32_t m = fa->cfg.equip_types;
-                const int attr = psx_mod_read_byte(psx_card_extend_aux_base() + (uint32_t)b) >> 4;
-                yes = (m & PSX_CARD_PACK_EQUIP_ALL) || (m & (1u << tb)) || (attr < 6 && (m & PSX_CARD_PACK_EQUIP_ATTR_BIT(attr)));
-            }
+            const int yes = (fa && tb >= 0 && tb < 20 &&
+                             psx_card_effects_equip_fits(a, b) > 0);
             const uint16_t key = yes ? (uint16_t)a : SCRATCH_KEY;
             psx_mod_write_half(EQUIP_RAM, key);
             psx_mod_write_half(EQUIP_RAM + 4, yes ? (uint16_t)b : 0);

@@ -295,13 +295,17 @@ static void handle_fusion_list(int id, const char *json)
  * every edit and puts the stock table back ("restore":1 is the same thing);
  * "clear_all":1 empties the table entirely and "clear_card":id empties one
  * card's share of it; "confirm":1/2/0 raises, accepts or dismisses whichever
- * dialog is up; "apply":1/0 installs or removes the sector override. Add
+ * fusion dialog is up. Equip-list authoring uses "equip":id plus "mon" for
+ * one link, "equip_ids":"1,2,..." to replace the complete list (empty is
+ * valid), "equip_batch":id to open the pending picker, and
+ * "clear_equips"/"restore_equips". "confirm_equips":1/2/0 exercises its
+ * independent two-step dialog. "apply":1/0 installs or removes the sector override. Add
  * "card_json":1 for the selected card's two panels,
  * which works with the window closed. */
 static void handle_fusion_manager(int id, const char *json)
 {
     if (reject_stock_netplay_mutation(id)) return;
-    char buf[6144], s[128], path[1024], msg[1400];
+    char buf[6144], s[128], path[4096], msg[1400];
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_fusion_manager_request_open(open);
     const char *search = json_get_str(json, "search", s, sizeof s);
@@ -319,6 +323,22 @@ static void handle_fusion_manager(int id, const char *json)
     {   /* the confirm dialog: 1 raise, 2 confirm, 0 cancel */
         const int ask = json_get_int(json, "confirm", -1);
         if (ask >= 0) psx_fusion_manager_confirm_restore(ask);
+    }
+    {
+        const int ask = json_get_int(json, "confirm_equips", -1);
+        if (ask >= 0) psx_fusion_manager_confirm_clear_equips(ask);
+    }
+    if (json_get_int(json, "clear_equips", 0)) {
+        if (!psx_fusion_manager_equip_clear_all(msg, sizeof msg)) { send_err(id, msg); return; }
+    }
+    if (json_get_int(json, "restore_equips", 0)) {
+        if (!psx_fusion_manager_equip_restore_all(msg, sizeof msg)) { send_err(id, msg); return; }
+    }
+    {
+        const int equip = json_get_int(json, "equip_batch", -1);
+        if (equip >= 1 && !psx_fusion_manager_equip_batch_open(equip)) {
+            send_err(id, "FM Editor is closed or card is not an Equip"); return;
+        }
     }
     if (json_get_int(json, "apply", -1) == 1)      { if (!psx_fusion_table_apply(msg, sizeof msg)) { send_err(id, msg); return; } }
     else if (json_get_int(json, "apply", -1) == 0) psx_fusion_table_revert();
@@ -346,6 +366,29 @@ static void handle_fusion_manager(int id, const char *json)
             const int ok = psx_fusion_manager_equip_set(eqc, mon, json_get_int(json, "fit", 1), msg, sizeof msg);
             for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
             send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
+            return;
+        }
+        if (eqc >= 1 && json_get_str(json, "equip_ids", path, sizeof path)) {
+            int ids[PSX_CARD_PACK_EQUIP_MAX], n = 0;
+            const char *p = path;
+            while (*p) {
+                while (*p == ' ' || *p == '\t' || *p == ',') p++;
+                if (!*p) break;
+                char *end = NULL;
+                const long v = strtol(p, &end, 10);
+                if (end == p || v < 1 || v > 722 || n >= PSX_CARD_PACK_EQUIP_MAX) {
+                    send_err(id, "equip_ids must be a comma-separated list of card IDs 1..722"); return;
+                }
+                ids[n++] = (int)v;
+                p = end;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p && *p != ',') {
+                    send_err(id, "equip_ids must be comma-separated"); return;
+                }
+            }
+            const int ok = psx_fusion_manager_equip_replace(eqc, ids, n, msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"count\":%d,\"msg\":\"%s\"}", id, ok ? "true" : "false", n, msg);
             return;
         }
     }

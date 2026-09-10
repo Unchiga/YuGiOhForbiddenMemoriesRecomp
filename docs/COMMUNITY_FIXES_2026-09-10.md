@@ -103,6 +103,40 @@ rendering remains the supported qualification path; the existing OpenGL
 tool-window limitation was not represented as fixed. A 1920x1080 containment
 audit is intentionally left for the next task.
 
+### Continuation: reward-only exports and equip authoring
+
+The next authoring pass fixed the direct cause of guaranteed-story-only drop
+exports being ineffective: the export predicate counted weight overrides but
+not a scripted reward. Direct Drop Tables export now reports weight entries and
+scripted drops separately, and both card-share and full MOD packages include
+`drop_table_edits.ini` when a reward is the only edit. Reward-only, weights-only,
+both, and neither were exercised. Card 37 in every-win mode survived inspect,
+clear/import, restart/import and both package paths; the old committed
+`full-coverage-2026-09-07.ygomods` fixture still imports. Machine-readable
+evidence is in `/tmp/ygofm-drop-export-fix-e5qhaE/`. Commit `cb9a286` contains
+that isolated fix.
+
+The Fusions page now separates `Clear fusions...` from `Clear equips...`, with
+the latter defined as every Equip card and guarded by an explicit modal. Each
+Equip also has a searchable pending checklist with filtered mass add/remove,
+clear, cancel and apply. It writes the existing `equips` card-pack field; no new
+parser or package section was introduced. The guest equip hook now answers
+explicit card-ID lists directly, so a 621-monster list cannot overflow the
+fixed streamed equip buffer. A fully empty set of groups remains a valid live
+Fusion Hint state.
+
+The fresh portable software-rendered evidence in
+`/tmp/ygofm-equip-bulk-final-Mp1v8d/` covers stock/empty/two/621 entries,
+duplicate refusal, filtered removal cancellation, clear-everything cancellation
+and confirmation, restart, direct card and full MOD round trips, the old full
+fixture, and preservation of fusion recipes plus unrelated price/password/color
+fields. In a live Free Duel, Legendary Sword accepted only configured card 1,
+the guest lookup recorded the included pair, and the summoned monster displayed
+the +500 ATK/DEF result; configured-excluded card 2 returned no equip result.
+Because the shared card-effect hook changed, all 20 executable effect cases
+were rerun and passed, including speed, queue saturation, and mid-cast restore;
+the new result is `/tmp/ygofm-equip-effects-2026-09-10/results.json`.
+
 ### Restore all drops to stock
 
 The Drop Tables page has `Restore All Drops to Stock`. It requires two

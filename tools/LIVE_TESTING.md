@@ -218,6 +218,36 @@ pairing at once. Verified 2026-09-07 on Elegant Egotist (318): add, duplicate
 refused, remove, a stock pairing removed down to 0 monsters, and `card_effects`
 reported `equip_override` 1 with nothing dropped.
 
+The Fusions page now also exposes `Clear equips...`, explicitly meaning every
+Equip card, independently of `Clear fusions...`. The confirmation's first
+activation only opens the modal; cancel changes nothing, and confirm writes an
+explicit `equips = none` while preserving fusion recipes and every other field
+in the same `card.ini`. Right-click an Equip and choose `Batch edit usable
+monsters...`: its searchable checklist supports row toggles, Select filtered,
+Remove filtered, Clear all, Ctrl+A, Delete, Cancel and Apply. Nothing is written
+until Apply. `fusion_manager` mirrors these paths with `equip_batch`:E,
+`equip_ids`:"1,2,..." (empty means none), `clear_equips`, `restore_equips`, and
+`confirm_equips`:1/2/0; state includes `pick_selected` and every picker-button
+rectangle.
+
+Verified 2026-09-10 in a fresh portable software-rendered profile: Legendary
+Sword moved through stock 63, empty, 2 and all 621 monsters; a duplicate ID was
+rejected without changing the prior list; removing the 42 filtered `Dragon`
+matches stayed pending and Cancel retained all 621. Direct `.ygocards` and full
+`.ygomods` exported byte-identical 621-ID `cards/301/card.ini` files and both
+round-tripped. Clear-all produced zero links for all 34 stock equip cards,
+survived restart, retained all 25,149 imported fusion recipes, and retained
+card 301's imported price, password and colors. Evidence and canvas captures
+are under `/tmp/ygofm-equip-bulk-final-Mp1v8d/`.
+
+Large lists are served through the same entry-hook lookup as type and attribute
+rules rather than expanded into the guest's fixed 0x2100-byte equip buffer.
+The 621-ID case reports `equip_dropped: 0`. In a live Free Duel, a one-ID list
+resolved card 301 + included card 1 as equip kind 2, raised both stats by 500,
+and recorded hook event `{a:301,b:1,out:1}`; excluded card 2 resolved as no
+equip. An intentional all-empty override now remains a valid resident table for
+the Fusion Hint instead of making its readiness probe fail.
+
 The Drop Table Manager's top bar is Save, Import, Export, Randomize and a
 view-dependent slot (`geom` rects `save`, `import`, `export`, `randomize`,
 `third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs).

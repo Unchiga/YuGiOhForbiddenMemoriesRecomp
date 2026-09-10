@@ -175,6 +175,12 @@ static uint32_t equip_groups_start(void)
     return p;
 }
 
+static int equip_scratch_resident(void)
+{
+    return psx_card_effects_equip_scratch() &&
+           psx_mod_read_half(PSX_FUSION_EQUIP_BASE + 2u) == 1u;
+}
+
 /* func_80019A08: is `member` in `key`'s group? Returns `member` if so. An
  * edited equip answers from its card.ini list, the way the game's hook does. */
 static uint16_t equip_lookup(uint16_t key, uint16_t member)
@@ -241,12 +247,17 @@ static int validate(void)
         p += 4u + (uint32_t)cnt * 2u;
         if (++groups > PSX_FUSION_MAX_EQUIP_GROUPS) return 0;
     }
-    return groups > 0;
+    /* Clear every equip is an intentional authoring state. In that case the
+     * resident scratch group is the shape proof and zero ordinary groups is
+     * valid; rejecting it disabled fusion/equip assistance despite the guest
+     * hook still having an exact answer for every edited list. */
+    return groups > 0 || equip_scratch_resident();
 }
 
 /* Is the duel data plausibly resident? Three reads, no walk. */
 static int sentinel(void)
 {
+    if (equip_scratch_resident()) return 1;
     const uint32_t p = equip_groups_start();
     if (psx_mod_read_half(p) - 1u >= PSX_FUSION_CARD_ID_MAX)
         return 0;
@@ -255,8 +266,8 @@ static int sentinel(void)
     /* The fusion index used to be probed here too (card 2's record offset),
      * which an emptied table zeroes. The equip table is the same 235-sector
      * duel block, streamed in one stage earlier, so it answers "is the duel
-     * data resident" on its own -- and unlike the fusion index, nothing can
-     * legitimately empty it. */
+     * data resident" on its own. An override may legitimately empty every
+     * ordinary group; the resident scratch record above covers that case. */
     return 1;
 }
 
