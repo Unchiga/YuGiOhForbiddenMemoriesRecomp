@@ -23,6 +23,9 @@ int psx_ygo_netplay_session(void);
 int psx_ygo_netplay_local_slot(void);
 /* Display name behind a seat, from the lobby; 0 when unknown (out = ""). */
 int psx_ygo_netplay_seat_name(int slot, char *out, size_t cap);
+/* 1 while the hand on screen belongs to the other player (their turn in a
+ * 2P netplay duel): hand-reading render layers must draw nothing. */
+int psx_ygo_netplay_hand_hidden(void);
 
 /* The hidden-information cover (psx_ygo_netplay.c): a present-time overlay
  * painting card backs over the acting side's hand, the detail panel and the

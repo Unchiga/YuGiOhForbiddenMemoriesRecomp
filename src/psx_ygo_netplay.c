@@ -325,6 +325,20 @@ done:
     else if (s_hold > 0) s_hold--;
 }
 
+/* True while this machine is looking at the other player's turn in a 2P
+ * netplay duel: the hand on screen is theirs. Render layers that read the
+ * hand (the fusion assistant's badges and "No fusions in hand" line) ask
+ * this before drawing. */
+int psx_ygo_netplay_hand_hidden(void)
+{
+    if (!psx_ygo_netplay_session() || !psx_mod_game_started()) return 0;
+    const int slot = psx_ygo_netplay_local_slot();
+    if (slot < 0) return 0;
+    if ((psx_mod_read_byte(A_SCENE) & 0x1F) != 3) return 0;
+    if (!two_player_duel()) return 0;
+    return (psx_mod_read_byte(A_SIDE) & 1) != slot;
+}
+
 int psx_ygo_netplay_cover_image(const uint32_t **pixels, int *w, int *h)
 {
     if (!s_have) return 0;

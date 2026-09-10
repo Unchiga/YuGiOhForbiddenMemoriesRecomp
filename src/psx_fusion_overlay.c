@@ -41,6 +41,7 @@
  */
 
 #include "psx_fusion_overlay.h"
+#include "psx_ygo_netplay.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -442,6 +443,9 @@ void psx_fusion_overlay_tick(void)
 int psx_fusion_overlay_image(const uint32_t **pixels, int *w, int *h)
 {
     if (!s_have_content) return 0;
+    /* Netplay, the other player's turn: the hand this reads is theirs, and
+     * even "No fusions in hand" is information about it. */
+    if (psx_ygo_netplay_hand_hidden()) return 0;
     if (pixels) *pixels = s_canvas;
     if (w) *w = FO_W;
     if (h) *h = FO_H;

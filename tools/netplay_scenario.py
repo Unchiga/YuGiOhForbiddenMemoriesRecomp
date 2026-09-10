@@ -89,6 +89,11 @@ def main():
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up', 90)
     time.sleep(3)
     shots('s_p2_turn')
+    if os.environ.get('NETPLAY_SCENARIO_STOP') == 'p2turn':
+        G.press('triangle', 6, 2.0); shots('s_p2_tri'); G.press('circle', 6, 1.0)
+        for i in (H, G):
+            i.q({'cmd': 'quit_graceful'})
+        log('stopped after the P2 turn shots'); return
 
     # P2: set hand card 0 face-down (the extra cross leaves the placement view)
     G.press('cross', 6, 1.5); G.press('cross', 6, 3.0); G.press('cross', 6, 5.0)
