@@ -1,8 +1,8 @@
 # psxrecomp catch-up — 2026-09-09
 
 The local runtime branch `ygofm-upstream-2026-09-09` starts at upstream
-`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by nine title extension
-and regression-fix commits, ending at `ccd3abf2`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
+`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by ten title extension
+and regression-fix commits, ending at `c75132a6`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
 under `/tmp/ygofm-upstream-2026-09-09/title`; the original checkout remains on
 `netplay-2p` / `ygofm-netplay`. Nothing was pushed or released.
 
@@ -16,12 +16,29 @@ artifacts, not committed assets. Preserve them before clearing `/tmp`.
 | 2. Boot / menus | Title, LOAD, Library and Password 89631139 pass | Same; loaded-menu native capture identical | `baseline/solo-v3`, `new/solo`, `screenshot-comparison.json` |
 | 3. Duel / freezes | Two turns and win → drops → Library pass | Same; Library advances 300 frames over 5 seconds after drops | `baseline/duel-fixture`, `baseline/mods-v2`, `new/solo`, `new/win-probe` |
 | 4. Managers | Card, Fusion, Drop, CPU open/edit; randomize, card share, package round-trip pass | Same; edited ATK 3100 visible in Library | `baseline/solo-v3`, `new/solo`; manager PPMs and `commands.jsonl` |
-| 5. Video / audio | Dropdowns/navigation pass; extra applied-control probe fails its persistence assertion; Vulkan loads | Same; widescreen, filters, VSync, audio and Game savestate menu pass; exhaustive row activation remains incomplete | `baseline/video-v2`, `new/video`, `baseline/video-actions-v4`, `new/video-actions-v3`, `{baseline,new}/vulkan` |
+| 5. Video / audio | GL dropdowns/navigation pass; extra applied-control probe fails its persistence assertion; Vulkan loads; SDL menu draw missing in source | GL controls pass; software F10 and all seven composed menus pass after follow-up fix; exhaustive row activation remains incomplete | `baseline/video-v2`, `new/video`, `baseline/video-actions-v4`, `new/video-actions-v3`, `{baseline,new}/vulkan`, `new/software-menu-final-v2` |
 | 6. Mods | Art, frame color, repacked description, portrait, fill Library and monster/magic effects visible; full package round-trip passes | Same; visual means 0–3.66 | `{baseline,new}/mods`, `baseline/mods-v2`, `new/win-probe`, `mods-screenshot-comparison.json`; `{baseline,new}/magic`, `magic-comparison.json` |
 | 7. Loopback netplay | Delay-sync, rollback 35/15, 5% loss boot/P2 cover pass | All pass after CD fix and state-aware route correction; trade carries both cards back with backups | `baseline/netplay-{delay,rollback,loss}`; `new/netplay-delay-fixed`, `new/netplay-rollback-v2`, `new/netplay-loss` and matching `.log` files |
 | 8. Save integrity | Trade changes 74 bytes per card; directory unchanged | Final traded cards exactly match baseline; loss run changes zero bytes | `delay-comparison.json`, `rollback-card-comparison.json`, `loss-card-integrity.json` |
 | 9. Performance | Duel 59.9565 fps; Card Manager 60.0302 fps | Duel 59.9652 fps; Card Manager 59.9654 fps | `baseline/duel-fixture/duel-perf.json`, `baseline/solo-v3/card-manager-perf.json`, `new/solo/*-perf.json` |
 | 10. Linux setup packaging | Stages and configures offline with explicit toolchain | Same, final 31 MB setup archive staged locally | `baseline/package.log`, `baseline/staged-offline-setup-configure.log`, `new/package-final.log`, `new/staged-offline-final.log` |
+
+Manual-launch follow-up: the user reported F10 displaying nothing in software.
+The SDL path consumed input and reserved the inset but omitted the menu image;
+earlier composed menu checks used GL and missed this. Runtime `c75132a6` adds
+SDL composition, seeds the documented 3x window default (zero previously gave
+a 1x window and a displayed 0x), and makes `present_shot` capture the entire SDL
+window including UI outside the game viewport. Existing valid settings still win.
+`tools/software_menu_regression.py` launches a new scratch profile, drives real
+F10/arrow events, checks pixels in all seven composed dropdowns and opens Card
+Manager. It passes in `new/software-menu-final-v2`; debug, release and setup
+rebuilds pass in `new/software-menu-{build,release-build,setup-build}.log`.
+The first test attempt queried title hooks before initialization; the harness
+now waits for readiness. Baseline source has the same omitted SDL draw; no new
+matched baseline run was made for this follow-up. SDL3 code remains untested.
+The scratch helper `/tmp/ygofm-upstream-2026-09-09/Try-upstream.sh` now launches
+this rebuilt software version. The original checkout's Play.sh still runs the
+original fork. No personal cards were accessed for this follow-up.
 
 The custom magic card deals exactly 500 damage on both revisions (opponent LP
 8000 → 7500), with matching hook-event sequences and image mean difference
