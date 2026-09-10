@@ -8,6 +8,7 @@
 #ifndef PSX_YGO_NETPLAY_H
 #define PSX_YGO_NETPLAY_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -20,6 +21,8 @@ int psx_ygo_netplay_session(void);
 
 /* This peer's sim slot (0 = P1) while a session is up; -1 offline. */
 int psx_ygo_netplay_local_slot(void);
+/* Display name behind a seat, from the lobby; 0 when unknown (out = ""). */
+int psx_ygo_netplay_seat_name(int slot, char *out, size_t cap);
 
 /* The hidden-information cover (psx_ygo_netplay.c): a present-time overlay
  * painting card backs over the acting side's hand, the detail panel and the

@@ -516,3 +516,41 @@ kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)
 
 `pkill -f` with the binary name in the pattern also matches the shell that
 runs it; use `pidof`.
+
+## 8. Netplay: two instances on one box
+
+`tools/netplay_pair.py` launches the debug build twice in a LAN session
+(host seat 0 on debug port 4372, guest seat 1 on 4373; UDP 7777/7778) with
+scratch card dirs under `NETPAIR_DIR` (default `$CLAUDE_SCRATCHPAD/netpair`):
+`cards` seeds host/card1.mcd from the personal card and guest/card1.mcd from
+`tools/save_clone.py` (2P refuses two cards with the same duelist code), both
+with a blank card 2. `start`, `stop`, `menu` (title -> main menu, safe across
+the intro movie), `rules` (-> REGULATION OF 2P-DUEL RULES, mode 0xD0),
+`trade` (-> the trade screen, mode 0xCE), `shot TAG`.
+
+As a module each `Inst` has `press(btn, frames, settle)` on ITS OWN pad
+(host = pad 1, guest = pad 2; the other pad's presses arrive over the
+session), `shot` (present-time, overlays included), `shot_fb` (raw
+framebuffer, for screen detection), `burst(tag, seconds, interval)` for
+catching one-frame leaks, `b/h/w/rd` RAM reads.
+
+`tools/netplay_scenario.py [rollback] [latency_ms] [jitter_ms]` plays a whole
+session: LP 1 vs 1, three placements, an attack, the results screen and a
+TRADE right after, with state checks and screenshots at every step. The
+latency numbers turn on recomp-net's receive-side link simulator on both
+peers (added RTT is twice the number).
+
+Facts that cost time (2026-09-09): the main menu ignores nothing, so never
+call `menu()` from the menu (START selects the row). In a 2P duel a card must
+be played before START ends the turn, and a face-down placement leaves the
+game in phase 8 until one more X. The results screen is left by the WINNER's
+X. LP on the rules screen: LEFT on each pad steps its own value down by 500
+to 500, then 1. Duel state: phase `0x8009B23A & 0xF` (4 hand, 5 field cursor,
+6 magic zoom, 7 placement view, 8 placement confirm, 9 battle, 0xC/0xD
+results), substate `0x8009B174`, effect `0x8009B254` (2 = TRIANGLE card view).
+
+To stop a scenario from a shell, `pkill -f "[n]etplay_scenario"`: a plain
+`pkill -f netplay_scenario` matches the shell that runs the pkill (its own
+command line holds the name) and kills it with exit 144. `pkill -x
+Yu_Gi_Oh_Forbid` stops the game instances (SIGTERM skips netplay teardown, so
+card carry-back only happens through `{"cmd":"quit_graceful"}`).
