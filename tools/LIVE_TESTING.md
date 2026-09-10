@@ -19,9 +19,11 @@ cmake --build build     --target psx-runtime     # release
 ```
 
 Only one game holds the debug port. A second launch prints `debug server
-bind(4370) FAILED` and every query keeps going to the OLD process, so after a
-rebuild stop the old one first: `pkill -x Yu_Gi_Oh_Forbid` (the process name
-is cut to 15 characters; `pkill -f` on the full name kills your own shell too).
+bind(4370) FAILED` and every query keeps going to the OLD process. Verify the
+port before launch, record the exact PID/process handle returned by the test,
+and stop only that owned process. Never use a broad `pkill` pattern and never
+send a debug command until `card_packs.dir` proves the server belongs to the
+expected scratch profile.
 
 Player data lives in `~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/`
 (the runtime prints `psxrecomp: player data in ...` at start). Your own edited
@@ -510,23 +512,24 @@ slots are 0..11.
 
 ## 15. Stopping
 
-```sh
-kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)
-```
-
-`pkill -f` with the binary name in the pattern also matches the shell that
-runs it; use `pidof`.
+Use `{"cmd":"quit_graceful"}` for an owned netplay peer so BYE, resource
+shutdown, and scratch-card carry-back run. For an owned offline test, request
+the normal File > Quit to Desktop path or send SIGTERM to the exact PID the
+harness launched. Confirm that PID's command line contains the expected
+explicit `--memcard-dir` before signaling it. Do not use `pidof`, `pkill`, or
+another process-wide pattern: the user may have a separate game open.
 
 ## 8. Netplay: two instances on one box
 
 `tools/netplay_pair.py` launches the debug build twice in a LAN session
 (host seat 0 on debug port 4372, guest seat 1 on 4373; UDP 7777/7778) with
 scratch card dirs under `NETPAIR_DIR` (default `$CLAUDE_SCRATCHPAD/netpair`):
-`cards` seeds host/card1.mcd from the personal card and guest/card1.mcd from
-`tools/save_clone.py` (2P refuses two cards with the same duelist code), both
-with a blank card 2. `start`, `stop`, `menu` (title -> main menu, safe across
-the intro movie), `rules` (-> REGULATION OF 2P-DUEL RULES, mode 0xD0),
-`trade` (-> the trade screen, mode 0xCE), `shot TAG`.
+`cards` requires an explicit `NETPAIR_SEED` and never falls back to personal
+player data. It copies that authorized scratch seed to host/card1.mcd and uses
+`tools/save_clone.py` for a different guest duelist code (2P refuses two cards
+with the same code); `NETPAIR_BLANK` may supply card 2. `start`, `menu` (title
+-> main menu, safe across the intro movie), `rules` (-> REGULATION OF 2P-DUEL
+RULES, mode 0xD0), `trade` (-> the trade screen, mode 0xCE), `shot TAG`.
 
 As a module each `Inst` has `press(btn, frames, settle)` on ITS OWN pad
 (host = pad 1, guest = pad 2; the other pad's presses arrive over the
@@ -549,8 +552,47 @@ to 500, then 1. Duel state: phase `0x8009B23A & 0xF` (4 hand, 5 field cursor,
 6 magic zoom, 7 placement view, 8 placement confirm, 9 battle, 0xC/0xD
 results), substate `0x8009B174`, effect `0x8009B254` (2 = TRIANGLE card view).
 
-To stop a scenario from a shell, `pkill -f "[n]etplay_scenario"`: a plain
-`pkill -f netplay_scenario` matches the shell that runs the pkill (its own
-command line holds the name) and kills it with exit 144. `pkill -x
-Yu_Gi_Oh_Forbid` stops the game instances (SIGTERM skips netplay teardown, so
-card carry-back only happens through `{"cmd":"quit_graceful"}`).
+Let the scenario finish its `quit_graceful` requests. If a harness must be
+interrupted, use its recorded subprocess handles and then query each owned
+peer for `quit_graceful`; only use an exact recorded PID as the final fallback.
+SIGTERM skips netplay carry-back.
+
+## 16. Community-fix probes (2026-09-10)
+
+`fm_editor` is the general shared-window command. `page` is 0 Cards, 1 Drop
+Tables, 2 Fusions, 3 Dialogue, or 4 CPU; `tab` injects a mouse tab click and
+`keytab` uses Ctrl+1 through Ctrl+5. The state reports `window_id`, page, and
+window size. Legacy manager commands remain compatible and select the matching
+page. FM Editor and every legacy entry return a netplay error online.
+
+`card_description_validate` runs the exact planner used by editor save and
+import. The capacity is eight lines by 20 columns. `|`, actual newlines, and a
+literal `\\n` are explicit breaks; unbroken text wraps automatically. A save
+must fail rather than clipping line 9 or an explicit 21-column row.
+
+`card_drops_list` reports each distinct result plus `first`, while
+`award_order` records every individual card, whether it is `story` or
+`normal`, and whether its trunk award committed. The story regression drives
+the copied authorized slot state and writes this evidence as JSON:
+
+```sh
+python3 -B tools/story_reward_regression.py --help
+```
+
+The Drop Tables page's Restore All Drops to Stock action is separate from
+MODS > Revert to Stock. It needs two activations in ten seconds, resets only
+the 39 x 3 x 722 drop weights, preserves story rewards and other editors, and
+requires Save for persistence.
+
+`netplay_privacy` reports the selected field record, owner, face-down flags,
+and whether the local present overlay covers the detail strip. The complete
+scenario asserts both ownership directions. `tools/netplay_stock_regression.py`
+starts an already-seeded hostile scratch pair, verifies both peers at stock
+1x, attacks all disabled menu/editor/debug paths, shuts both down gracefully,
+and compares all persistent fixture hashes.
+
+File menu layouts are intentionally different: a launcher session has Quit to
+Launcher and Quit to Desktop; `--no-launcher` has only Quit to Desktop. Quit to
+Launcher is a session teardown followed by the existing in-process launcher,
+not a renamed application exit. `build-dbg/menu_preview --selftest` checks
+keyboard/controller and mouse activation plus disabled-menu policy.
