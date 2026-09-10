@@ -229,3 +229,107 @@ checks; do not reuse a state across regeneration.
 An optional final hash read of the protected personal card was rejected by
 automatic approval review and was not retried. Save-integrity evidence uses
 only scratch seeds, final cards and their pre-netplay backups.
+
+## 2026-09-10 effect-freeze and netplay follow-up
+
+The two supplied freeze reports and their state/thumb attachments were copied
+unchanged to the durable handoff and verified against `manifest.json`. Both are
+the same stock effect-stream wait: effect state 6, flags `0xC001`, and the
+class-4 effects Dark Hole (336) / Dragon Capture Jar (329). This was not the
+old CD gate defect. The matching v0.5.9 runtime eventually completes each state
+after about 20 seconds; its 900-vblank reporter fires around 15 seconds and
+therefore describes a long stall before the stock 600-count stream timeout.
+
+A fresh production `on_flip = dragon_jar` fixture reproduced the regression in
+the candidate. Synthetic monster casts enter the stock effect handler without
+the normal spell action that advances the class-4 effect-sound stream. The
+guest remained busy until its stock timeout, while two host watchdogs falsely
+called the cast complete and released the parameter/side hold at 900 frames.
+The repair leaves the stock callback and cleanup in charge, but sets that
+specific orphaned stream countdown to one so its own bounded fallback runs on
+the next driver tick. A host watchdog is now telemetry only and can no longer
+declare success or release a busy guest. Cancellation, genuine completion,
+stalls, queue rejection, and class-4 audio skips are reported separately.
+
+Effect-side host state is now deterministic and serializable. Both card and
+monster effects use fixed xorshift state rather than wall-clock `rand()`. The
+runtime provides common before-save/after-load plugin callbacks, and includes
+the Expansion1 mod allocation and GPU DMA aperture in disk, rewind, and
+rollback snapshots. Version-7 states remain readable: older 16-section states
+reset plugin mirrors instead of adopting stale host state. The saved mirrors
+cover effect parameter holds, side ownership, queues, chance state, bonuses,
+face-down/present rows, battle decisions, counters and instruction immediates.
+
+The merged generated dispatcher also made the old summon entry hook unreliable:
+internal aliases can bypass the configured function entry. Summon detection is
+now an empty-to-occupied monster-row transition, with existing rows primed on a
+legacy/mid-duel load. The production mod regression proves a real row-5 summon,
+then reveals the scripted face-down row and proves one attached trigger reaches
+genuine completion and changes LP 8000 to 7500. `goto_duel.py` no longer returns
+from the phase-3 intro; it requires phase 4, player ownership, and initialized LP.
+
+The 3D battle regression found a second upstream-return edge. After a stock 3D
+scene (low mode 1), the game briefly returns through unflagged mode `0x03` with
+action `0x8009` before stable mode `0xC3` and action 11. Treating `0x03` as a
+duel exit discarded the pending slayer/indestructible result. Pending 3D battle
+decisions now survive both transitions. The final production run records the
+3D selection, action-11 hook, rewritten defender row, duel result, and continued
+Library input in
+`/tmp/ygofm-upstream-2026-09-10-mods-battle-3d-transition-final/results.json`.
+The earlier 2D slayer run also completed.
+
+`tools/upstream_regression.py` now derives its executable-effect inventory from
+the enum and fails when it becomes stale. All 20 executable IDs passed with
+alternating owners: heal, damage, destroy-type, destroy-attack, Raigeki, Dark
+Hole, Dragon Jar, Stop Defense, flip, weaken, Swords, Cursebreaker, Harpie,
+field, destroy-strongest, lose-LP, gamble-LP, gamble, destroy-own, and
+destroy-own-LP. Ritual is deliberately excluded from synthetic casting because
+it is a recipe/table override, not an effect-driver handler; its parser and
+records remain covered by manager/package tests. Dark Hole and Dragon Jar both
+finish in about 3.3 seconds with one explicit class-4 audio skip, no stall,
+cancel, leaked side flip, or active card hold. Dragon Jar passes at 1x, 2x, 3x,
+and 4x; queue saturation reports 16 rejected casts instead of overwriting; and
+a save made during an active cast restores the cast, side flip, counters and
+hold, then genuinely completes the same timeline. Final machine-readable data
+is `/tmp/ygofm-upstream-2026-09-10-effects-after-3d-final/results.json`.
+
+This inventory is a completion/ownership/LP oracle for every executable class,
+not an exhaustive Cartesian proof of every target count, face state, stat tie,
+immunity, bonus, trigger, and recipe combination. Production summon/flip,
+magic-card damage, 2D/3D slayer, queue exhaustion, repeated activation, speed,
+and mid-cast restoration have dedicated live cases. Parser/manager tests cover
+the remaining battle, bonus, immunity, equip, terrain, trap and ritual shapes.
+Per-machine custom card packages remain intentionally disabled during netplay:
+package contents are not synchronized or included in the session handshake, so
+running asymmetric custom effects would be nondeterministic. Live netplay tests
+therefore exercise the repaired common snapshot/transport paths with that layer
+inert rather than claiming synchronized custom packages.
+
+The network follow-up repairs two different progress failures. LAN state
+transfer uses a 128 KiB congestion window, 64 chunks and a 160 ms resend timer;
+input/confirmation retries use 16 ms. Confirmation pumping can now resend cached
+history while the application is paused at a barrier, and peer-advance evidence
+stops obsolete confirmation floods. The stale rollback unit fixture was also
+corrected: predicted remote rows are no longer declared confirmed unless the
+case explicitly provides confirmed history. The full recomp-net suite is now
+16/16. Live delay, rollback with 35/15 ms simulation, and 5% loss boot all pass.
+The two full scenarios finish the duel and trade, carry both cards back with
+`.pre-netplay` backups, and have no snapshot overflow/drop; the loss-only case
+reaches player two's turn without card writes. Evidence is under
+`/tmp/ygofm-upstream-2026-09-10-netplay-{delay-required-final,rollback-postfix,loss-only-final}`.
+
+Final validation after these changes:
+
+- runtime CTest: 84/84 runnable tests passed; two documented tests disabled and
+  one toolchain-dependent test skipped;
+- recomp-net CTest: 16/16 passed with local sockets enabled;
+- debug, release, and Linux setup-host title builds linked cleanly;
+- `dist/ygofm-0.5.3-upstream-effects-fixed-local.zip` was regenerated after the
+  fixes and passed `python3 -m zipfile -t`;
+- the staged archive configured with `FETCHCONTENT_FULLY_DISCONNECTED=ON` and
+  local libjuice/libchdr, then completed all 256 setup-host build steps using
+  cmake-clang-v1/1.0.14. The first build attempt only hit the sandbox's read-only
+  default ccache directory; a scratch-local cache completed the unchanged build.
+
+No archive was uploaded and no branch was pushed. The archive is a local test
+artifact, not a release.

@@ -26,8 +26,8 @@
  *   the "playing side", so for a trigger owned by the other side the side
  *   byte, its record pointer and its row-map pointer are flipped for the
  *   duration of the cast and put back after.
- *   summon: the summon action's state 5 (row in gp+0x294). attack: the
- *   attack action's first frame (attacker object D_800E9EF0[0]). death: the
+ *   summon: an empty-to-occupied monster-row transition. attack: the attack
+ *   action's first frame (attacker object D_800E9EF0[0]). death: the
  *   battle decision above, a trap firing (state 10 with gp+0x322 set), or
  *   the destroy helper called while a magic effect runs. turn: the
  *   per-side turn counter at side+0x01, which action 2 increments.
@@ -44,7 +44,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "cpu_state.h"
 #include "mod_plugins.h"
@@ -70,18 +69,19 @@
 #define STATE_BYTE    0x8009B174u     /* u8: low nibble state, 0x80 initialised */
 #define MODE_BYTE     0x8009B26Cu     /* 0xC3 = duel screen */
 #define FX_STATE      0x8009B220u     /* u16 magic effect flags */
+#define STREAM_TIMEOUT 0x8009B0ECu    /* effect/XA stream fallback countdown */
+#define STREAM_INDEX   0x8009B100u    /* stream driver state (6 = wait) */
+#define STREAM_FLAGS   0x8009B112u    /* bit 0x4000 = completion still awaited */
 #define DIALOG_ARMED  0x8009B164u
 #define BUSY_COUNT    0x8009B162u
 #define OUT_ATTACKER  0x8009B1B0u     /* s8 gp+0x2A8 */
 #define OUT_DEFENDER  0x8009B1B1u     /* s8 gp+0x2A9 */
-#define DEST_ROW      0x8009B19Cu     /* u8 gp+0x294: summon destination row */
 #define SCENE_FLAG    0x8009B229u     /* u8 gp+0x321: 1 = the 3D battle scene path */
 #define KILL_ROW_A    0x8009B208u     /* u8 gp+0x300: attacker row to destroy after the scene, 0xFF none */
 #define KILL_ROW_D    0x8009B209u
 #define TRAP_ID       0x8009B22Au     /* u16 gp+0x322 */
 #define TRAP_TAB      0x8009AF24u     /* u8[6] ceilings */
 
-#define HOOK_SUMMON   0x8001B170u
 #define HOOK_ATTACK   0x8001F560u
 #define HOOK_ACTION11 0x8001825Cu
 #define HOOK_TRAP     0x8001F0D0u
@@ -100,7 +100,15 @@ static Cast s_q[24];
 static int  s_qh, s_qt;
 static int  s_casting, s_flipped, s_orig_side;
 static unsigned s_cast_frame;
-static int  s_casts_done;
+static int  s_cast_stalled, s_audio_skipped;
+static int  s_casts_done, s_casts_cancelled, s_casts_stalled;
+static int  s_queue_dropped, s_audio_skips;
+static uint32_t s_rng = 0x6D2B79F5u;
+static uint32_t s_state_mem;
+
+#define MFX_STATE_MAGIC   0x4D465853u /* MFXS */
+#define MFX_STATE_VERSION 2u
+#define MFX_STATE_WORDS   384u
 
 typedef struct { int aid, arow, did, drow, decided, a_dead, d_dead, pathA; } Battle;
 static Battle s_bat;
@@ -108,12 +116,20 @@ static Battle s_bat;
 typedef struct { int id, applied; } Bonus;
 static Bonus s_bonus[30];
 static int   s_facedown[30];      /* card id of a monster set face-down in this row (its flip is still to come) */
+static uint8_t s_present[30];     /* occupied last frame: makes summon detection independent of dispatcher aliases */
 static uint8_t s_turn_last[2];
 static int s_in_duel;
 
 typedef struct { unsigned frame; const char *what; int a, b, c; } Ev;
 static Ev s_ev[16]; static unsigned s_ev_n;
 static void ev(const char *what, int a, int b, int c) { Ev *e = &s_ev[s_ev_n++ & 15u]; e->frame = s_frame; e->what = what; e->a = a; e->b = b; e->c = c; }
+
+static uint32_t rng_next(void)
+{
+    uint32_t x = s_rng ? s_rng : 0x6D2B79F5u;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return s_rng = x;
+}
 
 static const Mfx *mfx(int id) { if (id < 1 || id > CARD_COUNT) return NULL; const Mfx *m = s_m[id]; return (m && m->present) ? m : NULL; }
 int psx_card_effects_monster_has_effect(int id) { return mfx(id) != NULL; }
@@ -124,12 +140,17 @@ static int side_of_row(int row) { return row >= 15; }
 static int is_monster_row(int row) { const int r = row % 15; return r >= 5 && r <= 9; }
 static int playing_side(void) { return psx_mod_read_byte(SIDE_BYTE) & 1; }
 
-static void enqueue_raw(int side, int card, int fx, int amount, int target, int terrain)
+static int enqueue_raw(int side, int card, int fx, int amount, int target, int terrain)
 {
-    if (((s_qt + 1) % 24) == s_qh) return;
+    if (((s_qt + 1) % 24) == s_qh) {
+        s_queue_dropped++;
+        ev("queue_drop", card, fx, side);
+        return 0;
+    }
     Cast *c = &s_q[s_qt]; s_qt = (s_qt + 1) % 24;
     c->side = side; c->card = card; c->fx = fx; c->amount = amount; c->target = target; c->terrain = terrain;
     ev("queue", card, fx, side);
+    return 1;
 }
 
 /* Time Wizard's coin. Heads: Raigeki as the owner (their monsters go).
@@ -165,7 +186,7 @@ static void destroy_own(int side, int card, int pct)
 
 static void gamble(int side, int card)
 {
-    const unsigned r = (unsigned)rand() ^ s_frame;
+    const unsigned r = rng_next();
     const int heads = (r & 1u) != 0;
     if (heads) { enqueue_raw(side, card, PSX_CARD_FX_RAIGEKI, -1, -1, -1); ev("coin_heads", card, side, 0); return; }
     ev("coin_tails", card, side, 0);
@@ -181,6 +202,20 @@ static void enqueue_fx(int side, int card, int fx, int amount, int target, int t
     enqueue_raw(side, card, fx, amount, target, terrain);
 }
 
+int psx_monster_effects_debug_cast(int side, int card, int fx,
+                                   int amount, int target, int terrain)
+{
+    if (psx_ygo_netplay_session() || !s_in_duel || side < 0 || side > 1 ||
+        fx <= PSX_CARD_FX_NONE || fx >= PSX_CARD_FX_COUNT ||
+        fx == PSX_CARD_FX_RITUAL)
+        return 0;
+    const int before_q = (s_qt - s_qh + 24) % 24;
+    const int before_drop = s_queue_dropped;
+    enqueue_fx(side, card, fx, amount, target, terrain);
+    return s_queue_dropped == before_drop &&
+           ((s_qt - s_qh + 24) % 24) != before_q;
+}
+
 /* A trigger's branches in order: every plain branch rolls its own chance,
  * an "else" branch fires only when the branch before it did not. */
 static void enqueue(int side, int card, const PsxCardTrigger *t)
@@ -191,7 +226,7 @@ static void enqueue(int side, int card, const PsxCardTrigger *t)
         const PsxCardFxBranch *b = &t->b[k];
         int fire;
         if (b->is_else) fire = prev_failed;
-        else { const int roll = (int)(((unsigned)rand() ^ s_frame) % 100u); fire = roll < b->chance; }
+        else { const int roll = (int)(rng_next() % 100u); fire = roll < b->chance; }
         ev("branch", card, k, fire);
         if (fire) enqueue_fx(side, card, b->fx, b->amount, b->target, b->terrain);
         prev_failed = !fire;
@@ -248,9 +283,27 @@ static void casts_tick(void)
 {
     if (s_casting) {
         const unsigned st = psx_mod_read_half(FX_STATE);
-        if ((s_frame > s_cast_frame + 2 && st == 0) || s_frame > s_cast_frame + 900 || psx_mod_read_byte(MODE_BYTE) != 0xC3) {
+        if (!s_audio_skipped && psx_mod_read_half(STREAM_INDEX) == 6 &&
+            (psx_mod_read_half(STREAM_FLAGS) & 0x4000u) &&
+            psx_mod_read_word(STREAM_TIMEOUT) > 1u) {
+            /* A synthetic cast did not come through the spell action that
+             * advances this effect-sound stream. Preserve the stock driver's
+             * callback and cleanup, but make its own bounded fallback expire
+             * on the next driver tick instead of freezing play for ~20 s. */
+            psx_mod_write_word(STREAM_TIMEOUT, 1u);
+            s_audio_skipped = 1;
+            s_audio_skips++;
+            ev("cast_audio_skip", (int)st, 0, 0);
+        }
+        if (s_frame > s_cast_frame + 2 && st == 0) {
             unflip(); s_casting = 0; s_casts_done++;
             ev("cast_done", (int)st, 0, 0);
+        } else if (!s_cast_stalled && s_frame > s_cast_frame + 900) {
+            /* Telemetry only. A watchdog must never turn a busy guest into a
+             * host-side success or release the acting-side ownership. */
+            s_cast_stalled = 1;
+            s_casts_stalled++;
+            ev("cast_stalled", (int)st, 0, 0);
         }
         return;
     }
@@ -262,7 +315,7 @@ static void casts_tick(void)
         const int lp = psx_mod_read_half(lpat);
         int loss = 0;
         if (c.fx == PSX_CARD_FX_LOSE_LP) loss = c.amount >= 0 ? c.amount : 500;
-        else if (((unsigned)rand() ^ s_frame) & 1u) loss = lp / 2;
+        else if (rng_next() & 1u) loss = lp / 2;
         if (loss > lp) loss = lp;
         if (loss > 0) { psx_mod_write_half(lpat, (uint16_t)(lp - loss)); psx_lp_popup_show(loss, 0); }
         ev("lose_lp", c.card, loss, c.side);
@@ -271,6 +324,7 @@ static void casts_tick(void)
     flip_side(c.side);
     if (!psx_card_effects_cast(c.fx, c.amount, c.target, c.terrain)) { unflip(); return; }
     s_casting = 1; s_cast_frame = s_frame;
+    s_cast_stalled = 0; s_audio_skipped = 0;
     ev("cast", c.card, c.fx, c.side);
 }
 
@@ -307,8 +361,23 @@ static void bonus_tick(void)
         const unsigned fl = row_flags(row);
         const int id = row_id(row);
         Bonus *b = &s_bonus[row];
-        if (fl == 0 || id != b->id) { b->id = id; b->applied = 0; s_facedown[row] = 0; }
-        if (!(fl & 0x8000u)) continue;
+        if (!(fl & 0x8000u) || id < 1 || id > CARD_COUNT) {
+            b->id = id; b->applied = 0; s_facedown[row] = 0; s_present[row] = 0;
+            continue;
+        }
+        if (!s_present[row] || id != b->id) {
+            const Mfx *placed = mfx(id);
+            b->id = id; b->applied = 0; s_present[row] = 1;
+            if (fl & 0x1000u) {
+                s_facedown[row] = id;
+                ev("summon", id, row, 2);
+            } else {
+                s_facedown[row] = 0;
+                ev("summon", id, row, side_of_row(row));
+                if (placed && placed->cfg.on_summon.n > 0)
+                    enqueue(side_of_row(row), id, &placed->cfg.on_summon);
+            }
+        }
         const Mfx *m = mfx(id);
         /* turned face-up (flipped by the player, attacked, revealed): the flip trigger */
         if (s_facedown[row] == id && !(fl & 0x1000u)) {
@@ -372,39 +441,54 @@ static void tick(void)
         s_scratch_row = psx_mod_alloc_guest_memory(0x20, 4);
         if (s_scratch_row) for (uint32_t i = 0; i < 0x20; i += 4) psx_mod_write_word(s_scratch_row + i, 0);
     }
-    const int in_duel = psx_mod_read_byte(MODE_BYTE) == 0xC3 && psx_card_db_ready();
+    const unsigned mode = psx_mod_read_byte(MODE_BYTE);
+    const int in_duel = mode == 0xC3 && psx_card_db_ready();
     if (!in_duel) {
-        if (s_in_duel) { s_in_duel = 0; s_qh = s_qt = 0; s_casting = 0; s_flipped = 0; memset(&s_bat, 0, sizeof s_bat); memset(s_bonus, 0, sizeof s_bonus); memset(s_facedown, 0, sizeof s_facedown); }
-        /* the 3D battle scene is mode 1: keep the pending path-A decision */
-        if (psx_mod_read_byte(MODE_BYTE) != 1) { s_turn_last[0] = psx_mod_read_byte(SIDES + 1u); s_turn_last[1] = psx_mod_read_byte(SIDES + 0x21u); }
+        /* The 3D battle scene temporarily owns low-mode 1, then returns
+         * through an unflagged low-mode 3 before the stable byte is 0xC3.
+         * Both are still this duel. Action 11 consumes s_bat afterward, so
+         * do not turn either transition into an exit or discard its result. */
+        const unsigned scene = mode & 0x1Fu;
+        if (s_in_duel && (scene == 1u || (scene == 3u && s_bat.pathA))) return;
+        if (s_in_duel) {
+            if (s_bat.pathA)
+                ev("battle_drop", (int)mode, s_bat.decided, psx_mod_read_half(ACTION));
+            if (s_casting) {
+                unflip(); s_casting = 0; s_casts_cancelled++;
+                ev("cast_cancel", psx_mod_read_half(FX_STATE), 0, 0);
+            }
+            s_in_duel = 0; s_qh = s_qt = 0; s_flipped = 0;
+            memset(&s_bat, 0, sizeof s_bat); memset(s_bonus, 0, sizeof s_bonus);
+            memset(s_facedown, 0, sizeof s_facedown);
+            memset(s_present, 0, sizeof s_present);
+        }
+        s_turn_last[0] = psx_mod_read_byte(SIDES + 1u);
+        s_turn_last[1] = psx_mod_read_byte(SIDES + 0x21u);
         return;
     }
-    if (!s_in_duel) { s_in_duel = 1; s_turn_last[0] = psx_mod_read_byte(SIDES + 1u); s_turn_last[1] = psx_mod_read_byte(SIDES + 0x21u); }
+    if (!s_in_duel) {
+        s_in_duel = 1;
+        s_turn_last[0] = psx_mod_read_byte(SIDES + 1u);
+        s_turn_last[1] = psx_mod_read_byte(SIDES + 0x21u);
+        /* A normal duel enters with empty rows. A legacy state may resume in
+         * the middle of one; prime its existing rows so loading is never
+         * mistaken for a fresh summon. */
+        for (int row = 0; row < 30; row++) {
+            if (!is_monster_row(row)) continue;
+            const unsigned fl = row_flags(row);
+            if (!(fl & 0x8000u)) continue;
+            const int id = row_id(row);
+            s_present[row] = 1;
+            s_bonus[row].id = id;
+            s_facedown[row] = (fl & 0x1000u) ? id : 0;
+        }
+    }
     turn_tick();
     bonus_tick();
     casts_tick();
 }
 
 /* ---- hooks ------------------------------------------------------------------------ */
-static void hook_summon(struct CPUState *cpu, uint32_t address)
-{
-    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
-    (void)cpu; (void)address;
-    static int last_row = -1, last_id = -1;
-    const unsigned st = psx_mod_read_byte(STATE_BYTE);
-    if ((st & 0xFu) != 5) { if ((st & 0xFu) < 5) last_row = -1; return; }
-    const int row = psx_mod_read_byte(DEST_ROW);
-    if (row < 0 || row >= 30) return;
-    const int id = row_id(row);
-    if (row == last_row && id == last_id) return;
-    last_row = row; last_id = id;
-    const Mfx *m = mfx(id);
-    const int facedown = (row_flags(row) & 0x1000u) != 0;
-    ev("summon", id, row, facedown ? 2 : playing_side());
-    if (!is_monster_row(row)) return;
-    if (facedown) { s_facedown[row] = id; return; }      /* set face-down: the summon effect is forfeited */
-    if (m && m->cfg.on_summon.n > 0) enqueue(side_of_row(row), id, &m->cfg.on_summon);
-}
 
 static int battle_kind(int id) { const Mfx *m = mfx(id); return (m && m->cfg.battle > 0) ? m->cfg.battle : 0; }
 
@@ -470,6 +554,7 @@ static void hook_action11(struct CPUState *cpu, uint32_t address)
     if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
     if (!s_bat.pathA || !s_bat.decided) return;
+    ev("scene_hook", psx_mod_read_half(ACTION), psx_mod_read_byte(MODE_BYTE), 0);
     if (psx_mod_read_half(ACTION) & 0x8000u) return;
     if (battle_kind(s_bat.aid) || (s_bat.drow >= 0 && battle_kind(s_bat.did))) {
         psx_mod_write_byte(KILL_ROW_A, (uint8_t)(s_bat.a_dead ? s_bat.arow : 0xFF));
@@ -525,15 +610,109 @@ static void hook_after_fx(struct CPUState *cpu, uint32_t address)
     if (s_casting && s_flipped && psx_mod_read_half(FX_STATE) == 0) { unflip(); ev("unflip", 0, 0, 0); }
 }
 
+/* ---- savestate mirror ------------------------------------------------------------ */
+static void state_put(unsigned *i, uint32_t v)
+{
+    if (s_state_mem && *i < MFX_STATE_WORDS)
+        psx_mod_write_word(s_state_mem + 4u * (*i)++, v);
+}
+
+static uint32_t state_get(unsigned *i)
+{
+    if (!s_state_mem || *i >= MFX_STATE_WORDS) return 0;
+    return psx_mod_read_word(s_state_mem + 4u * (*i)++);
+}
+
+static void state_before_save(void)
+{
+    unsigned i = 0;
+    if (!s_state_mem) return;
+    for (unsigned j = 0; j < MFX_STATE_WORDS; j++)
+        psx_mod_write_word(s_state_mem + 4u * j, 0);
+    state_put(&i, MFX_STATE_MAGIC); state_put(&i, MFX_STATE_VERSION);
+    state_put(&i, s_frame); state_put(&i, s_rng);
+    state_put(&i, (uint32_t)s_qh); state_put(&i, (uint32_t)s_qt);
+    for (int q = 0; q < 24; q++) {
+        state_put(&i, (uint32_t)s_q[q].side); state_put(&i, (uint32_t)s_q[q].fx);
+        state_put(&i, (uint32_t)s_q[q].amount); state_put(&i, (uint32_t)s_q[q].target);
+        state_put(&i, (uint32_t)s_q[q].terrain); state_put(&i, (uint32_t)s_q[q].card);
+    }
+    state_put(&i, (uint32_t)s_casting); state_put(&i, (uint32_t)s_flipped);
+    state_put(&i, (uint32_t)s_orig_side); state_put(&i, s_cast_frame);
+    state_put(&i, (uint32_t)s_cast_stalled); state_put(&i, (uint32_t)s_audio_skipped);
+    state_put(&i, (uint32_t)s_casts_done); state_put(&i, (uint32_t)s_casts_cancelled);
+    state_put(&i, (uint32_t)s_casts_stalled); state_put(&i, (uint32_t)s_queue_dropped);
+    state_put(&i, (uint32_t)s_audio_skips);
+    state_put(&i, (uint32_t)s_bat.aid); state_put(&i, (uint32_t)s_bat.arow);
+    state_put(&i, (uint32_t)s_bat.did); state_put(&i, (uint32_t)s_bat.drow);
+    state_put(&i, (uint32_t)s_bat.decided); state_put(&i, (uint32_t)s_bat.a_dead);
+    state_put(&i, (uint32_t)s_bat.d_dead); state_put(&i, (uint32_t)s_bat.pathA);
+    for (int r = 0; r < 30; r++) {
+        state_put(&i, (uint32_t)s_bonus[r].id);
+        state_put(&i, (uint32_t)s_bonus[r].applied);
+    }
+    for (int r = 0; r < 30; r++) state_put(&i, (uint32_t)s_facedown[r]);
+    for (int r = 0; r < 30; r++) state_put(&i, (uint32_t)s_present[r]);
+    state_put(&i, s_turn_last[0]); state_put(&i, s_turn_last[1]);
+    state_put(&i, (uint32_t)s_in_duel);
+}
+
+static void state_after_load(void)
+{
+    unsigned i = 0;
+    const uint32_t magic = state_get(&i), version = state_get(&i);
+    memset(s_q, 0, sizeof s_q); memset(&s_bat, 0, sizeof s_bat);
+    memset(s_bonus, 0, sizeof s_bonus); memset(s_facedown, 0, sizeof s_facedown);
+    memset(s_present, 0, sizeof s_present);
+    s_qh = s_qt = s_casting = s_flipped = s_orig_side = 0;
+    s_cast_frame = 0; s_cast_stalled = s_audio_skipped = 0;
+    s_casts_done = s_casts_cancelled = s_casts_stalled = 0;
+    s_queue_dropped = s_audio_skips = 0; s_in_duel = 0;
+    s_turn_last[0] = s_turn_last[1] = 0;
+    s_ev_n = 0;
+    if (magic != MFX_STATE_MAGIC || version != MFX_STATE_VERSION) {
+        s_frame = 0; s_rng = 0x6D2B79F5u;
+        return;
+    }
+    s_frame = state_get(&i); s_rng = state_get(&i);
+    s_qh = (int)state_get(&i); s_qt = (int)state_get(&i);
+    for (int q = 0; q < 24; q++) {
+        s_q[q].side = (int)state_get(&i); s_q[q].fx = (int)state_get(&i);
+        s_q[q].amount = (int)state_get(&i); s_q[q].target = (int)state_get(&i);
+        s_q[q].terrain = (int)state_get(&i); s_q[q].card = (int)state_get(&i);
+    }
+    s_casting = (int)state_get(&i); s_flipped = (int)state_get(&i);
+    s_orig_side = (int)state_get(&i); s_cast_frame = state_get(&i);
+    s_cast_stalled = (int)state_get(&i); s_audio_skipped = (int)state_get(&i);
+    s_casts_done = (int)state_get(&i); s_casts_cancelled = (int)state_get(&i);
+    s_casts_stalled = (int)state_get(&i); s_queue_dropped = (int)state_get(&i);
+    s_audio_skips = (int)state_get(&i);
+    s_bat.aid = (int)state_get(&i); s_bat.arow = (int)state_get(&i);
+    s_bat.did = (int)state_get(&i); s_bat.drow = (int)state_get(&i);
+    s_bat.decided = (int)state_get(&i); s_bat.a_dead = (int)state_get(&i);
+    s_bat.d_dead = (int)state_get(&i); s_bat.pathA = (int)state_get(&i);
+    for (int r = 0; r < 30; r++) {
+        s_bonus[r].id = (int)state_get(&i);
+        s_bonus[r].applied = (int)state_get(&i);
+    }
+    for (int r = 0; r < 30; r++) s_facedown[r] = (int)state_get(&i);
+    for (int r = 0; r < 30; r++) s_present[r] = (uint8_t)state_get(&i);
+    s_turn_last[0] = (uint8_t)state_get(&i); s_turn_last[1] = (uint8_t)state_get(&i);
+    s_in_duel = (int)state_get(&i);
+    if (s_qh < 0 || s_qh >= 24 || s_qt < 0 || s_qt >= 24) s_qh = s_qt = 0;
+}
+
 /* ---- debug ------------------------------------------------------------------------ */
 int psx_monster_effects_state_json(char *out, unsigned cap)
 {
     int n_m = 0;
     for (int id = 1; id <= CARD_COUNT; id++) if (mfx(id)) n_m++;
     unsigned n = (unsigned)snprintf(out, cap,
-        "\"cards\":%d,\"in_duel\":%d,\"queue\":%d,\"casting\":%d,\"flipped\":%d,\"casts_done\":%d,\"idle\":%d,"
+        "\"cards\":%d,\"in_duel\":%d,\"queue\":%d,\"casting\":%d,\"flipped\":%d,\"casts_done\":%d,"
+        "\"casts_cancelled\":%d,\"casts_stalled\":%d,\"queue_dropped\":%d,\"audio_skips\":%d,\"idle\":%d,"
         "\"battle\":{\"aid\":%d,\"arow\":%d,\"did\":%d,\"drow\":%d,\"decided\":%d,\"a_dead\":%d,\"d_dead\":%d,\"pathA\":%d},\"events\":[",
-        n_m, s_in_duel, (s_qt - s_qh + 24) % 24, s_casting, s_flipped, s_casts_done, s_in_duel ? duel_idle() : 0,
+        n_m, s_in_duel, (s_qt - s_qh + 24) % 24, s_casting, s_flipped, s_casts_done,
+        s_casts_cancelled, s_casts_stalled, s_queue_dropped, s_audio_skips, s_in_duel ? duel_idle() : 0,
         s_bat.aid, s_bat.arow, s_bat.did, s_bat.drow, s_bat.decided, s_bat.a_dead, s_bat.d_dead, s_bat.pathA);
     const unsigned first = s_ev_n > 16u ? s_ev_n - 16u : 0u;
     for (unsigned i = first; i < s_ev_n && n + 80 < cap; i++) {
@@ -546,12 +725,13 @@ int psx_monster_effects_state_json(char *out, unsigned cap)
 
 PSX_MOD_CONSTRUCTOR(psx_monster_effects_install)
 {
-    (void)psx_mod_register_function_entry_plugin("monster_fx_summon",  HOOK_SUMMON,   hook_summon);
+    s_state_mem = psx_mod_alloc_guest_memory(MFX_STATE_WORDS * 4u, 4u);
+    s_scratch_row = psx_mod_alloc_guest_memory(0x20u, 4u);
+    (void)psx_mod_register_state_plugin("monster_effects_state", state_before_save, state_after_load);
     (void)psx_mod_register_function_entry_plugin("monster_fx_attack",  HOOK_ATTACK,   hook_attack);
     (void)psx_mod_register_function_entry_plugin("monster_fx_scene",   HOOK_ACTION11, hook_action11);
     (void)psx_mod_register_function_entry_plugin("monster_fx_trap",    HOOK_TRAP,     hook_trap);
     (void)psx_mod_register_function_entry_plugin("monster_fx_destroy", HOOK_DESTROY,  hook_destroy);
     (void)psx_mod_register_function_entry_plugin("monster_fx_afterfx", HOOK_AFTER_FX, hook_after_fx);
     (void)psx_game_add_frame_hook(tick);
-    srand((unsigned)time(NULL));
 }

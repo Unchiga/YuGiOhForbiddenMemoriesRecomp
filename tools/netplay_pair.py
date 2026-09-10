@@ -19,7 +19,7 @@ other seat's presses arrive through the session. Screenshots go through
 screenshot_present so the guest overlays are in them.
 
 Instance layout (NETPAIR_DIR, default the session scratchpad):
-    host/  card1.mcd = copy of the personal card 1, card2.mcd = blank
+    host/  card1.mcd = copy of required NETPAIR_SEED, card2.mcd = blank
     guest/ card1.mcd = the same save with a different duelist code, card2.mcd = blank
 Debug ports 4372 (host) / 4373 (guest); UDP 7777 / 7778.
 """
@@ -33,6 +33,7 @@ import debug_client as dc
 EXE = os.environ.get('NETPAIR_EXE') or os.path.join(REPO, 'build-dbg', 'Yu_Gi_Oh_Forbidden_Memories_Recompiled')
 DISC = os.environ.get('NETPAIR_DISC')
 SEED = os.environ.get('NETPAIR_SEED')
+BLANK = os.environ.get('NETPAIR_BLANK')
 DATA = os.path.expanduser('~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled')
 ROOT = os.environ.get('NETPAIR_DIR') or os.path.join(
     os.environ.get('CLAUDE_SCRATCHPAD', '/tmp'), 'netpair')
@@ -168,12 +169,14 @@ def inst(slot):
 
 
 def cards(code=None):
-    """Seed the two card dirs from the personal card 1. Never writes DATA."""
+    """Seed both isolated card dirs. NETPAIR_SEED never consults DATA."""
     validate_root()
-    src = SEED or os.path.join(DATA, 'card1.mcd')
-    blank = os.path.join(DATA, 'card2.mcd.blank-backup-2026-09-09')
-    if not os.path.exists(blank):
-        blank = None
+    if not SEED:
+        raise ValueError('NETPAIR_SEED is required; personal player data is never a default')
+    src = SEED
+    blank = BLANK
+    if blank and not os.path.exists(blank):
+        raise FileNotFoundError('NETPAIR_BLANK does not exist: ' + blank)
     for s in (0, 1):
         d = os.path.join(ROOT, NAMES[s])
         os.makedirs(d, exist_ok=True)
@@ -233,6 +236,8 @@ def stop():
 
 def start(extra=(), guest_memcard=True, env_extra=None):
     validate_root()
+    if not DISC:
+        raise ValueError('NETPAIR_DISC is required')
     stop()
     procs = []
     for s in (0, 1):
@@ -243,6 +248,7 @@ def start(extra=(), guest_memcard=True, env_extra=None):
         env.pop('APPDIR', None)
         env['PSX_NET_TRANSPORT'] = 'lan'
         env['PSX_NET_GUEST_MEMCARD'] = '1' if guest_memcard else '0'
+        env['PSX_PORTABLE'] = '1'
         if env_extra:
             env.update(env_extra)
         args = [EXE, '--no-launcher', '--netplay', '--net-slot', str(s),
@@ -250,7 +256,7 @@ def start(extra=(), guest_memcard=True, env_extra=None):
                 '--net-peer', '127.0.0.1:%d' % UDP[1 - s],
                 '--net-session-id', str(SESSION),
                 '--memcard-dir', i.dir, '--debug-port', str(i.port),
-                '--renderer', 'opengl'] + (['--disc', DISC] if DISC else []) + list(extra)
+                '--renderer', 'opengl', '--disc', DISC] + list(extra)
         log = open(i.log, 'w')
         procs.append(subprocess.Popen(args, cwd=os.path.dirname(EXE), env=env,
                                       stdout=log, stderr=subprocess.STDOUT))

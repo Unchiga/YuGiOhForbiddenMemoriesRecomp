@@ -606,8 +606,15 @@ static void handle_card_colors(int id, const char *json)
 /* monster_effects — queue, battle decision, hook events. */
 static void handle_monster_effects(int id, const char *json)
 {
-    (void)json;
     static char buf[8192];
+    const int fx = json_get_int(json, "fx", -1);
+    if (fx >= 0 && !psx_monster_effects_debug_cast(
+            json_get_int(json, "side", 0), json_get_int(json, "card", 1), fx,
+            json_get_int(json, "amount", -1), json_get_int(json, "target", -1),
+            json_get_int(json, "terrain", -1))) {
+        send_err(id, "effect was not enqueued");
+        return;
+    }
     if (!psx_monster_effects_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }

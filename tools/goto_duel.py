@@ -67,11 +67,16 @@ def duel(ids):
     p.q({'cmd': 'press', 'buttons': 0xFFFF & ~p.B['circle'], 'frames': 12}); time.sleep(0.3)
     write_deck(ids)
     p.q({'cmd': 'clear_input'})
-    for _ in range(40):
+    for _ in range(90):
         time.sleep(1)
-        if p.mode() == 0xC3 and struct.unpack('<H', p.rd(0x800EA004, 2))[0] == 8000:
+        phase = struct.unpack('<H', p.rd(0x8009B23A, 2))[0] & 0xF
+        side = p.rd(0x8009B1D5, 1)[0]
+        if (p.mode() == 0xC3 and phase == 4 and side == 0 and
+                struct.unpack('<H', p.rd(0x800EA004, 2))[0] == 8000):
             break
-    time.sleep(6)
+    else:
+        raise RuntimeError('Duel did not reach the player hand phase')
+    time.sleep(3)
     print('duel frame', p.frame(), 'mode 0x%02X' % p.mode(), 'LP', struct.unpack('<H', p.rd(0x800EA004, 2))[0], flush=True)
 
 if __name__ == '__main__':

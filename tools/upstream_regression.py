@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -292,7 +293,7 @@ def main():
         assert folder.is_relative_to(data) and not packs['dev'], packs
         card=folder/'1'
         card.mkdir(parents=True,exist_ok=True)
-        (card/'card.ini').write_text('attack = 4000\ncolor = purple\ndescription = Catchup description|sector override test\non_summon = damage 500\n')
+        (card/'card.ini').write_text('attack = 4000\ncolor = purple\ndescription = Catchup description|sector override test\nbattle = slayer\non_summon = damage 500\non_flip = damage 500\n')
         from PIL import Image, ImageDraw
         art=Image.new('RGB',(102,96),(180,40,120))
         ImageDraw.Draw(art).rectangle((15,15,85,80),fill=(20,180,220))
@@ -328,8 +329,38 @@ def main():
         shot('mods-cpu-portrait-grid')
         goto_duel.duel([1])
         shot('mods-duel-hand')
-        assert turns.play_turn([1])
-        time.sleep(3)
+        done0 = q({'cmd':'monster_effects'})['casts_done']
+        played = turns.play_turn([1])
+        assert played == ('summon', 1), (played, turns.hand(), turns.board())
+        placed = None
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            board = turns.board()
+            placed = next((row for row in board
+                           if row[0] in range(5, 10) and row[1] == 1), None)
+            if placed is not None:
+                break
+            time.sleep(.025)
+        assert placed is not None, {'played': played, 'board': board}
+        # The scripted helper may set the monster face-down. That correctly
+        # forfeits on_summon, so reveal that guest-authored row and exercise
+        # the production on_flip path instead of silently passing no effect.
+        for row in range(5, 10):
+            at = 0x801A7AD8 + row * 0x1c
+            raw = p.rd(at, 0x1c)
+            if int.from_bytes(raw[0xc:0xe], 'little') != 1: continue
+            flags = int.from_bytes(raw[0x16:0x18], 'little')
+            if flags & 0x1000:
+                q({'cmd':'write_mem','addr':f'{at+0x16:08X}',
+                   'hex':(flags & ~0x1000).to_bytes(2,'little').hex()})
+            break
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            monster=q({'cmd':'monster_effects'})
+            if monster['casts_done'] == done0 + 1 and monster['idle']: break
+            time.sleep(.025)
+        else: raise AssertionError(monster)
+        assert turns.lp()[1] == 7500, (turns.lp(), monster)
         shot('mods-summon')
         return {'monster_effects':q({'cmd':'monster_effects'}),'card_effects':q({'cmd':'card_effects'}),
                 'lp':turns.lp(),'story_rewards':q({'cmd':'story_rewards'}),'dialogue':q({'cmd':'dialogue'})}
@@ -343,7 +374,7 @@ def main():
         for _ in range(3): p.press('cross',6,1.5)
         turns.end_turn()
         assert turns.play_turn([1]), 'second scripted monster missing'
-        for n in range(12):
+        for n in range(30):
             phase=int.from_bytes(p.rd(0x8009B23A,2),'little')&15
             print('win probe',n,phase,turns.lp(),flush=True)
             if phase==13: break
@@ -353,6 +384,11 @@ def main():
                     if int.from_bytes(p.rd(0x8009B338,2),'little')==target: break
                     p.press('right',6,.8)
                 else: raise RuntimeError('no attack target under cursor')
+                # Square confirms an attack with the stock 3D monster scene;
+                # Cross takes the direct 2D path. The scene transition must
+                # preserve s_bat until action 11 rewrites its result rows.
+                p.press('square',6,3)
+                continue
             p.press('cross',6,3)
         else: raise RuntimeError('scripted attack did not finish the duel')
         time.sleep(4)
@@ -369,8 +405,12 @@ def main():
         shot('library-card-after-drops')
         f=p.frame();time.sleep(3)
         assert p.frame()>f,'Library froze after drops'
+        monster = q({'cmd':'monster_effects'})
+        battle = next((e for e in monster['events'] if e['what'] == 'battle'), None)
+        assert battle is not None and battle['c'] == 1, monster
+        assert any(e['what'] == 'scene_rows' for e in monster['events']), monster
         return {'finished_phase':phase,'lp':turns.lp(),'frames_advanced':p.frame()-f,
-                'monster_effects':q({'cmd':'monster_effects'})}
+                'monster_effects':monster}
 
     def magic():
         restore_menu()
@@ -392,10 +432,144 @@ def main():
         assert turns.lp()[1]==7500, (turns.lp(),effect)
         return {'lp':turns.lp(),'card_effects':effect}
 
+    def effects():
+        """Every synthetic effect class, queue bounds, and mid-cast restore."""
+        restore_menu()
+        for addr in (0x801D06F4, 0x801D36F4):
+            q({'cmd':'write_mem','addr':f'{addr:08X}',
+               'hex':bytes([p.rd(addr,1)[0] | 0x40]).hex()})
+        p.press('down',20,1);p.press('cross',20,4);p.press('cross',40,2)
+        goto_duel.duel([1])
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            baseline=q({'cmd':'monster_effects'})
+            if baseline['idle']: break
+            time.sleep(.025)
+        else: raise AssertionError(baseline)
+        q({'cmd':'savestate','op':'save','slot':9})
+
+        # Names and ids mirror PSX_CARD_FX_*; ritual (15) intentionally has no
+        # synthetic handler. The last five are host-composed effects.
+        inventory = [
+            (1,'heal'),(2,'damage'),(3,'destroy_type'),(4,'destroy_atk'),
+            (5,'raigeki'),(6,'dark_hole'),(7,'dragon_jar'),
+            (8,'stop_defense'),(9,'flip'),(10,'weaken'),(11,'swords'),
+            (12,'cursebreaker'),(13,'harpie'),(14,'field'),
+            (16,'destroy_strongest'),(17,'lose_lp'),(18,'gamble_lp'),
+            (19,'gamble'),(20,'destroy_own'),(21,'destroy_own_lp')]
+        header = (Path(__file__).resolve().parents[1] / 'src' / 'psx_card_packs.h').read_text()
+        enum_body = re.search(r'enum\s*\{\s*PSX_CARD_FX_NONE\b(.*?)PSX_CARD_FX_COUNT',
+                              header, re.S)
+        assert enum_body, 'PSX_CARD_FX enum not found'
+        declared = ['NONE'] + re.findall(r'PSX_CARD_FX_([A-Z_]+)', enum_body.group(1))
+        covered = [(i, name.lower()) for i, name in enumerate(declared)
+                   if name not in ('NONE', 'RITUAL')]
+        assert covered == inventory, ('effect inventory is stale', covered, inventory)
+        rows=[]
+        for n,(fx,name) in enumerate(inventory):
+            q({'cmd':'savestate','op':'load','slot':9})
+            time.sleep(.1)
+            # Give LP effects room and preserve a simple semantic oracle.
+            q({'cmd':'write_mem','addr':'800EA004','hex':(7000 if fx==1 else 8000).to_bytes(2,'little').hex()})
+            q({'cmd':'write_mem','addr':'800EA024','hex':(8000).to_bytes(2,'little').hex()})
+            before=q({'cmd':'monster_effects'})
+            side=n & 1
+            t0=time.monotonic()
+            q({'cmd':'monster_effects','side':side,'card':1,'fx':fx,
+               'amount':500,'target':3,'terrain':1})
+            deadline=t0+8
+            while time.monotonic()<deadline:
+                after=q({'cmd':'monster_effects'})
+                if not after['queue'] and not after['casting'] and after['idle']: break
+                time.sleep(.02)
+            else: raise AssertionError((name,after,q({'cmd':'card_effects'})))
+            elapsed=time.monotonic()-t0
+            expected_casts = 0 if fx in (17,18) else 1
+            assert after['casts_done']==before['casts_done']+expected_casts,(name,before,after)
+            assert after['casts_stalled']==before['casts_stalled'],(name,after)
+            assert after['casts_cancelled']==before['casts_cancelled'],(name,after)
+            assert not after['flipped'],(name,after)
+            lp=turns.lp()
+            if fx==1: assert lp[side] > 7000,(name,side,lp)
+            if fx==2: assert lp[side ^ 1] == 7500,(name,side,lp)
+            if fx==17: assert lp[side] == 7500,(name,side,lp)
+            rows.append({'id':fx,'name':name,'side':side,'seconds':elapsed,
+                         'lp':lp,'audio_skips':after['audio_skips']})
+
+        # The repaired class-4 path is frame-driven. Exercise it at every
+        # supported user-facing speed and require genuine completion at each
+        # rate; a moving frame counter or watchdog event is not a pass.
+        speed_rows=[]
+        for speed in (1, 2, 3, 4):
+            q({'cmd':'savestate','op':'load','slot':9});time.sleep(.1)
+            q({'cmd':'game_speed','mult':speed})
+            speed_state=q({'cmd':'game_speed'})
+            assert speed_state['effective'] == speed,(speed,speed_state)
+            before=q({'cmd':'monster_effects'}); f0=p.frame(); t0=time.monotonic()
+            q({'cmd':'monster_effects','side':speed & 1,'card':1,'fx':7})
+            deadline=t0+8
+            while time.monotonic()<deadline:
+                after=q({'cmd':'monster_effects'})
+                if after['casts_done']==before['casts_done']+1 and after['idle']: break
+                time.sleep(.02)
+            else: raise AssertionError((speed,after))
+            assert after['casts_stalled']==before['casts_stalled'] and not after['flipped'],after
+            speed_rows.append({'speed':speed,'seconds':time.monotonic()-t0,
+                               'frames':p.frame()-f0,'audio_skips':after['audio_skips']})
+        q({'cmd':'game_speed','mult':1})
+
+        # Saturate the bounded queue. Rejection must be explicit telemetry,
+        # never an invisible overwrite; restore immediately so the test does
+        # not spend a minute draining deliberate duplicates.
+        q({'cmd':'savestate','op':'load','slot':9});time.sleep(.1)
+        for _ in range(40):
+            try: q({'cmd':'monster_effects','side':0,'card':1,'fx':7})
+            except RuntimeError: pass
+        saturated=q({'cmd':'monster_effects'})
+        assert saturated['queue_dropped'] > baseline['queue_dropped'],saturated
+        q({'cmd':'savestate','op':'load','slot':9});time.sleep(.1)
+
+        # Save while the acting side is flipped and the parameter hold is
+        # live, finish once, then restore and finish the same timeline again.
+        base=q({'cmd':'monster_effects'})
+        q({'cmd':'monster_effects','side':1,'card':1,'fx':7})
+        deadline=time.monotonic()+4
+        while time.monotonic()<deadline:
+            active=q({'cmd':'monster_effects'})
+            if active['casting'] and active['flipped'] and active['audio_skips']>base['audio_skips']: break
+            time.sleep(.01)
+        else: raise AssertionError(active)
+        q({'cmd':'savestate','op':'save','slot':10})
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            first=q({'cmd':'monster_effects'})
+            if first['casts_done']==base['casts_done']+1 and first['idle']: break
+            time.sleep(.02)
+        else: raise AssertionError(first)
+        q({'cmd':'savestate','op':'load','slot':10})
+        time.sleep(.1)
+        restored=q({'cmd':'monster_effects'})
+        assert restored['casting'] and restored['flipped'],restored
+        assert restored['casts_done']==base['casts_done'],(base,restored)
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            second=q({'cmd':'monster_effects'})
+            if second['casts_done']==base['casts_done']+1 and second['idle']: break
+            time.sleep(.02)
+        else: raise AssertionError(second)
+        assert not second['flipped'] and not second['casts_stalled'],second
+        card=q({'cmd':'card_effects'})
+        assert not card['hold']['active'] and not card['holds_stalled'],card
+        f=p.frame();time.sleep(.25)
+        assert p.frame()>f,'frames stopped after synthetic effects'
+        return {'inventory':rows,'speeds':speed_rows,'queue_saturation':saturated,
+                'midcast':{'active':active,'restored':restored,'finished':second},
+                'card_effects':card,'frames_after':p.frame()-f}
+
     cmd = [str(args.exe),'--no-launcher','--renderer',args.renderer,
            '--memcard-dir',str(data),'--disc',str(args.disc),'--debug-port',str(args.port)]
     (root/'launch.json').write_text(json.dumps(cmd,indent=2)+'\n')
-    env = dict(os.environ, SDL_FILE_DIALOG_DRIVER='nosuchdriver')
+    env = dict(os.environ, SDL_FILE_DIALOG_DRIVER='nosuchdriver', PSX_PORTABLE='1')
     # A native runtime launched from an AppImage-hosted editor must not use
     # the editor's executable path for its own sidecars.
     env.pop('APPIMAGE', None)
@@ -408,7 +582,7 @@ def main():
                 time.sleep(12)
                 restore_menu()
             for name in args.groups.split(','):
-                group(name, {'menus':menus,'duel':duel,'managers':managers,'package':package,'video':video,'video_actions':video_actions,'mods':mods,'win':win,'magic':magic}[name])
+                group(name, {'menus':menus,'duel':duel,'managers':managers,'package':package,'video':video,'video_actions':video_actions,'mods':mods,'win':win,'magic':magic,'effects':effects}[name])
         finally:
             dbg.q({'cmd':'quit_graceful'})
             try: child.wait(timeout=10)
