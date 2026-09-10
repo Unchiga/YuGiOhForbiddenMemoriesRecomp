@@ -40,11 +40,18 @@ anything guest-side:
 ## Building and running
 
 GAME > SPEED must accelerate gameplay while keeping sound quality and pace.
-Validate accelerated speeds using `tools/audio_speed_regression.py`: game
+Validate every advertised speed using `tools/audio_speed_regression.py`
+(defaults: OpenGL, 1x/2x/3x/4x/1x): game
 frames should scale with the multiplier while SPU production stays near 44.1
 kHz, with no sustained host underruns. The 1x performance check alone missed
 software-renderer starvation at 2x. Use scratch cards and a same-revision menu
-state; see the script's required arguments. Raster parity is checked separately
+state; see the script's required arguments. Choose `--renderer software`
+explicitly for CPU-renderer qualification; a pass there at 2x does not establish
+3x/4x support. The catch-up play helper must use the game's configured OpenGL
+default: forcing software bypassed GPU rasterization and made higher-speed
+audio fail despite a capable GPU. Use the separate software helper for manager
+windows, whose GL limitations remain recorded in the live-testing guide.
+Raster parity is checked separately
 by `psxrecomp/runtime/tests/test_gpu_sw_raster_parity.py`.
 
 ```sh

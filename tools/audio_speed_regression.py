@@ -20,9 +20,9 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--port', type=int, default=4386)
     parser.add_argument('--seconds', type=float, default=30)
-    parser.add_argument('--speeds', type=int, nargs='+', default=[1, 2, 1])
+    parser.add_argument('--speeds', type=int, nargs='+', choices=range(1, 5), default=[1, 2, 3, 4, 1])
     parser.add_argument('--borderless', action='store_true')
-    parser.add_argument('--renderer', choices=('software', 'opengl'), default='software')
+    parser.add_argument('--renderer', choices=('software', 'opengl'), default='opengl')
     args = parser.parse_args()
     root = args.scratch.resolve()
     if not root.is_relative_to(Path('/tmp')) or root.exists():

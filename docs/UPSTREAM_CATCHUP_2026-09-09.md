@@ -1,8 +1,8 @@
 # psxrecomp catch-up — 2026-09-09
 
 The local runtime branch `ygofm-upstream-2026-09-09` starts at upstream
-`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by eleven title extension
-and regression-fix commits, ending at `a39229c1`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
+`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by twelve title extension
+and regression-fix commits, ending at `718a9ce9`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
 under `/tmp/ygofm-upstream-2026-09-09/title`; the original checkout remains on
 `netplay-2p` / `ygofm-netplay`. Nothing was pushed or released.
 
@@ -23,6 +23,32 @@ artifacts, not committed assets. Preserve them before clearing `/tmp`.
 | 9. Performance | Duel 59.9565 fps; Card Manager 60.0302 fps | Duel 59.9652 fps; Card Manager 59.9654 fps | `baseline/duel-fixture/duel-perf.json`, `baseline/solo-v3/card-manager-perf.json`, `new/solo/*-perf.json` |
 | 10. Linux setup packaging | Stages and configures offline with explicit toolchain | Same, final 31 MB setup archive staged locally | `baseline/package.log`, `baseline/staged-offline-setup-configure.log`, `new/package-final.log`, `new/staged-offline-final.log` |
 | Follow-up: 2x menu audio, software at 2x resolution | Old fork: 98.20 fps and 93,947 missing host frames in 12 s; initial port: 92.86 fps and 117,419 missing frames | Fixed: 119.88 fps, SPU 44,055 samples/s, zero underruns/overflow over 30 s; also passes borderless and 1x→2x→1x | `baseline/audio-speed`; `new/audio-before`, `new/audio-final`, `new/audio-borderless`; WAVs and timing JSON |
+| Follow-up: toast above dropdown | Prior candidate SDL toast covered by bar/panel | Software and OpenGL: all 24 sampled opaque glyph pixels survive the overlapping File panel | `new/toast-before`, `new/toast-final`, `new/toast-gl`, `new/toast-pixel-comparison.json`; composed captures |
+| Follow-up: 3x/4x menu audio | Preserved old fork, OpenGL: 179.88 / 239.76 fps, no underruns | OpenGL passes five 30-second windows at 1x/2x/3x/4x/1x: 59.93/119.88/179.80/239.34/59.94 fps, zero underruns/overflow; play helper restored to configured OpenGL | `baseline/audio-gl-34-v2`; `new/audio-gl-34`, `new/audio-all-speeds` |
+
+The 3x/4x report exposed a launcher-profile mistake: `Try-upstream.sh` still
+forced software rendering to accommodate tool windows, bypassing GPU
+rasterization during normal play. The game configuration selects OpenGL.
+The helper now respects that setting; `Try-upstream-tools.sh` explicitly selects
+software for the manager windows. Both use `manual-check` scratch data, so close
+one before switching helpers. The original checkout's Play.sh remains the old
+fork. OpenGL performance agrees with the preserved old fork at 3x/4x, with
+normal SPU production and no underruns. The first baseline 3x sample was reset
+to 1x by late startup settings; `audio-gl-34-v2` verifies the effective speed
+before measuring. Higher-speed software audio is still performance constrained;
+the 3x/4x passes here qualify OpenGL. The default audio regression now covers
+1x/2x/3x/4x/1x instead of stopping at 2x.
+
+Runtime `718a9ce9` also fixes the SDL toast order and placement: toast feedback
+is drawn last, below the bar, in drawable pixels, matching GL/Vulkan.
+`software_menu_regression.py` samples opaque lettering with and without an
+overlapping dropdown. The prior binary fails; the fixed SDL path preserves
+100% of the sampled glyph pixels, and its seven menus and Card Manager pass.
+The OpenGL run also passes all seven menus and preserves 24/24 toast pixels;
+its tool-window step is explicitly skipped for the known GL limitation.
+The script also supports OpenGL overlay checks through `screenshot_present`;
+software uses the composed `present_shot` counterpart. Build logs are
+`new/toast-{build,release-build,setup-build}.log`.
 
 The accelerated-audio follow-up exposed a gap in the original 1x performance
 suite. The scratch launcher explicitly selected software, while ordinary play
@@ -41,8 +67,8 @@ port ownership, loads a matching menu state, records PCM WAVs and checks frame
 rate, SPU production, underruns and overflow independently. Three 30-second
 windows pass at 59.93 / 119.88 / 59.94 fps, with SPU output near 44.1 kHz
 throughout. A separate full-size borderless 2x run passes too. This validates
-clock/queue health; the retained WAVs permit listening review. Speeds 3x/4x,
-other audio scenes and other platforms were not qualified in this follow-up.
+clock/queue health; the retained WAVs permit listening review. The later OpenGL 1x/2x/3x/4x/1x follow-up above extends speed coverage;
+other audio scenes and other platforms remain unqualified.
 Debug, release and setup rebuild logs are `new/audio-{build,release-build,setup-build}.log`.
 The setup archive listed above predates the follow-up fixes and was not restaged.
 
@@ -66,7 +92,7 @@ The first test attempt queried title hooks before initialization; the harness
 now waits for readiness. Baseline source has the same omitted SDL draw; no new
 matched baseline run was made for this follow-up. SDL3 code remains untested.
 The scratch helper `/tmp/ygofm-upstream-2026-09-09/Try-upstream.sh` now launches
-this rebuilt software version. The original checkout's Play.sh still runs the
+the rebuilt candidate using configured OpenGL; the separate tools helper forces software. The original checkout's Play.sh still runs the
 original fork. No personal cards were accessed for this follow-up.
 
 The custom magic card deals exactly 500 damage on both revisions (opponent LP
