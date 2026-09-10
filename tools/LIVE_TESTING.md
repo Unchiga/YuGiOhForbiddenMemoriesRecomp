@@ -197,6 +197,26 @@ second (known cards) or ten (new folders).
 
 Share files without the dialog: `{"cmd":"card_share","op":"export"|"import"|"inspect","path":...}`.
 
+Card-view password presentation: `{"cmd":"card_password_view"}` reports the
+shared detail-view detector, selected card/effective password, incoming/outgoing
+visibility gate, guest origin/size, and the final renderer placement. Deck,
+chest, and duel detail views use origin `[288,203]`; the shorter Library view
+uses `[288,183]`. The canvas is `[31,5]`: eight compact white digits aligned to
+the description panel's lower-right, below a full seven-line description.
+`active:1,visible:0` is expected while an animated card front is flipping in;
+`visible` becomes 1 only at flip state `0xA0` and returns to 0 on Circle's very
+first outgoing frame. The raw `screenshot` command cannot contain a host guest
+overlay; use `present_shot` (and poll `present_shot_seq`) to verify the composed
+result. This now works on the software renderer as well as OpenGL. The overlay
+is present-only, registered below the face-down privacy cover, and disabled in
+stock netplay.
+
+The Cards editor accepts exactly eight decimal digits and retains leading
+zeros. The guest's duplicate lookup is first/lowest-ID-wins, so an interactive
+edit that matches another effective card password is refused with `Password
+already belongs to card NNN`. Old/imported duplicate files are still loaded;
+this validation affects new editor input only.
+
 `fusion_manager` also takes `press`:1 / `release`:1 beside `x`/`y` (with
 `move`:1 for the waypoints), which is how a scrollbar thumb gets dragged: press
 on the thumb, move, release. Its `geom` carries `list_sb`, `makes_sb`,

@@ -41,6 +41,7 @@
 #include "psx_card_manager.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
+#include "psx_card_password_view.h"
 #include "psx_card_share.h"
 #include "psx_card_colors.h"
 #include "psx_monster_effects.h"
@@ -571,6 +572,16 @@ static void handle_card_effects(int id, const char *json)
     (void)json;
     static char buf[8192];
     if (!psx_card_effects_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+static void handle_card_password_view(int id, const char *json)
+{
+    char buf[768];
+    (void)json;
+    if (!psx_card_password_view_state_json(buf, sizeof buf)) {
+        send_err(id, "password-view state too long"); return;
+    }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
@@ -1503,6 +1514,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_description_validate", handle_card_description_validate);
     (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
     (void)psx_debug_add_command("card_effects",       handle_card_effects);
+    (void)psx_debug_add_command("card_password_view", handle_card_password_view);
     (void)psx_debug_add_command("card_share",         handle_card_share);
     (void)psx_debug_add_command("card_colors",        handle_card_colors);
     (void)psx_debug_add_command("monster_effects",    handle_monster_effects);

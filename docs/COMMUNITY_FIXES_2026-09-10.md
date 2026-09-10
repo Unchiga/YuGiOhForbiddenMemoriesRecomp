@@ -137,6 +137,41 @@ Because the shared card-effect hook changed, all 20 executable effect cases
 were rerun and passed, including speed, queue saturation, and mid-cast restore;
 the new result is `/tmp/ygofm-equip-effects-2026-09-10/results.json`.
 
+### Card-view passwords
+
+Password editing already existed on the Cards page. This pass adds the missing
+presentation in the game's shared full-card view: deck building/chest, Library,
+and duel inspection show the effective eight-digit password in compact white
+digits at the bottom-right of the description panel. The overlay has no label
+or background, fits below a complete seven-line description in both panel
+layouts, preserves leading zeros, and does not write guest RAM, VRAM, saves, or
+RNG state. Animated views expose it only when the front has settled; it is
+absent during the incoming flip and from the first Circle exit frame. Library
+uses the lifetime of its description object for the same open/close behavior.
+It is registered below the netplay privacy cover and is disabled for a stock
+netplay session.
+
+The software present path now composites the same guest-overlay registry as
+OpenGL and Vulkan, through the actual picture/letterbox rectangle and below
+host menus and toasts. This fixed a real backend discrepancy found while
+testing the password rather than making the password renderer-specific.
+
+Live deck, Library, and duel lifecycle/geometry results are in
+`/tmp/ygofm-password-display-evidence/password-contexts-final-v9.json`; the
+seven-line visual montage is `password-white-right-seven-lines-montage-v9.png`.
+A fresh restarted software-rendered process preserved `00001234` and recorded
+the composed placement in `password-software-restart-v10.json`. Direct
+`.ygocards`, full `.ygomods`, reset/import, old format-v1 input without a
+password key, and hot reload all pass in the adjacent v9 JSON files.
+
+The stock Password screen resolves duplicate passwords to the first, lowest
+card ID: with cards 1 and 2 both set to `00001234`, it displayed CARD NUMBER
+001. Existing imported duplicate files remain readable for compatibility, but
+the Cards editor now refuses a newly entered duplicate and names its current
+owner. Exact eight-decimal-digit validation remains enforced; leading-zero
+input saves normally. Evidence is `password-duplicate-v10.json` and
+`password-manager-validation-v11.json`.
+
 ### Restore all drops to stock
 
 The Drop Tables page has `Restore All Drops to Stock`. It requires two

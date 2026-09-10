@@ -19,6 +19,7 @@
 #include "psx_card_guard.h"
 #include "psx_card_save.h"
 #include "psx_card_shop.h"
+#include "psx_card_password_view.h"
 #include "psx_cd_overlay.h"
 #include "psx_fusion_overlay.h"
 #include "psx_mode_select_confirm.h"
@@ -77,6 +78,21 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
     (void)psx_guest_overlay_register(&rank);
     (void)psx_guest_overlay_register(&drops);
     (void)psx_guest_overlay_register(&fusion);
+    /* Effective eight-digit password on the common full-card detail view.
+     * It is below the privacy cover, so a covered netplay card can never leak
+     * identity through this present-only label. */
+    {
+        PsxGuestOverlay password = {
+            psx_card_password_view_image,
+            psx_card_password_view_origin,
+            NULL,
+            psx_card_password_view_needs_present,
+            -1,
+            psx_card_password_view_placed,
+        };
+        psx_card_password_view_registered(psx_guest_overlay_register(&password));
+        psx_card_password_view_init();
+    }
     /* NETPLAY: the hidden-information cover. Registered after every other
      * duel overlay so it paints over them: a card back must hide the fusion
      * assistant's badges on that card too. */

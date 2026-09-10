@@ -898,6 +898,26 @@ static void say(const char *m)
     s_dirty = 1;
 }
 
+/* The guest resolves a duplicated password by its first table match (the
+ * lowest card id), leaving every later card unreachable from PASSWORD.  Keep
+ * old/imported files loadable, but do not let an interactive edit create that
+ * ambiguous state. */
+static int password_owner(const char password[9])
+{
+    for (int card = 1; card <= CARDS; card++) {
+        if (card == s_sel) continue;
+        PsxCardPack edit;
+        PsxCardStock stock;
+        const char *effective = NULL;
+        if (psx_card_packs_get(card, &edit) && edit.password[0])
+            effective = edit.password;
+        else if (psx_card_packs_stock(card, &stock) && stock.password[0])
+            effective = stock.password;
+        if (effective && !strcmp(effective, password)) return card;
+    }
+    return 0;
+}
+
 static int ci_contains(const char *hay, const char *needle)
 {
     const size_t n = strlen(needle);
@@ -1411,6 +1431,14 @@ static void focus_commit(void)
         int ok = strlen(s_buf) == 8;
         for (int i = 0; ok && i < 8; i++) if (s_buf[i] < '0' || s_buf[i] > '9') ok = 0;
         if (!ok) { say("A password is 8 digits"); return; }
+        const int owner = password_owner(s_buf);
+        if (owner) {
+            char message[80];
+            snprintf(message, sizeof message,
+                     "Password already belongs to card %03d", owner);
+            say(message);
+            return;
+        }
         memcpy(s_edit.password, s_buf, 9);
         break;
     }
