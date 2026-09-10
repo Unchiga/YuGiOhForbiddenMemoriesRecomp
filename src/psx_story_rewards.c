@@ -129,22 +129,28 @@ int psx_story_rewards_set(int duelist, int card, int every)
     return psx_drop_edits_reward_set(duelist, card, every);
 }
 
-void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
+int psx_story_rewards_select(void)
 {
-    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
-    (void)cpu;
+    if (psx_ygo_netplay_session()) return 0; /* netplay: peers must stay bit-identical */
     g_last_card = 0;
-    if (tier >= TIER_N) return;
 
     const int id = (int)psx_mod_read_byte(OPPONENT_ID);
     g_last_opponent = id;
     g_last_free_duel = in_free_duel();
     g_last_beaten = already_beaten(id);
-    if (g_last_free_duel) return;          /* Free Duel: the story is not here */
+    if (g_last_free_duel) return 0;        /* Free Duel: the story is not here */
     int every = 0;
     const int card = psx_drop_edits_reward(id - 1, &every);
-    if (!card) return;
-    if (!every && g_last_beaten != 0) return;   /* beaten before: roll as stock */
+    if (!card) return 0;
+    if (!every && g_last_beaten != 0) return 0; /* beaten before: roll as stock */
+    g_last_card = card;
+    return card;
+}
+
+void psx_story_rewards_steer_card(CPUState *cpu, unsigned tier, int card)
+{
+    if (psx_ygo_netplay_session() || tier >= TIER_N || card < 1 || card > NCARDS) return;
+    (void)cpu;
 
     /* Snapshot the whole tier row, then leave one card holding all 2048. */
     const uint32_t base = DROP_TABLE + tier * TIER_STRIDE;
@@ -157,6 +163,13 @@ void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
     g_steered = 1;
     g_last_card = card;
     g_fired++;
+}
+
+void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
+{
+    if (tier >= TIER_N) return;
+    const int card = psx_story_rewards_select();
+    if (card) psx_story_rewards_steer_card(cpu, tier, card);
 }
 
 void psx_story_rewards_restore_table(void)

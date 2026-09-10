@@ -62,6 +62,7 @@ static SDL_Texture  *s_tex;
 static uint32_t     *s_px;
 static int           s_w, s_h, s_dirty;
 static int           s_open_req;
+static int           s_suspended;        /* renderer closed only for an FM tab switch */
 static PsxUiCanvas   s_cv;
 static float         s_u = 1.0f;          /* design unit in pixels */
 static float         s_u_base = 1.0f;     /* the unit the canvas height asks for, before fitting */
@@ -627,7 +628,7 @@ static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab;
 
 /* The help under the buttons, per tab */
 static const char *const HELP_TEXT[2] = {
-    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, seven lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
+    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, eight lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
     "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.",
 };
 #define HELP_LINES 5
@@ -675,7 +676,7 @@ static void layout_pass(void)
     }
     /* fields */
     const int label_w = px(U_LABEL_W), box_h = px(U_BOX_H), step_w = px(U_STEP_W), sgap = px(3.0f);
-    const int desc_h = psx_ui_font_line_height(face_body()) * PSX_CARD_PACK_DESC_LINES + px(6.0f);   /* the game's seven lines */
+    const int desc_h = psx_ui_font_line_height(face_body()) * PSX_CARD_PACK_DESC_LINES + px(6.0f);
     const int rules_here = s_tab == 1 && is_monster();
     int trow_y = 0, trow_x = 0;
     if (rules_here) {
@@ -1452,6 +1453,10 @@ static void focus_commit(void)
 static void do_save(void)
 {
     if (s_focus >= 0) focus_commit();
+    {
+        char err[192];
+        if (!psx_card_packs_validate(&s_edit, err, sizeof err)) { say(err); return; }
+    }
     if (!is_monster()) {
         /* nothing the game would draw; do not carry stale monster numbers */
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.level = s_edit.attribute = -1;
@@ -1575,12 +1580,16 @@ static void do_effect_text(void)
     int replaced = 0;
     if (strlen(out) > PSX_CARD_PACK_DESC_MAX) { snprintf(out, sizeof out, "%s", fx); replaced = 1; }
     if (strlen(out) > PSX_CARD_PACK_DESC_MAX) { say("The effect text alone is longer than a description can be"); return; }
-    snprintf(s_edit.description, sizeof s_edit.description, "%s", out);
-    s_changed = 1; s_dirty = 1;
     int lines = 0, longest = 0, wide = 0;
     const int fits = psx_card_packs_desc_layout(out, &lines, &longest, &wide);
+    if (!fits) {
+        char err[160];
+        (void)psx_card_packs_validate_description(out, err, sizeof err);
+        say(err); return;
+    }
+    snprintf(s_edit.description, sizeof s_edit.description, "%s", out);
+    s_changed = 1; s_dirty = 1;
     if (replaced) say("The old text and the effect did not both fit: the description is now the effect text");
-    else if (!fits) say("Effect text added; the card shows 7 lines, so trim the text above it");
     else say("Effect text added to the description");
 }
 
@@ -1940,7 +1949,11 @@ static void draw_editor(void)
             for (char *q = fx; *q; q++) if (*q == '|') *q = ' ';
             int lines = 0, longest = 0, wide = 0;
             const int fits = psx_card_packs_desc_layout(fx, &lines, &longest, &wide);
-            char head[96]; snprintf(head, sizeof head, fits ? "Card text (%d of 7 lines):" : "Card text: %d lines, the card shows 7 (trim the description or the rules):", lines);
+            char head[128];
+            snprintf(head, sizeof head,
+                     fits ? "Card text (%d of %d lines):" :
+                            "Card text: %d lines, the card shows %d (trim the description or the rules):",
+                     lines, PSX_CARD_PACK_DESC_LINES);
             psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), head, fits ? COL_DIM : COL_WARN, fs);
             draw_wrapped(ex, L->preview_y + psx_ui_font_line_height(fs), right - ex, fx, COL_TEXT, fs, 3);
         } else psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), "Card text: none yet.", COL_DIM, fs);
@@ -2249,14 +2262,18 @@ static void to_canvas(float wx, float wy, int *cx, int *cy)
 {
     int ww = 0, wh = 0;
     SDL_GetWindowSize(s_win, &ww, &wh);
+    wh = psx_fm_editor_content_height(wh);
     *cx = (ww > 0 && s_w > 0) ? (int)(wx * (float)s_w / (float)ww + 0.5f) : (int)wx;
     *cy = (wh > 0 && s_h > 0) ? (int)(wy * (float)s_h / (float)wh + 0.5f) : (int)wy;
 }
 
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_CARDS, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN:
@@ -2480,8 +2497,9 @@ static void present_canvas(void)
 void psx_card_manager_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("Card Manager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    const int resume = s_suspended;
+    s_suspended = 0;
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_CARDS, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Card manager: no window", 2000); return; }
     gl_capture();
     /* The software renderer first: it draws through the window's own surface
@@ -2494,25 +2512,34 @@ void psx_card_manager_open(void)
     gl_restore();
     s_present_fail = 0;
     if (!s_ren) {
-        SDL_DestroyWindow(s_win); s_win = NULL;
+        psx_fm_editor_release(PSX_FM_PAGE_CARDS); s_win = NULL;
         host_osd_push("Card manager: no renderer", 2000);
         return;
     }
     if (!ensure_canvas(WIN_W, WIN_H)) { psx_card_manager_close(); return; }
-    rebuild_order();
-    load_editor();
+    if (!resume) {
+        rebuild_order();
+        load_editor();
+    } else {
+        /* Selection, search, edit buffer/caret, modal and unsaved fields stay
+         * authoritative while another FM Editor page is visible. */
+        s_dirty = 1;
+    }
     SDL_StartTextInput(s_win);
 }
 
 void psx_card_manager_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_CARDS); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) { s_suspended = 1; return; }
+    s_suspended = 0;
     s_hover_row = -1;
     s_hover_btn = -1;
     s_focus = -1;
@@ -2534,6 +2561,7 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_card_manager_close(); return; }
     }
@@ -2653,6 +2681,7 @@ static void from_canvas(int cx, int cy, int *wx, int *wy)
 {
     int ww = 0, wh = 0;
     SDL_GetWindowSize(s_win, &ww, &wh);
+    wh = psx_fm_editor_content_height(wh);
     *wx = (s_w > 0 && ww > 0) ? (int)((long)cx * ww / s_w) : cx;
     *wy = (s_h > 0 && wh > 0) ? (int)((long)cy * wh / s_h) : cy;
 }
@@ -2673,7 +2702,7 @@ static int inject_button(int x, int y, int button, int down)
 #endif
     ev.button.clicks = 1;
     ev.button.x = x;
-    ev.button.y = y;
+    ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2691,7 +2720,7 @@ int psx_card_manager_move(int x, int y)
     ev.motion.windowID = SDL_GetWindowID(s_win);
     from_canvas(x, y, &x, &y);
     ev.motion.x = x;
-    ev.motion.y = y;
+    ev.motion.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2776,13 +2805,8 @@ int psx_card_manager_shot(const char *path)
     return 1;
 }
 
-static void row_activate(void) { psx_card_manager_open(); }
-
 PSX_MOD_CONSTRUCTOR(psx_card_manager_install)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Card manager \xe2\x80\x94 experimental",
-                                    "EXPERIMENTAL, may have bugs. Change a card's name, description, art, frame color, stats, stars, effects, price and password; export or import them",
-                                    row_activate);
     (void)psx_game_add_frame_hook(tick);
     (void)psx_game_add_event_hook(on_event);
 }

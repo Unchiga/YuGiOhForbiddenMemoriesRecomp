@@ -528,7 +528,8 @@ static void invalidate(void)
  */
 
 typedef struct {
-    Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export, btn_random, btn_third;
+    Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export,
+         btn_random, btn_restore, btn_third;
     int  mod_x;                     /* left edge of the mod indicator        */
     Rect pane[2];                   /* the two panels                        */
     Rect title[2];                  /* what is listed, per panel             */
@@ -572,6 +573,8 @@ static void layout_compute(void)
     L->btn_third = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
     w = tw(fb, "Randomize") + px(18.0f);
     L->btn_random = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
+    w = tw(fb, "Restore all drops") + px(18.0f);
+    L->btn_restore = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Export" S_ELLIP) + px(18.0f);
     L->btn_export = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Import" S_ELLIP) + px(18.0f);
@@ -680,6 +683,7 @@ static int row_at(int p, int x, int y)
 /* --- editing -------------------------------------------------------------- */
 
 static int randomize_armed(void);
+static int restore_armed(void);
 
 static void say(const char *m)
 {
@@ -1018,6 +1022,7 @@ static void draw_bar(void)
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
     draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
     draw_button(&L->btn_random, "Randomize", randomize_armed(), s_hover_btn == 6);
+    draw_button(&L->btn_restore, "Restore all drops", restore_armed(), s_hover_btn == 7);
     if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 5);
     else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 5);
 
@@ -1395,10 +1400,49 @@ static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int fil
  * does it. The button stays lit while it is armed. */
 #define RANDOMIZE_ARM_MS 10000u
 static uint32_t s_random_armed_ms;
+static uint32_t s_restore_armed_ms;
 
 static int randomize_armed(void)
 {
     return s_random_armed_ms != 0 && SDL_GetTicks() - s_random_armed_ms <= RANDOMIZE_ARM_MS;
+}
+
+static int restore_armed(void)
+{
+    return s_restore_armed_ms != 0 && SDL_GetTicks() - s_restore_armed_ms <= RANDOMIZE_ARM_MS;
+}
+
+int psx_drop_viewer_restore_all(int confirm, char *msg, unsigned cap)
+{
+    if (!confirm) {
+        s_restore_armed_ms = SDL_GetTicks();
+        if (!s_restore_armed_ms) s_restore_armed_ms = 1;
+        snprintf(msg, cap,
+                 "Restore all manual and randomized drop weights to disc stock? Story rewards and other edits stay. Confirm again within 10 s; Save is required.");
+        if (s_win) { say(msg); s_dirty = 1; }
+        return 1;
+    }
+    if (!restore_armed()) {
+        snprintf(msg, cap, "Confirmation expired; choose Restore all drops again");
+        if (s_win) say(msg);
+        return 0;
+    }
+    s_restore_armed_ms = 0;
+    const int removed = psx_drop_edits_clear(-1);
+    if (removed) {
+        invalidate();
+        snprintf(msg, cap, "All %d edited drop weights restored to disc stock. Story rewards kept. Save is required.", removed);
+    } else {
+        snprintf(msg, cap, "All drop weights are already stock. Story rewards were not changed.");
+    }
+    if (s_win) say(msg);
+    return 1;
+}
+
+static void do_restore_all(void)
+{
+    char msg[224];
+    (void)psx_drop_viewer_restore_all(restore_armed(), msg, sizeof msg);
 }
 
 static void do_randomize(void)
@@ -1493,7 +1537,7 @@ static void set_view(int view)
 }
 
 /* Which top-bar button the point is on: 0/1 the tabs, 2 Save, 3 Import,
- * 4 Export, 5 the view-dependent slot, 6 Randomize; -1 none. */
+ * 4 Export, 5 the view-dependent slot, 6 Randomize, 7 Restore all; -1 none. */
 static int button_at(int x, int y)
 {
     const Layout *L = &s_L;
@@ -1504,6 +1548,7 @@ static int button_at(int x, int y)
     if (in_rect(&L->btn_export, x, y)) return 4;
     if (in_rect(&L->btn_third, x, y))  return 5;
     if (in_rect(&L->btn_random, x, y)) return 6;
+    if (in_rect(&L->btn_restore, x, y)) return 7;
     return -1;
 }
 
@@ -1524,6 +1569,7 @@ static void click(int x, int y)
         case 3: do_import(); break;
         case 4: do_export(); break;
         case 6: do_randomize(); break;
+        case 7: do_restore_all(); break;
         case 5:
             if (s_view == VIEW_DUELISTS) {
                 /* Return to default, scoped to the duelist on screen. The
@@ -1830,8 +1876,11 @@ static void hover_clear(void)
  * both at once. */
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_DROPS, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
 
     switch (ev->type) {
@@ -2072,9 +2121,7 @@ static void present_canvas(void)
 void psx_drop_viewer_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("Drop Table Manager",
-                             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_DROPS, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Drop table manager: no window", 2000); return; }
     gl_capture();
     /* The software renderer first: it draws through the window's own surface
@@ -2087,7 +2134,7 @@ void psx_drop_viewer_open(void)
     gl_restore();
     s_present_fail = 0;
     if (!s_ren) {
-        SDL_DestroyWindow(s_win); s_win = NULL;
+        psx_fm_editor_release(PSX_FM_PAGE_DROPS); s_win = NULL;
         host_osd_push("Drop table manager: no renderer", 2000);
         return;
     }
@@ -2099,13 +2146,15 @@ void psx_drop_viewer_open(void)
 
 void psx_drop_viewer_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_DROPS); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) return;
     s_hover_pane = s_hover_row = s_hover_btn = -1;
     s_cmenu_n = 0;
     s_cmenu_hover = -1;
@@ -2139,6 +2188,7 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_drop_viewer_close(); return; }
     }
@@ -2225,17 +2275,9 @@ static void tick(void)
  * be read back, and this is neither — the window is closed from its own title
  * bar or with Escape, which a menu row would then be out of step with. Opening
  * one that is already open raises it instead of making a second. */
-static void row_activate(void)
-{
-    psx_drop_viewer_open();
-}
-
 void psx_drop_viewer_register_menu(void)
 {
-    (void)psx_video_menu_add_action(
-        PSX_VM_MENU_VIEW, "Drop table manager",
-        "View and manage drop tables",
-        row_activate);
+    /* Kept for source compatibility; FM Editor owns the single VIEW action. */
 }
 
 /* Set what the window is showing. Any field may be left out; -1 and NULL mean
@@ -2317,7 +2359,7 @@ int psx_drop_viewer_inject_motion(int x, int y)
     ev.type = SDL_MOUSEMOTION;
     ev.motion.windowID = SDL_GetWindowID(s_win);
     ev.motion.x = x;
-    ev.motion.y = y;
+    ev.motion.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2336,7 +2378,7 @@ static int inject_button(int x, int y, int button, int down)
 #endif
     ev.button.clicks = 1;
     ev.button.x = x;
-    ev.button.y = y;
+    ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2447,6 +2489,7 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "import", &L->btn_import);
     if (n < cap) n += rect_json(out + n, cap - n, "export", &L->btn_export);
     if (n < cap) n += rect_json(out + n, cap - n, "randomize", &L->btn_random);
+    if (n < cap) n += rect_json(out + n, cap - n, "restore_all", &L->btn_restore);
     if (n < cap) n += rect_json(out + n, cap - n, "third", &L->btn_third);
     if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
     if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);

@@ -479,8 +479,11 @@ static void select_step(int d)
 
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_DIALOGUE, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN: {
@@ -617,14 +620,14 @@ static void present_canvas(void)
 void psx_dialogue_manager_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("Dialogue Manager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_DIALOGUE, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Dialogue manager: no window", 2000); return; }
     gl_capture();
     s_ren = psx_tool_renderer_create(s_win, "Dialogue Manager", -1, &s_ren_software);
     gl_restore();
     s_present_fail = 0;
     if (!s_ren) {
-        SDL_DestroyWindow(s_win); s_win = NULL;
+        psx_fm_editor_release(PSX_FM_PAGE_DIALOGUE); s_win = NULL;
         host_osd_push("Dialogue manager: no renderer", 2000);
         return;
     }
@@ -636,13 +639,15 @@ void psx_dialogue_manager_open(void)
 
 void psx_dialogue_manager_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_DIALOGUE); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) return;
     s_hover_row = s_hover_btn = -1;
 }
 
@@ -682,6 +687,7 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) { if (!ensure_canvas(w, h)) { psx_dialogue_manager_close(); return; } }
     const unsigned gen = psx_dialogue_generation() + (psx_dialogue_ready() ? 0x10000u : 0u);
     if (gen != s_seen_gen) { s_seen_gen = gen; rebuild_order(); }
@@ -695,13 +701,9 @@ static void tick(void)
 
 /* --- the row ------------------------------------------------------------- */
 
-static void row_activate(void) { psx_dialogue_manager_open(); }
-
 void psx_dialogue_manager_register_menu(void)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Dialogue manager \xe2\x80\x94 experimental",
-        "EXPERIMENTAL, may have bugs. Export the campaign's dialogue as plain text for translation, and import it back",
-        row_activate);
+    /* Kept for source compatibility; FM Editor owns the single VIEW action. */
 }
 
 /* --- debug side ---------------------------------------------------------- */
@@ -722,7 +724,7 @@ static int inject_button(int x, int y, int button, int down)
     ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
 #endif
     ev.button.clicks = 1;
-    ev.button.x = x; ev.button.y = y;
+    ev.button.x = x; ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 

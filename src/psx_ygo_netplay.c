@@ -34,12 +34,13 @@
  *        card that is not face-up on a field.
  *    plus the strip under the hand, which names the selected hand card with
  *    its ATK/DEF, type and stars: it is covered by a "<name> IS CHOOSING"
- *    bar (the seat's lobby display name when known). The upper strip, which
- *    names the card under the field cursor, stays: what it names is on the
- *    field. The first cut covered the whole board with a panel because it
- *    misread D_8009B34E (an effect scroll offset, not a "panel up" flag).
- *    Face-down field cards are backs for everyone already; that is game
- *    state and needs no help.
+ *    bar (the seat's lobby display name when known). The same strip is also
+ *    covered with "FACE-DOWN CARD" when the field cursor is over a face-down
+ *    card owned by the other seat. The game's field sprite is a back, but its
+ *    stock detail strip still prints the hidden card's name and stats; the
+ *    original cover incorrectly assumed every field card was public. The
+ *    first cut covered the whole board with a panel because it misread
+ *    D_8009B34E (an effect scroll offset, not a "panel up" flag).
  *
  *    Every address below was read off the decomp (memories-decomp, the duel
  *    display object layout and func_80023144). They are listed once here so
@@ -100,6 +101,8 @@ int psx_ygo_netplay_local_slot(void)
 #define A_VIEWER_CARD   0x8009B246u  /* u16 gDuel_wViewerCardID, the card the full view shows */
 #define A_HAND_OBJECTS  0x800EA030u  /* 5 x 0xC, +0 = display object of hand slot i */
 #define A_CARD_RECORDS  0x801A7AD8u  /* 30 x 0x1C: side*15 + 0..4 hand, 5..14 field */
+#define A_CURSOR_PTR    0x8009B1B4u  /* active DuelCardPickCursor*, col +0xF, row +0x10 */
+#define A_FIELD_GRID    0x800907D8u  /* 2 x 20: active-side grid cell -> card-record index */
 #define A_ZOOM_OBJECTS  0x800E9EF0u  /* [1] != 0 while the card-play zoom is up */
 #define A_DUELISTS      0x800E9FF0u  /* + side*0x20, +0x1F = keep hand face down */
 #define A_RULES_WIDGET  0x801845BCu  /* [0],[1] star per pad, [2] the choice: 1 = OPEN CARD */
@@ -196,7 +199,7 @@ static void big_back(int x, int y, int w, int h, const char *label)
  * under the acting player's cursor, with its ATK/DEF, type and stars, which
  * is the hand's contents one card at a time. The name is the seat's lobby
  * display name when the runtime knows one, else PLAYER 1 / PLAYER 2. */
-static void strip_cover(int side)
+static void strip_cover_label(const char *label)
 {
     /* The text-box slots are handed out dynamically (the strip was slot 0 on
      * one turn and slot 2 the next), so find it by shape: 288 wide with its
@@ -204,7 +207,6 @@ static void strip_cover(int side)
      * (64) is not the drawn strip: measured off the framebuffer, the dark
      * strip runs from two rows above the box's top for about 20 rows. */
     int x = 0, y = 0, w = 0, h = STRIP_H, k;
-    char name[64], label[96];
     for (k = 0; k < 4; k++) {
         const uint32_t b = A_TEXTBOX + (uint32_t)k * TB_STRIDE;
         if (s16_at(b + 0x3E) == STRIP_W && s16_at(b + 0x40) == STRIP_Y) {
@@ -214,9 +216,6 @@ static void strip_cover(int side)
     }
     if (w == 0) return;
     if (y + h > SCREEN_H) h = SCREEN_H - y;
-    if (!psx_ygo_netplay_seat_name(side, name, sizeof name) || !name[0])
-        snprintf(name, sizeof name, "PLAYER %d", side + 1);
-    snprintf(label, sizeof label, "%s IS CHOOSING", name);
     psx_ui_round_rect(&s_cv, x, y, w, h, 3.0f, COL_STRIP);
     psx_ui_round_rect_line(&s_cv, x + 1, y + 1, w - 2, h - 2, 2.5f, COL_EDGE, 1.0f);
     {
@@ -229,9 +228,47 @@ static void strip_cover(int side)
     s_have = 1;
 }
 
+static void hand_strip_cover(int side)
+{
+    char name[64], label[96];
+    if (!psx_ygo_netplay_seat_name(side, name, sizeof name) || !name[0])
+        snprintf(name, sizeof name, "PLAYER %d", side + 1);
+    snprintf(label, sizeof label, "%s IS CHOOSING", name);
+    strip_cover_label(label);
+}
+
 static unsigned rec_flags(int rec)
 {
     return psx_mod_read_half(A_CARD_RECORDS + (uint32_t)rec * REC_SIZE + REC_FLAGS);
+}
+
+/* Map the stock field cursor back to the D_801A7AD8 record it describes.
+ * The collaborating decomp's DuelCardPickCursor establishes col/row at
+ * +0xF/+0x10, and duel_field_layout.c establishes the mirrored 2x20 lookup
+ * table at A_FIELD_GRID. Phase 5 is the field-cursor phase whose bottom strip
+ * names that record. */
+static int selected_field_record(void)
+{
+    if ((psx_mod_read_half(A_PHASE) & 0xF) != 5) return -1;
+    const uint32_t cursor = psx_mod_read_word(A_CURSOR_PTR);
+    if (!ram_ptr(cursor) || !ram_ptr(cursor + 0x10u)) return -1;
+    const int col = (int8_t)psx_mod_read_byte(cursor + 0x0Fu);
+    const int row = (int8_t)psx_mod_read_byte(cursor + 0x10u);
+    const int side = psx_mod_read_byte(A_SIDE) & 1;
+    if (col < 0 || col >= 5 || row < 0 || row >= 4) return -1;
+    const int rec = psx_mod_read_byte(A_FIELD_GRID + (uint32_t)side * 20u +
+                                      (uint32_t)row * 5u + (uint32_t)col);
+    return rec >= 0 && rec < 30 ? rec : -1;
+}
+
+static int field_card_hidden(int slot, int *record_out)
+{
+    const int rec = selected_field_record();
+    if (record_out) *record_out = rec;
+    if (slot < 0 || rec < 0) return 0;
+    const unsigned fl = rec_flags(rec);
+    return (fl & (REC_OCCUPIED | REC_FACE_DOWN)) ==
+               (REC_OCCUPIED | REC_FACE_DOWN) && rec / 15 != slot;
 }
 
 /* The one thing that is public during a turn is a card sitting FACE-UP on
@@ -261,9 +298,11 @@ static void cover_tick(void)
     if ((psx_mod_read_byte(A_SCENE) & 0x1F) != 3) goto done;   /* not the duel board */
     if (!two_player_duel()) goto done;
     const int side = psx_mod_read_byte(A_SIDE) & 1;
+    memset(s_px, 0, sizeof s_px);
+    if (field_card_hidden(slot, NULL))
+        strip_cover_label("FACE-DOWN CARD");
     if (side == slot) goto done;                                /* my turn: my hand is mine to see */
 
-    memset(s_px, 0, sizeof s_px);
     const char *who = side == 0 ? "PLAYER 1 IS VIEWING A CARD" : "PLAYER 2 IS VIEWING A CARD";
     const int phase = psx_mod_read_half(A_PHASE) & 0xF;
     /* In DECK NUMBER mode (+0x1F != 0) the hand is numbered backs already. */
@@ -294,7 +333,7 @@ static void cover_tick(void)
     /* The strip under the hand names the selected hand card. Whenever the
      * hand is up (the objects exist) the strip describes a private card. */
     if (hand_open && ram_ptr(psx_mod_read_word(A_HAND_OBJECTS)))
-        strip_cover(side);
+        hand_strip_cover(side);
 
     /* Phase 7, first substate: the 2D hand objects are gone and the 3D
      * placement view paints the hand itself, open, at a fixed row while the
@@ -357,6 +396,27 @@ void psx_ygo_netplay_cover_origin(int *x, int *y)
 int psx_ygo_netplay_cover_needs_present(void)
 {
     return s_have || s_hold > 0;
+}
+
+int psx_ygo_netplay_privacy_json(char *out, size_t cap)
+{
+    if (!out || cap == 0) return 0;
+    const int active = psx_ygo_netplay_session() && psx_mod_game_started();
+    const int slot = psx_ygo_netplay_local_slot();
+    const int side = psx_mod_read_byte(A_SIDE) & 1;
+    const int phase = psx_mod_read_half(A_PHASE) & 0xF;
+    int rec = -1;
+    const int hidden = active ? field_card_hidden(slot, &rec) : 0;
+    const unsigned fl = rec >= 0 ? rec_flags(rec) : 0;
+    const int card = rec >= 0 ? s16_at(A_CARD_RECORDS + (uint32_t)rec * REC_SIZE + REC_CARD) : 0;
+    const int n = snprintf(out, cap,
+        "\"active\":%d,\"slot\":%d,\"side\":%d,\"phase\":%d,"
+        "\"selected_record\":%d,\"selected_owner\":%d,\"selected_card\":%d,"
+        "\"selected_flags\":%u,\"field_hidden\":%d,\"hand_hidden\":%d,"
+        "\"cover_present\":%d",
+        active, slot, side, phase, rec, rec >= 0 ? rec / 15 : -1, card, fl,
+        hidden, psx_ygo_netplay_hand_hidden(), s_have ? 1 : 0);
+    return n >= 0 && (size_t)n < cap;
 }
 
 void psx_ygo_netplay_install_hooks(void)

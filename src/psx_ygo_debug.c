@@ -28,6 +28,7 @@
 #include "psx_fusion_overlay.h"
 #include "psx_ygo_overlays.h"
 #include "psx_drop_edits.h"
+#include "psx_card_drops.h"
 #include "psx_duelist_icon_cache.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_viewer.h"
@@ -50,6 +51,68 @@
 #include "psx_card_db.h"
 #include "psx_textfile.h"
 #include "psx_fusion_table.h"
+#include "psx_tool_window.h"
+#include "psx_ygo_netplay.h"
+
+static int reject_stock_netplay_mutation(int id)
+{
+    if (!psx_ygo_netplay_session()) return 0;
+    send_err(id, "unavailable during stock netplay");
+    return 1;
+}
+
+static void handle_netplay_privacy(int id, const char *json)
+{
+    char body[512];
+    (void)json;
+    if (!psx_ygo_netplay_privacy_json(body, sizeof body)) {
+        send_err(id, "netplay privacy state too long");
+        return;
+    }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, body);
+}
+
+static void handle_fm_editor(int id, const char *json)
+{
+    char page_name[32], path[1024], state[256];
+    int page = json_get_int(json, "page", -1);
+    if (json_get_str(json, "page_name", page_name, sizeof page_name)) {
+        if (!strcmp(page_name, "cards")) page = PSX_FM_PAGE_CARDS;
+        else if (!strcmp(page_name, "drops") || !strcmp(page_name, "drop_tables")) page = PSX_FM_PAGE_DROPS;
+        else if (!strcmp(page_name, "fusions")) page = PSX_FM_PAGE_FUSIONS;
+        else if (!strcmp(page_name, "dialogue")) page = PSX_FM_PAGE_DIALOGUE;
+        else if (!strcmp(page_name, "cpu")) page = PSX_FM_PAGE_CPU;
+        else { send_err(id, "page_name must be cards|drops|fusions|dialogue|cpu"); return; }
+    }
+    if (json_get_int(json, "open", -1) == 0) psx_fm_editor_close();
+    else if (page >= 0 || json_get_int(json, "open", -1) == 1) {
+        if (psx_ygo_netplay_session()) { send_err(id, "FM Editor unavailable during netplay"); return; }
+        psx_fm_editor_open_page(page >= 0 ? page : PSX_FM_PAGE_CARDS);
+    }
+    {
+        const int click_tab = json_get_int(json, "click_tab", -1);
+        const int key_tab = json_get_int(json, "key_tab", -1);
+        if (click_tab >= 0 && !psx_fm_editor_inject_tab(click_tab, 0)) {
+            send_err(id, "FM Editor is closed or bad click_tab"); return;
+        }
+        if (key_tab >= 0 && !psx_fm_editor_inject_tab(key_tab, 1)) {
+            send_err(id, "FM Editor is closed or bad key_tab"); return;
+        }
+    }
+    if (json_get_str(json, "shot", path, sizeof path)) {
+        int ok = 0;
+        switch (psx_fm_editor_page()) {
+        case PSX_FM_PAGE_CARDS:    ok = psx_card_manager_shot(path); break;
+        case PSX_FM_PAGE_DROPS:    ok = psx_drop_viewer_shot(path); break;
+        case PSX_FM_PAGE_FUSIONS:  ok = psx_fusion_manager_shot(path); break;
+        case PSX_FM_PAGE_DIALOGUE: ok = psx_dialogue_manager_shot(path); break;
+        case PSX_FM_PAGE_CPU:      ok = psx_cpu_manager_shot(path); break;
+        }
+        if (!ok) { send_err(id, "FM Editor is closed or screenshot failed"); return; }
+    }
+    if (!psx_fm_editor_state_json(state, sizeof state)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, state);
+}
 
 /* rank_meter_tune — nudge the duel-rank meter's layout while the game runs.
  * {"cmd":"rank_meter_tune","letter_x":N,"letter_y":N,"gap":N,"dx":N,"dy":N}
@@ -147,6 +210,7 @@ static void handle_rank_meter_state(int id, const char *json)
  * a nested call, which is the next step whenever this is picked up. */
 static void handle_card_drops_test(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     extern int psx_card_drops_test_roll(CPUState *, int, int, uint32_t *,
                                         uint32_t *, int *);
     if (!debug_cpu_ptr) { send_err(id, "no cpu"); return; }
@@ -165,6 +229,7 @@ static void handle_card_drops_test(int id, const char *json)
 /* card_drops_sim tier=N drops=N — simulate one duel drop through the real hook. */
 static void handle_card_drops_sim(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     extern int psx_card_drops_simulate(CPUState *, int, int, uint32_t *, int *, int *);
     if (!debug_cpu_ptr) { send_err(id, "no cpu"); return; }
     int tier = json_get_int(json, "tier", 0);
@@ -235,6 +300,7 @@ static void handle_fusion_list(int id, const char *json)
  * which works with the window closed. */
 static void handle_fusion_manager(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char buf[6144], s[128], path[1024], msg[1400];
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_fusion_manager_request_open(open);
@@ -430,10 +496,30 @@ static void handle_card_packs(int id, const char *json)
      * "Dev Card Effects" button makes -- the set switch is otherwise only
      * reachable by clicking that button, which a script cannot do. */
     const int dev = json_get_int(json, "dev", -1);
+    if (dev >= 0 && reject_stock_netplay_mutation(id)) return;
     if (dev >= 0) psx_card_packs_set_dev(dev);
     char buf[8192];
     if (!psx_card_packs_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* card_description_validate text=... - executable boundary evidence for the
+ * exact layout/encoder used by saves and imports. */
+static void handle_card_description_validate(int id, const char *json)
+{
+    char value[PSX_CARD_PACK_DESC_MAX + 2];
+    if (!json_get_str(json, "text", value, sizeof value)) { send_err(id, "need text"); return; }
+    int lines = 0, longest = 0, wide = 0;
+    const int layout = psx_card_packs_desc_layout(value, &lines, &longest, &wide);
+    char err[192] = "";
+    const int valid = psx_card_packs_validate_description(value, err, sizeof err);
+    if (valid)
+        send_fmt("{\"id\":%d,\"ok\":true,\"valid\":true,\"layout\":%s,\"lines\":%d,\"longest\":%d,\"first_wide\":%d,\"bytes\":%d}",
+                 id, layout ? "true" : "false", lines, longest, wide,
+                 psx_card_packs_description_bytes(value));
+    else
+        send_fmt("{\"id\":%d,\"ok\":true,\"valid\":false,\"layout\":%s,\"lines\":%d,\"longest\":%d,\"first_wide\":%d,\"error\":\"%s\"}",
+                 id, layout ? "true" : "false", lines, longest, wide, err);
 }
 
 /* card_effects — the effects layer: overrides, holds, hook events. */
@@ -452,6 +538,7 @@ static void handle_card_share(int id, const char *json)
     char op[16], path[1024];
     if (!json_get_str(json, "op", op, sizeof op) || !json_get_str(json, "path", path, sizeof path)) { send_err(id, "need op and path"); return; }
     char msg[256];
+    if (!strcmp(op, "import") && reject_stock_netplay_mutation(id)) return;
     if (!strcmp(op, "export")) {
         const int ok = psx_card_share_export(path, msg, sizeof msg);
         send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
@@ -528,6 +615,7 @@ static void handle_card_texts_export(int id, const char *json)
 }
 static void handle_card_texts_import(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char path[1024], msg[1400];
     if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
     const int ok = psx_card_texts_import(path, msg, sizeof msg);
@@ -560,6 +648,7 @@ static void handle_dialogue_export(int id, const char *json)
 }
 static void handle_dialogue_import(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char path[1024], msg[2600];
     if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "need path"); return; }
     const int ok = psx_dialogue_import(path, msg, sizeof msg);
@@ -568,6 +657,7 @@ static void handle_dialogue_import(int id, const char *json)
 }
 static void handle_dialogue_clear(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     (void)json;
     psx_dialogue_clear();
     handle_dialogue(id, json);
@@ -578,6 +668,7 @@ static void handle_dialogue_clear(int id, const char *json)
  * and a canvas dump (shot: path, binary PPM). */
 static void handle_dialogue_manager(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char buf[4096], s[128], path[1024];
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_dialogue_manager_request_open(open);
@@ -608,6 +699,7 @@ static void handle_monster_effects(int id, const char *json)
 {
     static char buf[8192];
     const int fx = json_get_int(json, "fx", -1);
+    if (fx >= 0 && reject_stock_netplay_mutation(id)) return;
     if (fx >= 0 && !psx_monster_effects_debug_cast(
             json_get_int(json, "side", 0), json_get_int(json, "card", 1), fx,
             json_get_int(json, "amount", -1), json_get_int(json, "target", -1),
@@ -622,6 +714,7 @@ static void handle_monster_effects(int id, const char *json)
 /* card_packs_reload — re-read one pack (card) or all (no card). */
 static void handle_card_packs_reload(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     psx_card_packs_reload(json_get_int(json, "card", 0));
     handle_card_packs(id, json);
 }
@@ -637,6 +730,7 @@ static void handle_card_manager(int id, const char *json)
 }
 static void handle_card_manager_set(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_card_manager_request_open(open);
     const int card = json_get_int(json, "card", -1);
@@ -649,6 +743,7 @@ static void handle_card_manager_set(int id, const char *json)
 }
 static void handle_card_manager_click(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     if (!psx_card_manager_click(json_get_int(json, "x", 0), json_get_int(json, "y", 0), json_get_int(json, "button", 1))) {
         send_err(id, "manager is closed"); return;
     }
@@ -656,6 +751,7 @@ static void handle_card_manager_click(int id, const char *json)
 }
 static void handle_card_manager_move(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int down = json_get_int(json, "down", -1);
     int ok;
     if (down >= 0) ok = psx_card_manager_button(json_get_int(json, "x", 0), json_get_int(json, "y", 0), json_get_int(json, "button", 1), down);
@@ -665,6 +761,7 @@ static void handle_card_manager_move(int id, const char *json)
 }
 static void handle_card_manager_type(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char text[64];
     if (!json_get_str(json, "text", text, sizeof text)) { send_err(id, "missing text"); return; }
     if (!psx_card_manager_type(text)) { send_err(id, "manager is closed"); return; }
@@ -672,6 +769,7 @@ static void handle_card_manager_type(int id, const char *json)
 }
 static void handle_card_manager_key(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     /* key: return, escape, backspace, tab, up, down, pageup, pagedown */
     char name[16];
     if (!json_get_str(json, "key", name, sizeof name)) { send_err(id, "missing key"); return; }
@@ -710,6 +808,7 @@ static void handle_card_manager_shot(int id, const char *json)
  * dump (shot). The reply is its state with the geometry a script clicks by. */
 static void handle_cpu_manager(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char s[64], path[1024];
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_cpu_manager_request_open(open);
@@ -755,8 +854,10 @@ static void handle_video_menu(int id, const char *json)
             n += (unsigned)snprintf(rows + n, sizeof rows - n, "%s\"%.60s\"", i ? "," : "", label);
         snprintf(rows + n, sizeof rows - n, "]");
     }
-    send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d%s}",
-             id, psx_video_menu_is_visible(), psx_video_menu_is_open(), rows);
+    send_fmt("{\"id\":%d,\"ok\":true,\"visible\":%d,\"open\":%d,"
+             "\"menu_enabled\":%d%s}",
+             id, psx_video_menu_is_visible(), psx_video_menu_is_open(),
+             menu >= 0 ? psx_video_menu_menu_enabled(menu) : 1, rows);
 }
 
 /* mod_package — the one-file bundle: {"export":path} writes it, {"import":path}
@@ -766,6 +867,8 @@ static void handle_video_menu(int id, const char *json)
 static void handle_mod_package(int id, const char *json)
 {
     char path[1024], msg[512];
+    if ((strstr(json, "\"import\"") || strstr(json, "\"revert_row\"") ||
+         strstr(json, "\"reset\"")) && reject_stock_netplay_mutation(id)) return;
     if (json_get_str(json, "export", path, sizeof path)) {
         const int ok = psx_mod_package_export(path, msg, sizeof msg);
         send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);
@@ -804,6 +907,9 @@ static void handle_mod_package(int id, const char *json)
  * ini, {"export"/"import":path} the share pair. "deck":1 lists the pool. */
 static void handle_cpu_data(int id, const char *json)
 {
+    if (psx_ygo_netplay_session() &&
+        (strstr(json, "\"import\"") || strstr(json, "\"duelist\"") ||
+         strstr(json, "\"save\"")) && reject_stock_netplay_mutation(id)) return;
     char path[1024], msg[256];
     if (json_get_str(json, "import", path, sizeof path)) {
         const int ok = psx_cpu_import_file(path, msg, sizeof msg);
@@ -877,6 +983,8 @@ static void handle_story_rewards(int id, const char *json)
 {
     const int d = json_get_int(json, "duelist", -1);
     const int card = json_get_int(json, "card", -1);
+    if ((card >= 0 || json_get_int(json, "save", 0)) &&
+        reject_stock_netplay_mutation(id)) return;
     if (d >= 0 && card >= 0)
         psx_story_rewards_set(d, card, json_get_int(json, "every", 0));
     if (json_get_int(json, "save", 0) && !psx_drop_edits_save()) {
@@ -893,6 +1001,7 @@ static void handle_story_rewards(int id, const char *json)
 static void handle_fill_library(int id, const char *json)
 {
     const int on = json_get_int(json, "on", -1);
+    if (on >= 0 && reject_stock_netplay_mutation(id)) return;
     if (on >= 0) psx_fill_library_set(on);
     char buf[256];
     if (!psx_fill_library_state_json(buf, sizeof buf)) { send_err(id, "state unavailable"); return; }
@@ -918,11 +1027,23 @@ static void handle_drop_viewer(int id, const char *json)
  * the way past the file dialog, like fusion_manager's. */
 static void handle_drop_viewer_set(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     /* open lands on the main thread next frame — window creation is not this
      * thread's to do — so an "open":1 with other fields will report "viewer
      * is closed" for those; send the open alone, then the rest. */
     const int open = json_get_int(json, "open", -1);
     if (open >= 0) psx_drop_viewer_request_open(open);
+    {   /* two-step destructive-in-scope confirmation: 1 arms, 2 confirms */
+        const int restore = json_get_int(json, "restore_all", 0);
+        if (restore) {
+            char msg[256];
+            const int ok = psx_drop_viewer_restore_all(restore >= 2, msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"armed\":%s,\"msg\":\"%s\"}",
+                     id, ok ? "true" : "false", restore < 2 ? "true" : "false", msg);
+            return;
+        }
+    }
     {   /* randomize, seeded, answers with its own message like the file pair */
         const int seed = json_get_int(json, "randomize", -1);
         if (seed >= 0) {
@@ -979,6 +1100,7 @@ static void handle_drop_viewer_shot(int id, const char *json)
  * the event is pumped — read drop_viewer a frame later for the result. */
 static void handle_drop_viewer_click(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int x = json_get_int(json, "x", -1);
     const int y = json_get_int(json, "y", -1);
     const int button = json_get_int(json, "button", 1);
@@ -994,6 +1116,7 @@ static void handle_drop_viewer_click(int id, const char *json)
  * then drop_viewer_move waypoints, then release at the drop point. */
 static void handle_drop_viewer_press(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int x = json_get_int(json, "x", -1);
     const int y = json_get_int(json, "y", -1);
     const int button = json_get_int(json, "button", 1);
@@ -1006,6 +1129,7 @@ static void handle_drop_viewer_press(int id, const char *json)
 
 static void handle_drop_viewer_release(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int x = json_get_int(json, "x", -1);
     const int y = json_get_int(json, "y", -1);
     const int button = json_get_int(json, "button", 1);
@@ -1018,6 +1142,7 @@ static void handle_drop_viewer_release(int id, const char *json)
 
 static void handle_drop_viewer_move(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int x = json_get_int(json, "x", -1);
     const int y = json_get_int(json, "y", -1);
     if (x < 0 || y < 0) { send_err(id, "need x and y"); return; }
@@ -1031,6 +1156,7 @@ static void handle_drop_viewer_move(int id, const char *json)
  * injected-SDL-event story. key is an SDL_Keycode (Return is 13, Escape 27). */
 static void handle_drop_viewer_key(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     const int key = json_get_int(json, "key", -1);
     if (key < 0) { send_err(id, "need key"); return; }
     if (!psx_drop_viewer_inject_key(key)) {
@@ -1041,6 +1167,7 @@ static void handle_drop_viewer_key(int id, const char *json)
 
 static void handle_drop_viewer_text(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     char text[32];
     if (!json_get_str(json, "text", text, sizeof(text))) {
         send_err(id, "need text"); return;
@@ -1143,19 +1270,19 @@ static void handle_name_probe(int id, const char *json)
 }
 #endif /* PSX_NO_DEBUG_TOOLS */
 
-/* card_drops_list — the cards THIS duel awarded: distinct id, copies, and
- * whether the player owned none before. Ordered new-first then by id, i.e. the
- * order the CARD DROPS results page lists them, so the page can be checked
- * against the tracker without reading pixels. */
+/* card_drops_list - distinct result rows plus every copy in award order. */
 static void handle_card_drops_list(int id, const char *json)
 {
     (void)json;
     extern int psx_card_drops_list_json(char *, unsigned, int *);
     static char body[48 * 1024];
+    static char order[16 * 1024];
     int total = 0;
     int distinct = psx_card_drops_list_json(body, (unsigned)sizeof(body), &total);
-    send_fmt("{\"id\":%d,\"ok\":true,\"distinct\":%d,\"total\":%d,\"cards\":%s}",
-             id, distinct, total, body);
+    int order_n = psx_card_drops_order_json(order, (unsigned)sizeof(order));
+    send_fmt("{\"id\":%d,\"ok\":true,\"distinct\":%d,\"total\":%d,\"cards\":%s,"
+             "\"order_n\":%d,\"award_order\":%s}",
+             id, distinct, total, body, order_n, order);
 }
 
 /* card_drops_p3 — the CARD DROPS results page (page 3).
@@ -1168,6 +1295,7 @@ static void handle_card_drops_p3(int id, const char *json)
                                         int *, int *, int *);
     char hexbuf[2048];
     if (json_get_str(json, "stream", hexbuf, sizeof(hexbuf))) {
+        if (reject_stock_netplay_mutation(id)) return;
         uint8_t bytes[1024];
         int n = 0;
         const char *p = hexbuf;
@@ -1212,6 +1340,9 @@ static void handle_card_drops_layout(int id, const char *json)
     int spr_x  = json_get_int(json, "spr_x",  keep);
     int spr_y  = json_get_int(json, "spr_y",  keep);
     int spr_dy = json_get_int(json, "spr_dy", keep);
+    if ((text_y != keep || split != keep || name_x != keep || num_x != keep ||
+         spr_x != keep || spr_y != keep || spr_dy != keep) &&
+        reject_stock_netplay_mutation(id)) return;
     psx_card_drops_layout(text_y, split, name_x, num_x, spr_x, spr_y, spr_dy);
     psx_card_drops_layout_get(&text_y, &split, &name_x, &num_x, &spr_x,
                               &spr_y, &spr_dy);
@@ -1224,6 +1355,7 @@ static void handle_card_drops_layout(int id, const char *json)
 /* card_drops_set drops=N — set the CARD DROPS slider live (test loop). */
 static void handle_card_drops_set(int id, const char *json)
 {
+    if (reject_stock_netplay_mutation(id)) return;
     extern int psx_card_drops_set(int);
     int drops = json_get_int(json, "drops", -1);
     if (!psx_card_drops_set(drops)) { send_err(id, "bad drops"); return; }
@@ -1318,11 +1450,14 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("cpu_data",          handle_cpu_data);
     (void)psx_debug_add_command("mod_package",       handle_mod_package);
     (void)psx_debug_add_command("cpu_manager",       handle_cpu_manager);
+    (void)psx_debug_add_command("fm_editor",         handle_fm_editor);
+    (void)psx_debug_add_command("netplay_privacy",   handle_netplay_privacy);
     (void)psx_debug_add_command("video_menu",        handle_video_menu);
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);
     (void)psx_debug_add_command("card_packs",         handle_card_packs);
+    (void)psx_debug_add_command("card_description_validate", handle_card_description_validate);
     (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
     (void)psx_debug_add_command("card_effects",       handle_card_effects);
     (void)psx_debug_add_command("card_share",         handle_card_share);

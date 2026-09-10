@@ -64,6 +64,10 @@ int  psx_drop_viewer_import(const char *path, char *msg, unsigned cap);
  * seed of 0 is a fixed seed, so a test can repeat. Works with the window
  * closed, like the file pair. */
 int  psx_drop_viewer_randomize(unsigned seed, char *msg, unsigned cap);
+/* The drop-page-only two-step restore. confirm=0 arms it; confirm=1 executes
+ * only while armed. Clears weight edits for all 39x3 tables, keeps scripted
+ * story rewards and every non-drop subsystem, and leaves the result unsaved. */
+int  psx_drop_viewer_restore_all(int confirm, char *msg, unsigned cap);
 
 /* Deliver mouse motion, clicks, a key press, or typed text — as real SDL
  * events carrying this window's id, so the debug server exercises the exact

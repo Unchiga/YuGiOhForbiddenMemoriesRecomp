@@ -35,6 +35,10 @@ int  psx_ygo_netplay_cover_image(const uint32_t **pixels, int *w, int *h);
 void psx_ygo_netplay_cover_origin(int *x, int *y);
 int  psx_ygo_netplay_cover_needs_present(void);
 
+/* Machine-readable state for hidden-information regressions. The returned
+ * text is a JSON object body (without braces). */
+int psx_ygo_netplay_privacy_json(char *out, size_t cap);
+
 /* The rules-screen vblank hook and the cover's frame hook. */
 void psx_ygo_netplay_install_hooks(void);
 

@@ -316,6 +316,73 @@ static void parse_manifest(const unsigned char *m, PsxCardShareInfo *info)
     }
 }
 
+/* Extract the description value from a card.ini. The pack parser accepts the
+ * same three keys. Return -1 for an invalid description, 0 when absent, and
+ * its encoded guest-RAM size when valid. */
+static int ini_description_bytes(const unsigned char *data, char *err, unsigned errcap)
+{
+    const char *p = (const char *)data;
+    while (*p) {
+        const char *e = strchr(p, '\n');
+        const size_t len = e ? (size_t)(e - p) : strlen(p);
+        char line[4096];
+        if (len >= sizeof line) { if (err) snprintf(err, errcap, "card.ini line is too long"); return -1; }
+        memcpy(line, p, len); line[len] = 0;
+        char *q = line;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q != ';' && *q != '#' && *q != '[') {
+            char *eq = strchr(q, '=');
+            if (eq) {
+                *eq++ = 0;
+                char *ke = q + strlen(q);
+                while (ke > q && (ke[-1] == ' ' || ke[-1] == '\t' || ke[-1] == '\r')) *--ke = 0;
+                for (char *k = q; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
+                if (!strcmp(q, "description") || !strcmp(q, "desc") || !strcmp(q, "text")) {
+                    while (*eq == ' ' || *eq == '\t') eq++;
+                    char *ve = eq + strlen(eq);
+                    while (ve > eq && (ve[-1] == ' ' || ve[-1] == '\t' || ve[-1] == '\r')) *--ve = 0;
+                    if (!psx_card_packs_validate_description(eq, err, errcap)) return -1;
+                    return eq[0] ? psx_card_packs_description_bytes(eq) : 0;
+                }
+            }
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    return 0;
+}
+
+static int import_descriptions_fit(const unsigned char *zip, long zip_n,
+                                   const Entry *ents, int ent_n,
+                                   const PsxCardShareInfo *info,
+                                   char *err, unsigned errcap)
+{
+    int bytes[CARD_COUNT + 1]; memset(bytes, 0, sizeof bytes);
+    char dir[1024]; cards_dir(dir, sizeof dir);
+    /* What remains after the replacement, including descriptions on cards
+     * outside this archive. Invalid hand edits already fall back to stock and
+     * therefore consume no arena space. */
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        char path[1200]; snprintf(path, sizeof path, "%s/%d/card.ini", dir, id);
+        long n; unsigned char *d = read_file(path, &n);
+        if (!d) continue;
+        const int v = ini_description_bytes(d, NULL, 0);
+        if (v > 0) bytes[id] = v;
+        free(d);
+    }
+    for (int i = 0; i < info->card_n; i++) bytes[info->card_ids[i]] = 0;
+    for (int i = 0; i < ent_n; i++) {
+        int id, file;
+        if (!parse_card_name(ents[i].name, &id, &file) || file != 0) continue;
+        long n; unsigned char *d = zip_extract(zip, zip_n, &ents[i], &n);
+        if (!d) { snprintf(err, errcap, "cards/%d/card.ini is damaged", id); return 0; }
+        char why[160]; const int v = ini_description_bytes(d, why, sizeof why); free(d);
+        if (v < 0) { snprintf(err, errcap, "cards/%d/card.ini: %s", id, why); return 0; }
+        bytes[id] = v;
+    }
+    return psx_card_packs_validate_description_sizes(bytes, err, errcap);
+}
+
 int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
 {
     memset(info, 0, sizeof *info);
@@ -360,6 +427,9 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
     char err[160];
     const int k = zip_entries(b, n, ents, 4096, err, sizeof err);
     if (k < 0) { free(b); if (msg) snprintf(msg, cap, "%s", err); return 0; }
+    if (!import_descriptions_fit(b, n, ents, k, &info, err, sizeof err)) {
+        free(b); if (msg) snprintf(msg, cap, "Import rejected before changing files: %s", err); return 0;
+    }
     char dir[1024]; cards_dir(dir, sizeof dir);
     MKDIR(dir);
     /* the file's cards replace the player's: clear those folders first */

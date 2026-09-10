@@ -59,10 +59,12 @@ void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
                           int *new_count, int *chest_builds, int *overlays,
                           int *page_duel, int *awarded_total);
 
-/* This duel's awards as JSON, ordered the way the results page lists them:
- * cards the player owned none of first, then by card id. Returns the DISTINCT
- * card count and writes the total copies through out_total. */
+/* This duel's awards as JSON in first-award order, matching the results page.
+ * Returns the DISTINCT card count and writes total copies through out_total. */
 int  psx_card_drops_list_json(char *out, unsigned cap, int *out_total);
+/* Every copy in actual award order. `committed` is false only for the final
+ * stock card while the results screen is still waiting to bank it. */
+int  psx_card_drops_order_json(char *out, unsigned cap);
 
 /* Simulate one duel drop end to end through the REAL hook, so the setting can
  * be swept without winning a duel per value. */

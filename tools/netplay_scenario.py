@@ -13,11 +13,12 @@ expects and screenshots both peers, so a hang shows up as a timeout with the
 screens beside it. Same hands every run: the game seeds its RNG with a
 constant, and the cards are re-seeded from the caller's isolated card image.
 """
-import os, sys, time, struct
+import json, os, sys, time, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import netplay_pair as np
 
 LOG = None
+PRIVACY = []
 
 
 def log(*a):
@@ -78,6 +79,31 @@ def wait_battle(H, limit=90):
 
 def shots(tag):
     return [np.inst(0).shot(tag), np.inst(1).shot(tag)]
+
+
+def check_facedown_privacy(tag, owner):
+    """Require only the face-down card's owner to receive its stock label."""
+    time.sleep(1)
+    states = [np.inst(slot).q({'cmd': 'netplay_privacy'}) for slot in (0, 1)]
+    for slot, state_ in enumerate(states):
+        expected_hidden = slot != owner
+        if not state_.get('ok'):
+            raise RuntimeError('%s privacy command failed on slot %d: %r' % (tag, slot, state_))
+        if state_.get('phase') != 5 or state_.get('selected_owner') != owner:
+            raise RuntimeError('%s cursor did not resolve owner %d on slot %d: %r' %
+                               (tag, owner, slot, state_))
+        if state_.get('selected_flags', 0) & 0x9000 != 0x9000:
+            raise RuntimeError('%s selected card is not occupied face-down: %r' % (tag, state_))
+        if bool(state_.get('field_hidden')) != expected_hidden:
+            raise RuntimeError('%s wrong hidden policy on slot %d: %r' % (tag, slot, state_))
+        if expected_hidden and not state_.get('cover_present'):
+            raise RuntimeError('%s missing present-time cover on slot %d: %r' % (tag, slot, state_))
+    if states[0].get('selected_card') != states[1].get('selected_card'):
+        raise RuntimeError('%s peers disagree on selected card: %r' % (tag, states))
+    record = {'tag': tag, 'owner': owner, 'peers': states}
+    PRIVACY.append(record)
+    log('privacy', json.dumps(record, sort_keys=True))
+    shots(tag)
 
 
 def end_turn(player, host):
@@ -152,6 +178,7 @@ def main():
     if phase(H) == 8:
         G.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P2 field cursor', 30)
+    check_facedown_privacy('s_p2_facedown', 1)
     end_turn(G, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 0, 'P1 hand up (2)', 90)
     time.sleep(3)
@@ -162,6 +189,14 @@ def main():
     if phase(H) == 8:
         H.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P1 field cursor (2)', 30)
+    check_facedown_privacy('s_p1_facedown', 0)
+    with open(os.path.join(np.ROOT, 'privacy-results.json'), 'w') as f:
+        json.dump({'passed': True, 'checks': PRIVACY}, f, indent=2, sort_keys=True)
+        f.write('\n')
+    if os.environ.get('NETPLAY_SCENARIO_STOP') == 'privacy':
+        for i in (H, G):
+            i.q({'cmd': 'quit_graceful'})
+        log('stopped after face-down privacy checks'); return
     end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up (2)', 90)
     time.sleep(3)

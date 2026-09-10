@@ -1219,14 +1219,13 @@ static void present(void)
 void psx_cpu_manager_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("CPU Manager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_CPU, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("CPU manager: no window", 2000); return; }
     gl_capture();
     s_ren = psx_tool_renderer_create(s_win, "CPU Manager", -1, &s_ren_software);
     gl_restore();
     s_present_fail = 0;
-    if (!s_ren) { SDL_DestroyWindow(s_win); s_win = NULL; host_osd_push("CPU manager: no renderer", 2000); return; }
+    if (!s_ren) { psx_fm_editor_release(PSX_FM_PAGE_CPU); s_win = NULL; host_osd_push("CPU manager: no renderer", 2000); return; }
     if (!ensure_canvas(WIN_W, WIN_H)) { psx_cpu_manager_close(); return; }
     layout_compute();
     invalidate();
@@ -1235,13 +1234,15 @@ void psx_cpu_manager_open(void)
 
 void psx_cpu_manager_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_CPU); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) return;
     s_hover_pane = s_hover_row = s_hover_btn = -1;
     s_sb_drag = 0;
     cm_close();
@@ -1251,12 +1252,9 @@ void psx_cpu_manager_close(void)
 int psx_cpu_manager_is_open(void) { return s_win != NULL; }
 void psx_cpu_manager_request_open(int open) { s_open_req = open ? 1 : -1; }
 
-static void row_activate(void) { psx_cpu_manager_open(); }
-
 void psx_cpu_manager_register_menu(void)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "CPU manager (experimental)",
-                                    "EXPERIMENTAL, may have bugs. Decks, AI, names, portraits and records for every opponent", row_activate);
+    /* Kept for source compatibility; FM Editor owns the single VIEW action. */
 }
 
 static void tick(void)
@@ -1266,6 +1264,7 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) { if (!ensure_canvas(w, h)) { psx_cpu_manager_close(); return; } }
     if (s_pick_err[0]) {
         char why[200]; snprintf(why, sizeof why, "%s", s_pick_err);
@@ -1311,8 +1310,11 @@ static void hover_move(int x, int y)
 
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_CPU, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN: {
@@ -1514,7 +1516,7 @@ static int inject_button(int x, int y, int button, int down)
     ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
 #endif
     ev.button.clicks = 1;
-    ev.button.x = x; ev.button.y = y;
+    ev.button.x = x; ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -1525,7 +1527,7 @@ int psx_cpu_manager_move(int x, int y)
     SDL_zero(ev);
     ev.type = SDL_MOUSEMOTION;
     ev.motion.windowID = SDL_GetWindowID(s_win);
-    ev.motion.x = x; ev.motion.y = y;
+    ev.motion.x = x; ev.motion.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 

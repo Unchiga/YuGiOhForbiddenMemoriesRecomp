@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 #define PSX_CARD_PACK_NAME_MAX 40
-#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 7 x 20 */
+#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 8 x 20 */
 #define PSX_CARD_PACK_EQUIP_MAX   722   /* every monster, by id: the biggest stock groups hold 292 and 621 */
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
@@ -202,11 +202,27 @@ void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap)
 void psx_card_packs_effects_reset(PsxCardPack *c);
 
 /* How the game will lay a description out: the number of lines (auto-wrapped
- * at 20 columns, or as broken by "|"), the longest line, and the first line
- * (1-based) longer than 20 columns, 0 when none. The game shows 7 lines. */
+ * at 20 columns, or as broken by "|", a newline, or a literal "\\n"), the
+ * longest line, and the first line (1-based) longer than 20 columns, 0 when
+ * none. The game shows 8 lines. */
 #define PSX_CARD_PACK_DESC_COLS  20
-#define PSX_CARD_PACK_DESC_LINES 7
+#define PSX_CARD_PACK_DESC_LINES 8
+/* Combined exact capacity of the stock string bank and the proven overflow
+ * arena, excluding the four-byte layout marker. psx_card_extend's relocated
+ * tables sit between the two ranges and are never touched. */
+#define PSX_CARD_PACK_DESC_ARENA_BYTES 0xDDA7
 int  psx_card_packs_desc_layout(const char *text, int *lines, int *longest, int *first_wide);
+/* Validate the complete description write contract (length, glyphs and
+ * layout). On success, description_bytes returns its encoded RAM size,
+ * including line controls and terminator. */
+int  psx_card_packs_validate_description(const char *text, char *err, unsigned errcap);
+int  psx_card_packs_description_bytes(const char *text);
+/* Validate a complete replacement plan. sizes[1..722] contains an encoded
+ * custom size or zero to retain that card's exact stock byte string. */
+int  psx_card_packs_validate_description_sizes(const int *sizes, char *err, unsigned errcap);
+/* Also checks that this candidate, every already-loaded custom description,
+ * and the exact stock strings for all remaining cards fit together. */
+int  psx_card_packs_validate(const PsxCardPack *pack, char *err, unsigned errcap);
 
 /* The stock values of a card, read from the game's own tables. Valid once
  * psx_card_db_ready(). */

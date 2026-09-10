@@ -27,7 +27,7 @@ What the package does, all from stock and all seeded:
                time), every trap a new ATK ceiling, every equip a new bonus,
                every field card new type boosts. Every card whose effect
                changed gets its description replaced by a short text saying
-               what it now does (six lines of twenty).
+               what it now does (eight lines of twenty).
   drop tables  every duelist's three bands keep their drop count; monster
                slots get random monsters (every monster in the game is
                dropped by somebody), magic/trap/equip/ritual slots keep their
@@ -472,8 +472,8 @@ def wrap_lines(sentences, width=20):
     return out
 
 
-def card_text(sentences, width=20, lines=6):
-    """The card shows six lines of twenty characters; | is a line break."""
+def card_text(sentences, width=20, lines=8):
+    """The card shows eight lines of twenty characters; | is a line break."""
     return '|'.join(wrap_lines(sentences, width)[:lines])
 
 
@@ -484,13 +484,13 @@ def with_prefix(sentences):
     return [PREFIX] + list(sentences) if sentences and sentences[0] != PREFIX else list(sentences)
 
 
-def fits(sentences, width=20, lines=6):
+def fits(sentences, width=20, lines=8):
     return len(wrap_lines(with_prefix(sentences), width)) <= lines
 
 
 def settle(items):
     """items: [(ini lines, full sentence, terse sentence)] in the order they
-    were rolled. Every effect is kept if the six lines can hold it: the full
+    were rolled. Every effect is kept if the eight lines can hold it: the full
     wording first, the terse wording for the whole card when the full one
     overflows, and only then is the last effect dropped. Returns the kept
     ini lines and the sentences."""
@@ -742,7 +742,7 @@ def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full'):
         for ln in lines:
             if ln.startswith('description = '):
                 parts = ln[len('description = '):].split('|')
-                assert len(parts) <= 6 and all(len(p) <= 20 for p in parts), (c, ln)
+                assert len(parts) <= 8 and all(len(p) <= 20 for p in parts), (c, ln)
 
     stamp = time.strftime('%Y-%m-%d %H:%M')
     z = zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED)

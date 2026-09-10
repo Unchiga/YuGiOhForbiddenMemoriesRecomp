@@ -43,6 +43,11 @@ int  psx_story_rewards_count(void);
  * copy the results screen makes is then right by construction. restore_table
  * puts the table back on the award that follows. */
 void psx_story_rewards_steer_roll(struct CPUState *cpu, unsigned tier);
+/* Split form used by multi-drop: decide eligibility without changing RAM,
+ * then steer the visible in-flight roll after the reward has already been
+ * awarded first. select returns 0 when this duel has no scripted reward. */
+int  psx_story_rewards_select(void);
+void psx_story_rewards_steer_card(struct CPUState *cpu, unsigned tier, int card);
 void psx_story_rewards_restore_table(void);
 
 /* `story_rewards` debug command: the pairs and what the last duel decided. */

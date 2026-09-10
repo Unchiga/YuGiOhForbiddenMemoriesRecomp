@@ -167,42 +167,65 @@ def main():
         q({'cmd': 'card_manager_set', 'open': 1})
         time.sleep(2)
         q({'cmd': 'card_manager_set', 'card': 1})
+        q({'cmd': 'card_manager_set', 'search': 'Blue'})
         s = q({'cmd': 'card_manager'})
+        editor = q({'cmd': 'fm_editor'})
+        window_id = editor['window_id']
+        page_ids = {'cards': window_id}
         x,y,w,h = s['geom']['value'][2]
         q({'cmd':'card_manager_click','x':x+w//2,'y':y+h//2,'button':1})
         q({'cmd':'card_manager_key','key':'a','ctrl':1})
         q({'cmd':'card_manager_type','text':'3100'})
         q({'cmd':'card_manager_key','key':'return'})
-        x,y = s['geom']['btn'][0]
-        q({'cmd':'card_manager_click','x':x,'y':y,'button':1})
+        time.sleep(.5)
         s=q({'cmd':'card_manager'})
-        assert int(s['atk']) == 3100, s
+        assert int(s['atk']) == 3100 and s['changed'] and s['search'] == 'Blue', s
         q({'cmd':'card_manager_shot','path':str(shots/'card-manager.ppm')})
         perf('card-manager')
         q({'cmd':'card_share','op':'export','path':str(root/'cards.ygocards')})
         q({'cmd':'card_share','op':'import','path':str(root/'cards.ygocards')})
-        q({'cmd':'card_manager_set','open':0})
         q({'cmd':'fusion_manager','open':1})
         time.sleep(2)
+        e=q({'cmd':'fm_editor'});page_ids['fusions']=e['window_id']
+        assert e['window_id'] == window_id and e['page_name'] == 'Fusions',e
         q({'cmd':'fusion_manager','a':1,'b':2,'result':37})
         q({'cmd':'fusion_manager','shot':str(shots/'fusion-manager.ppm')})
-        q({'cmd':'fusion_manager','open':0})
         q({'cmd':'drop_viewer_set','open':1})
         time.sleep(2)
+        e=q({'cmd':'fm_editor'});page_ids['drop_tables']=e['window_id']
+        assert e['window_id'] == window_id and e['page_name'] == 'Drop Tables',e
         q({'cmd':'drop_viewer_set','randomize':2026})
         q({'cmd':'drop_viewer_shot','path':str(shots/'drop-manager.ppm')})
-        q({'cmd':'drop_viewer_set','open':0})
+        q({'cmd':'dialogue_manager','open':1})
+        time.sleep(2)
+        e=q({'cmd':'fm_editor'});page_ids['dialogue']=e['window_id']
+        assert e['window_id'] == window_id and e['page_name'] == 'Dialogue',e
+        q({'cmd':'dialogue_manager','shot':str(shots/'dialogue-manager.ppm')})
         q({'cmd':'cpu_manager','open':1})
         time.sleep(2)
+        e=q({'cmd':'fm_editor'});page_ids['cpu']=e['window_id']
+        assert e['window_id'] == window_id and e['page_name'] == 'CPU',e
         q({'cmd':'cpu_data','duelist':1,'name':'Catchup Simon','save':1})
         q({'cmd':'cpu_manager','duelist':1,'shot':str(shots/'cpu-manager.ppm')})
-        q({'cmd':'cpu_manager','open':0})
+        q({'cmd':'card_manager_set','open':1})
         time.sleep(2)
+        e=q({'cmd':'fm_editor'});page_ids['cards_return']=e['window_id']
+        assert e['window_id'] == window_id and e['page_name'] == 'Cards',e
+        s=q({'cmd':'card_manager'})
+        assert int(s['atk']) == 3100 and s['changed'] and s['search'] == 'Blue',s
+        x,y = s['geom']['btn'][0]
+        q({'cmd':'card_manager_click','x':x,'y':y,'button':1})
+        time.sleep(.5)
+        assert int(q({'cmd':'card_manager'})['atk']) == 3100
+        q({'cmd':'fm_editor','open':0})
+        time.sleep(1)
+        assert not q({'cmd':'fm_editor'})['open']
         for _ in range(3): p.press('down',20,1)
         p.press('cross',20,3)
         p.press('cross',20,3)
         shot('edited-library-card')
-        return {'card_attack':3100,'fusion':[1,2,37],'drop_seed':2026}
+        return {'card_attack':3100,'fusion':[1,2,37],'drop_seed':2026,
+                'shared_window_id':window_id,'page_window_ids':page_ids}
 
     def video():
         def key(k):
