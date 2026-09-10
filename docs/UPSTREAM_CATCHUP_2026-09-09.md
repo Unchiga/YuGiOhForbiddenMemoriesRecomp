@@ -1,8 +1,8 @@
 # psxrecomp catch-up — 2026-09-09
 
 The local runtime branch `ygofm-upstream-2026-09-09` starts at upstream
-`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by ten title extension
-and regression-fix commits, ending at `c75132a6`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
+`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by eleven title extension
+and regression-fix commits, ending at `a39229c1`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
 under `/tmp/ygofm-upstream-2026-09-09/title`; the original checkout remains on
 `netplay-2p` / `ygofm-netplay`. Nothing was pushed or released.
 
@@ -22,6 +22,35 @@ artifacts, not committed assets. Preserve them before clearing `/tmp`.
 | 8. Save integrity | Trade changes 74 bytes per card; directory unchanged | Final traded cards exactly match baseline; loss run changes zero bytes | `delay-comparison.json`, `rollback-card-comparison.json`, `loss-card-integrity.json` |
 | 9. Performance | Duel 59.9565 fps; Card Manager 60.0302 fps | Duel 59.9652 fps; Card Manager 59.9654 fps | `baseline/duel-fixture/duel-perf.json`, `baseline/solo-v3/card-manager-perf.json`, `new/solo/*-perf.json` |
 | 10. Linux setup packaging | Stages and configures offline with explicit toolchain | Same, final 31 MB setup archive staged locally | `baseline/package.log`, `baseline/staged-offline-setup-configure.log`, `new/package-final.log`, `new/staged-offline-final.log` |
+| Follow-up: 2x menu audio, software at 2x resolution | Old fork: 98.20 fps and 93,947 missing host frames in 12 s; initial port: 92.86 fps and 117,419 missing frames | Fixed: 119.88 fps, SPU 44,055 samples/s, zero underruns/overflow over 30 s; also passes borderless and 1x→2x→1x | `baseline/audio-speed`; `new/audio-before`, `new/audio-final`, `new/audio-borderless`; WAVs and timing JSON |
+
+The accelerated-audio follow-up exposed a gap in the original 1x performance
+suite. The scratch launcher explicitly selected software, while ordinary play
+had used GL. The preserved old software rasterizer also starves audio at 2x;
+the initial port was somewhat slower. Stack samples locate the bottleneck in
+rasterization, with display swaps taking only about 75 microseconds. Runtime
+`a39229c1` caches repeated nearest texture samples in presentation mirrors,
+fills opaque spans directly, and clears supersampled buffers in contiguous
+spans between wraps. Canonical texture reads stay ordered, and clocks, chosen
+resolution, filtering and blending stay unchanged. All 64 raster cases match
+the pre-change native VRAM, hires/wide buffers and dirty masks byte for byte.
+The registered CTest passes (`new/audio-raster-ctest.log`).
+
+`tools/audio_speed_regression.py` requires a new scratch directory, verifies
+port ownership, loads a matching menu state, records PCM WAVs and checks frame
+rate, SPU production, underruns and overflow independently. Three 30-second
+windows pass at 59.93 / 119.88 / 59.94 fps, with SPU output near 44.1 kHz
+throughout. A separate full-size borderless 2x run passes too. This validates
+clock/queue health; the retained WAVs permit listening review. Speeds 3x/4x,
+other audio scenes and other platforms were not qualified in this follow-up.
+Debug, release and setup rebuild logs are `new/audio-{build,release-build,setup-build}.log`.
+The setup archive listed above predates the follow-up fixes and was not restaged.
+
+The collaborating game-code resource
+[krystalgamer/memories-decomp](https://github.com/krystalgamer/memories-decomp)
+is now recorded in `tools/AGENT-BRIEF.md`, the runtime's
+`docs/YGOFM_REFERENCE.md`, and project memory. The stale `~/memories-decomp`
+path is absent here; `~/ygofm-decomp` is a separate Unchiga checkout.
 
 Manual-launch follow-up: the user reported F10 displaying nothing in software.
 The SDL path consumed input and reserved the inset but omitted the menu image;
