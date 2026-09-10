@@ -84,6 +84,7 @@
 #define KILL_TAB       0x80090A4Cu   /* u8[16] */
 #define CLASS_TAB      0x80090AD4u   /* u8[101] */
 #define FX_STATE       0x8009B220u   /* u16, bit 0x8000 = a handler is running */
+#define MODE_BYTE      0x8009B26Cu   /* 0xC3 = duel screen */
 #define MALUS_WORD     0x80025E60u   /* addiu v0,v0,-500  (Spellbinding Circle path) */
 #define EQ_WORD_TARGET 0x8001A7F8u   /* addiu v0,zero,500 */
 #define EQ_WORD_PEND   0x8001A494u   /* addiu v0,v0,500   pending bonus */
@@ -128,6 +129,13 @@ static struct {
 } s_hold;
 static int s_malus_dirty;
 static int s_hold_amount;
+static int s_hold_stalled, s_holds_stalled, s_holds_cancelled;
+static uint32_t s_rng = 0xA341316Cu;
+static uint32_t s_state_mem;
+
+#define CFX_STATE_MAGIC   0x43465853u /* CFXS */
+#define CFX_STATE_VERSION 1u
+#define CFX_STATE_WORDS   32u
 
 /* the equip bonus in force */
 static int s_eq_active, s_eq_dirty, s_eq_bonus, s_eq_card;
@@ -143,6 +151,13 @@ static void ev(uint32_t at, int a, int b, int out)
 {
     Ev *e = &s_ev[s_ev_n++ & 15u];
     e->frame = s_frame; e->at = at; e->a = a; e->b = b; e->out = out;
+}
+
+static uint32_t rng_next(void)
+{
+    uint32_t x = s_rng ? s_rng : 0xA341316Cu;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return s_rng = x;
 }
 
 /* ---- helpers -------------------------------------------------------------- */
@@ -521,8 +536,17 @@ static void tick(void)
     for (int i = 0; i < 101; i++) assert_byte(CLASS_TAB + (uint32_t)i, s_want_class[i]);
     if (s_hold.active) {
         const int done = s_frame > s_hold.since + 2 && !(psx_mod_read_half(FX_STATE) & 0x8000u);
-        if ((done && !lp_popup_live() && s_frame > s_hold.since + 6) || s_frame > s_hold.since + 900) hold_release();
-        else { hold_apply(); popup_fix(); }
+        if (psx_mod_read_byte(MODE_BYTE) != 0xC3) {
+            hold_release(); s_holds_cancelled++; ev(0xCA11u, s_hold.kind, 0, 0);
+        } else if (done && !lp_popup_live() && s_frame > s_hold.since + 6) {
+            hold_release();
+        } else {
+            if (!s_hold_stalled && s_frame > s_hold.since + 900) {
+                s_hold_stalled = 1; s_holds_stalled++;
+                ev(0x57A11u, s_hold.kind, psx_mod_read_half(FX_STATE), 0);
+            }
+            hold_apply(); popup_fix();
+        }
     }
     eq_apply();
 }
@@ -536,6 +560,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
 {
     int proxy = -1;
     memset(&s_hold, 0, sizeof s_hold);
+    s_hold_stalled = 0;
     switch (fx) {
     case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((amount >= 0 ? amount : 500) / 100); s_hold_amount = s_hold.heal * 100; break;
     case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((amount >= 0 ? amount : 500) / 10); s_hold_amount = s_hold.burn * 10; break;
@@ -588,7 +613,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
         const int lp = psx_mod_read_half(lpat);
         int loss = 0;
         if (fx == PSX_CARD_FX_LOSE_LP) loss = amount >= 0 ? amount : 500;
-        else if (((unsigned)rand() ^ s_frame) & 1u) loss = lp / 2;
+        else if (rng_next() & 1u) loss = lp / 2;
         if (loss > lp) loss = lp;
         if (loss > 0) { psx_mod_write_half(lpat, (uint16_t)(lp - loss)); psx_lp_popup_show(loss, 0); }
         ev(0x700u, fx, loss, side);
@@ -858,11 +883,13 @@ int psx_card_effects_state_json(char *out, unsigned cap)
     for (int id = 1; id <= CARD_COUNT; id++) if (fx_of(id)) n_fx++;
     unsigned n = (unsigned)snprintf(out, cap,
         "\"ready\":%d,\"cards\":%d,\"equip_override\":%d,\"equip_bytes\":%d,\"equip_dropped\":%d,"
-        "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u},"
+        "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u,\"stalled\":%d},"
+        "\"holds_stalled\":%d,\"holds_cancelled\":%d,"
         "\"equip_bonus\":{\"active\":%d,\"bonus\":%d,\"card\":%d,\"dirty\":%d},\"scratch_key\":%u,\"frame\":%u,"
         "\"fx_state\":%u,\"events\":[",
         s_stock_ok, n_fx, s_equip_override, s_equip_bytes, s_equip_dropped, s_ritual_override, s_ritual_records,
-        s_hold.active, s_hold.kind, s_hold.since, s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
+        s_hold.active, s_hold.kind, s_hold.since, s_hold_stalled, s_holds_stalled, s_holds_cancelled,
+        s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
         s_stock_ok ? psx_mod_read_half(FX_STATE) : 0);
     const unsigned first = s_ev_n > 16u ? s_ev_n - 16u : 0u;
     for (unsigned i = first; i < s_ev_n && n + 80 < cap; i++) {
@@ -876,8 +903,71 @@ int psx_card_effects_state_json(char *out, unsigned cap)
     return n < cap;
 }
 
+/* The effect parameters and rewritten instruction immediates are host mirrors
+ * of guest-visible state. Keep those mirrors on the common full-machine state
+ * path so disk loads, rewind, and rollback all resume the same effect. */
+static void card_state_put(unsigned *i, uint32_t v)
+{
+    if (s_state_mem && *i < CFX_STATE_WORDS)
+        psx_mod_write_word(s_state_mem + 4u * (*i)++, v);
+}
+
+static uint32_t card_state_get(unsigned *i)
+{
+    if (!s_state_mem || *i >= CFX_STATE_WORDS) return 0;
+    return psx_mod_read_word(s_state_mem + 4u * (*i)++);
+}
+
+static void state_before_save(void)
+{
+    unsigned i = 0;
+    if (!s_state_mem) return;
+    for (unsigned j = 0; j < CFX_STATE_WORDS; j++)
+        psx_mod_write_word(s_state_mem + 4u * j, 0);
+    card_state_put(&i, CFX_STATE_MAGIC); card_state_put(&i, CFX_STATE_VERSION);
+    card_state_put(&i, s_frame); card_state_put(&i, s_rng);
+    card_state_put(&i, (uint32_t)s_hold.active); card_state_put(&i, s_hold.since);
+    card_state_put(&i, (uint32_t)s_hold.kind); card_state_put(&i, s_hold.heal);
+    card_state_put(&i, s_hold.burn); card_state_put(&i, s_hold.kill_id);
+    card_state_put(&i, s_hold.kill_arg); card_state_put(&i, s_hold.malus);
+    card_state_put(&i, (uint32_t)s_malus_dirty); card_state_put(&i, (uint32_t)s_hold_amount);
+    card_state_put(&i, (uint32_t)s_hold_stalled); card_state_put(&i, (uint32_t)s_holds_stalled);
+    card_state_put(&i, (uint32_t)s_holds_cancelled);
+    card_state_put(&i, (uint32_t)s_eq_active); card_state_put(&i, (uint32_t)s_eq_dirty);
+    card_state_put(&i, (uint32_t)s_eq_bonus); card_state_put(&i, (uint32_t)s_eq_card);
+    card_state_put(&i, s_scratch_key);
+}
+
+static void state_after_load(void)
+{
+    unsigned i = 0;
+    const uint32_t magic = card_state_get(&i), version = card_state_get(&i);
+    memset(&s_hold, 0, sizeof s_hold);
+    s_malus_dirty = s_hold_amount = s_hold_stalled = 0;
+    s_holds_stalled = s_holds_cancelled = 0;
+    s_eq_active = s_eq_dirty = s_eq_bonus = s_eq_card = 0;
+    s_scratch_key = SCRATCH_KEY; s_ev_n = 0;
+    if (magic != CFX_STATE_MAGIC || version != CFX_STATE_VERSION) {
+        s_frame = 0; s_rng = 0xA341316Cu;
+        return;
+    }
+    s_frame = card_state_get(&i); s_rng = card_state_get(&i);
+    s_hold.active = (int)card_state_get(&i); s_hold.since = card_state_get(&i);
+    s_hold.kind = (int)card_state_get(&i); s_hold.heal = (uint8_t)card_state_get(&i);
+    s_hold.burn = (uint8_t)card_state_get(&i); s_hold.kill_id = (uint8_t)card_state_get(&i);
+    s_hold.kill_arg = (uint8_t)card_state_get(&i); s_hold.malus = card_state_get(&i);
+    s_malus_dirty = (int)card_state_get(&i); s_hold_amount = (int)card_state_get(&i);
+    s_hold_stalled = (int)card_state_get(&i); s_holds_stalled = (int)card_state_get(&i);
+    s_holds_cancelled = (int)card_state_get(&i);
+    s_eq_active = (int)card_state_get(&i); s_eq_dirty = (int)card_state_get(&i);
+    s_eq_bonus = (int)card_state_get(&i); s_eq_card = (int)card_state_get(&i);
+    s_scratch_key = (uint16_t)card_state_get(&i);
+}
+
 PSX_MOD_CONSTRUCTOR(psx_card_effects_install)
 {
+    s_state_mem = psx_mod_alloc_guest_memory(CFX_STATE_WORDS * 4u, 4u);
+    (void)psx_mod_register_state_plugin("card_effects_state", state_before_save, state_after_load);
     (void)psx_mod_register_function_entry_plugin("card_effects_magic", HOOK_MAGIC, hook_magic);
     (void)psx_mod_register_function_entry_plugin("card_effects_equip", HOOK_EQUIP, hook_equip);
     (void)psx_game_add_frame_hook(tick);

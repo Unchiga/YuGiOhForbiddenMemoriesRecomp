@@ -21,15 +21,38 @@ committed: both are derived from the player's own disc image at build time.
 Two references live outside the repo and are worth reading before guessing at
 anything guest-side:
 
-* `~/memories-decomp` - the community decompilation. `config/slus_01411/symbols.txt`
+* [krystalgamer/memories-decomp](https://github.com/krystalgamer/memories-decomp)
+  is the community byte-matching decompilation for SLUS-01411; we collaborate
+  on that project. Use it as a game-code reference before inferring guest
+  behavior, especially sound-driver timing, menu loops and overlay addresses.
+  `config/slus_01411/symbols.txt`
   names thousands of functions and globals, `src/game/*.c` holds the ones that
   are decompiled, and `notes/research/the-game.md` is a measured map of the
   save, the disc, the text bank and the duel.
+  Verify local checkout remotes and revisions before using them: this machine's
+  `~/ygofm-decomp` is a separate `Unchiga/ygofm-decomp` checkout, and the old
+  `~/memories-decomp` path is not currently present. Cross-check symbols against
+  the exact game executable; this reference is not the generated runtime C.
 * `~/teatools` - documentation of the community's browser mod tools, one folder
   per tool, each with the file offsets and the patch bytes it writes. Good for
   "has someone already found where X lives".
 
 ## Building and running
+
+GAME > SPEED must accelerate gameplay while keeping sound quality and pace.
+Validate every advertised speed using `tools/audio_speed_regression.py`
+(defaults: OpenGL, 1x/2x/3x/4x/1x): game
+frames should scale with the multiplier while SPU production stays near 44.1
+kHz, with no sustained host underruns. The 1x performance check alone missed
+software-renderer starvation at 2x. Use scratch cards and a same-revision menu
+state; see the script's required arguments. Choose `--renderer software`
+explicitly for CPU-renderer qualification; a pass there at 2x does not establish
+3x/4x support. The catch-up play helper must use the game's configured OpenGL
+default: forcing software bypassed GPU rasterization and made higher-speed
+audio fail despite a capable GPU. Use the separate software helper for manager
+windows, whose GL limitations remain recorded in the live-testing guide.
+Raster parity is checked separately
+by `psxrecomp/runtime/tests/test_gpu_sw_raster_parity.py`.
 
 ```sh
 cmake --build build-dbg --target psx-runtime     # debug tools + debug server

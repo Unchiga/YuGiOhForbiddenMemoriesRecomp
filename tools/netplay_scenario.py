@@ -3,7 +3,7 @@
 
     python3 tools/netplay_scenario.py [rollback] [latency_ms] [jitter_ms]
 
-Seeds the cards, launches both instances (delay-sync by default; `rollback`
+Seeds the cards from NETPAIR_SEED, launches both instances (delay-sync by default; `rollback`
 switches PSX_NET_MODE and the optional latency/jitter engage recomp-net's
 receive-side link simulator on BOTH peers, so the added RTT is twice the
 latency), then plays: 2P DUEL with both LP at 1, P1 summons, P2 sets, P1 sets,
@@ -11,7 +11,7 @@ P2 summons and attacks P1's monster (P1 loses), the winner leaves the results,
 and the host opens TRADE from the menu. Every step checks the duel state it
 expects and screenshots both peers, so a hang shows up as a timeout with the
 screens beside it. Same hands every run: the game seeds its RNG with a
-constant, and the cards are re-seeded from the personal card 1 each time.
+constant, and the cards are re-seeded from the caller's isolated card image.
 """
 import os, sys, time, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,11 +44,62 @@ def wait_for(H, pred, what, limit=60):
             return True
         time.sleep(1)
     log('  TIMEOUT:', what, '|', state(H))
-    return False
+    raise RuntimeError('timeout: ' + what)
+
+
+def wait_battle(H, limit=90):
+    """Wait for duel completion while retaining actionable freeze evidence."""
+    t0 = time.time()
+    last = None
+    entered = False
+    while time.time() - t0 < limit:
+        now = (phase(H), H.b(0x8009B174), H.h(0x800EA004), H.h(0x800EA024))
+        if now[0] == 0xD:
+            log('  ok: duel over (phase D) |', state(H))
+            return True
+        if now[0] == 9:
+            entered = True
+        elif entered and now[0] == 5 and now[2:] == (1, 1):
+            raise RuntimeError('battle completed with zero damage; fixture is not lethal')
+        if now != last:
+            log('  battle:', now, 'busy=%08x' % (H.w(0x8009B0F4) or 0),
+                'stream=%s/%04x/%s' % (H.h(0x8009B100), H.h(0x8009B112) or 0,
+                                       H.w(0x8009B0EC)))
+            last = now
+        time.sleep(1)
+    shots('s_battle_timeout')
+    log('  battle freeze_check', H.q({'cmd':'freeze_check','window':256}))
+    log('  battle cdrom_state', H.q({'cmd':'cdrom_state'}))
+    log('  battle dispatch_tail', H.q({'cmd':'dispatch_tail','count':32}))
+    log('  battle savestate', H.q({'cmd':'savestate','op':'save','slot':11}))
+    log('  TIMEOUT: duel over (phase D) |', state(H))
+    raise RuntimeError('timeout: duel over (phase D)')
 
 
 def shots(tag):
     return [np.inst(0).shot(tag), np.inst(1).shot(tag)]
+
+
+def end_turn(player, host):
+    # A confirmation may already have selected the summoned monster by the
+    # time its animation settles. START is ignored in attack-target mode.
+    if phase(host) == 5 and host.b(0x8009B174) & 0x7f == 6:
+        player.press('circle', 6, 1.5)
+    player.press('start', 12, 1.0)
+
+
+# The two Guardian Star wheels. A star beats the value to its right here.
+# These ids are the packed card-stat ids documented in psx_card_extend.c.
+GS_BEATS = {8: 9, 9: 10, 10: 7, 7: 8,
+            1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 1}
+
+
+def guardian_attack(atk, attacker, defender):
+    if GS_BEATS.get(attacker) == defender:
+        return atk + 500
+    if GS_BEATS.get(defender) == attacker:
+        return max(0, atk - 500)
+    return atk
 
 
 def main():
@@ -85,7 +136,7 @@ def main():
     H.press('cross', 6, 1.5); H.press('right', 6, 1.0); H.press('cross', 6, 3.0); H.press('cross', 6, 3.0); H.press('cross', 6, 5.0)
     wait_for(H, lambda: phase(H) == 5, 'P1 placed', 30)
     shots('s_p1_placed')
-    H.press('start', 12, 1.0)
+    end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up', 90)
     time.sleep(3)
     shots('s_p2_turn')
@@ -101,7 +152,7 @@ def main():
     if phase(H) == 8:
         G.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P2 field cursor', 30)
-    G.press('start', 12, 1.0)
+    end_turn(G, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 0, 'P1 hand up (2)', 90)
     time.sleep(3)
 
@@ -111,13 +162,52 @@ def main():
     if phase(H) == 8:
         H.press('cross', 6, 4.0)
     wait_for(H, lambda: phase(H) == 5, 'P1 field cursor (2)', 30)
-    H.press('start', 12, 1.0)
+    end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up (2)', 90)
     time.sleep(3)
 
-    # P2: summon face-up, then attack P1's face-up monster
+    # P2: summon face-up. Pick a hand card whose default Guardian Star is
+    # guaranteed to deal battle damage to P1's face-up monster. Always using
+    # hand slot 0 can create a perfectly legal zero-damage tie for some seeds.
+    rows = H.rd(0x801A7AD8, 0x1C * 30)
+    defender_row = next((i for i in range(5, 10)
+                         if struct.unpack('<H', rows[i * 0x1C + 0x16:i * 0x1C + 0x18])[0] & 0x8000
+                         and not struct.unpack('<H', rows[i * 0x1C + 0x16:i * 0x1C + 0x18])[0] & 0x1000), None)
+    if defender_row is None:
+        raise RuntimeError('missing face-up defender')
+    dr = rows[defender_row * 0x1C:(defender_row + 1) * 0x1C]
+    defender, datk, ddef, _, _, dflags = struct.unpack('<hhhhhH', dr[0xC:0x18])
+    dstat = H.w(0x801D4244 + (defender - 1) * 4)
+    dgs = (dstat >> 22) & 15
+    plans=[]
+    for slot in range(5):
+        hr = rows[(15 + slot) * 0x1C:(16 + slot) * 0x1C]
+        attacker, _, _, _, _, hflags = struct.unpack('<hhhhhH', hr[0xC:0x18])
+        if not (hflags & 0x8000) or attacker <= 0:
+            continue
+        astat = H.w(0x801D4244 + (attacker - 1) * 4)
+        atk, ags = (astat & 0x1FF) * 10, (astat >> 22) & 15
+        effective = guardian_attack(atk, ags, dgs)
+        defended = bool(dflags & 0x0800)
+        damage = max(0, ddef - effective) if defended else abs(effective - datk)
+        plans.append((damage, slot, attacker, atk, ags, effective))
+    damage, hand_slot, attacker, atk, ags, effective = max(plans, default=(0, 0, 0, 0, 0, 0))
+    if damage <= 0:
+        raise RuntimeError('isolated deal has no damaging default-star attacker')
+    log('battle plan attacker', attacker, 'slot', hand_slot, 'defender', defender,
+        'ATK', atk, 'star', ags, 'vs', dgs, 'effective', effective, 'damage', damage)
+    for _ in range(hand_slot):
+        G.press('right', 6, .8)
     G.press('cross', 6, 1.5); G.press('right', 6, 1.0); G.press('cross', 6, 3.0); G.press('cross', 6, 3.0); G.press('cross', 6, 5.0)
     wait_for(H, lambda: phase(H) == 5, 'P2 placed (2)', 30)
+    placed = H.rd(0x801A7AD8, 0x1C * 30)
+    log('battle rows', [tuple(struct.unpack('<hhhhhH',
+         placed[i * 0x1C + 0xC:i * 0x1C + 0x18])) for i in range(30)
+         if struct.unpack('<H', placed[i * 0x1C + 0x16:i * 0x1C + 0x18])[0] & 0x8000])
+    if not any(struct.unpack('<h', placed[i * 0x1C + 0xC:i * 0x1C + 0xE])[0] == attacker
+               and (struct.unpack('<H', placed[i * 0x1C + 0x16:i * 0x1C + 0x18])[0]
+                    & 0x9000) == 0x8000 for i in range(20, 25)):
+        raise RuntimeError('planned attacker was not summoned')
     G.press('cross', 6, 4.0)                       # leave the placement view
     G.press('cross', 6, 2.0)                       # select the monster: attack target mode
     rows = H.rd(0x801A7AD8, 0x1C * 30)
@@ -134,9 +224,11 @@ def main():
             found = True; break
         G.press('right', 6, 0.8)
     log('target under cursor', found)
+    if not found:
+        raise RuntimeError('attack target was not selected')
     shots('s_target')
     G.press('cross', 6, 1.0)
-    wait_for(H, lambda: phase(H) == 0xD, 'duel over (phase D)', 90)
+    wait_battle(H, 90)
     time.sleep(4)
     shots('s_results')
     # The winner's X leaves the results; which seat won depends on the deal.
@@ -191,13 +283,20 @@ def main():
     for k, n in np.NAMES.items():
         d = np.inst(k).dir
         after = {f: digest(os.path.join(d, f)) for f in ('card1.mcd', 'card2.mcd')}
+        backups = sorted(f for f in os.listdir(d) if 'pre-netplay' in f)
         log(n, 'cards before', before[n], 'after', after,
-            'backups', sorted(f for f in os.listdir(d) if 'pre-netplay' in f))
+            'backups', backups)
         for l in np.inst(k).grep('netplay'):
             if 'card' in l and 'live dig' not in l:
                 log('  ', n, l.strip())
+        if after['card1.mcd'] == before[n]['card1.mcd'] or not backups:
+            raise RuntimeError('%s trade was not carried back with a backup' % n)
     log('done')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        for slot in (0, 1):
+            np.inst(slot).q({'cmd': 'quit_graceful'})

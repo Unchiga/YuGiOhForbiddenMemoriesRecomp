@@ -19,6 +19,9 @@ extern "C" {
 #endif
 
 int psx_monster_effects_state_json(char *out, unsigned cap);
+/* Debug-tools production-path enqueue used by the effect regression suite. */
+int psx_monster_effects_debug_cast(int side, int card, int fx,
+                                   int amount, int target, int terrain);
 
 #ifdef __cplusplus
 }
