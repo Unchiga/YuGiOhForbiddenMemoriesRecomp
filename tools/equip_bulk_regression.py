@@ -444,7 +444,7 @@ class Regression:
                    effects.get("equip_dropped") == 0,
                    {k: effects.get(k) for k in
                     ("equip_override", "equip_bytes", "equip_dropped")})
-        return recipes, recipe_sha256, monsters, two
+        return recipes, recipe_sha256, monsters, two, stock
 
     def picker_actions(self, monsters, two):
         # Begin from two so a single visible row toggle has an exact delta.
@@ -571,6 +571,48 @@ class Regression:
         self.result["artifacts"][cards.name] = file_info(cards)
         self.result["artifacts"][mods.name] = file_info(mods)
 
+    def restore_stock_action(self, stock, recipe_sha256):
+        """The one Restore stock action must cover fusions and Equip lists."""
+        self.set_equip_ids([])
+        self.query({"cmd": "fusion_manager", "a": 1, "b": 2,
+                    "result": 3})
+        before = self.fusion_state()
+        self.check("restore_stock_fixture_has_both_override_kinds",
+                   before.get("edits", 0) > 0 and not self.equip_ids(),
+                   {"edits": before.get("edits"),
+                    "equip_ids": self.equip_ids()})
+
+        self.query({"cmd": "fusion_manager", "confirm": 1})
+        armed = self.query({"cmd": "fusion_manager"})
+        self.check("restore_stock_combined_modal_armed",
+                   armed.get("dialog") == 1, armed.get("dialog"))
+        self.picker_shot("restore-stock-confirmation.ppm")
+        self.query({"cmd": "fusion_manager", "confirm": 0})
+        cancelled = self.fusion_state()
+        self.check("restore_stock_combined_cancel_preserves_both",
+                   cancelled.get("edits", 0) > 0 and not self.equip_ids(),
+                   {"edits": cancelled.get("edits"),
+                    "equip_ids": self.equip_ids()})
+
+        self.query({"cmd": "fusion_manager", "confirm": 1})
+        self.query({"cmd": "fusion_manager", "confirm": 2})
+        restored = self.fusion_state()
+        restored_equips = self.equip_ids()
+        self.check("restore_stock_combined_restores_equip_fusions",
+                   same_ids(restored_equips, stock),
+                   {"expected": len(stock), "actual": len(restored_equips)})
+        self.check("restore_stock_combined_restores_fusions",
+                   restored.get("edits") == 0 and not restored.get("cleared"),
+                   {"edits": restored.get("edits"),
+                    "cleared": restored.get("cleared")})
+        restored_recipes = self.args.output / "fusion-recipes-after-restore-stock.tsv"
+        self.query({"cmd": "fusion_manager", "export": str(restored_recipes)})
+        self.check("restore_stock_combined_exact_fusion_table",
+                   digest(restored_recipes) == recipe_sha256,
+                   {"stock_sha256": recipe_sha256,
+                    "restored_sha256": digest(restored_recipes)})
+        self.check_sentinels("restore_stock_preserves_unrelated_card_fields")
+
     def clear_and_restart(self, recipes, recipe_sha256):
         before = self.fusion_state()
         self.query({"cmd": "fusion_manager", "confirm_equips": 1})
@@ -685,9 +727,10 @@ class Regression:
     def run(self):
         self.launch()
         self.seed_unrelated_fields()
-        recipes, recipe_sha256, monsters, two = self.stock_and_api()
+        recipes, recipe_sha256, monsters, two, stock = self.stock_and_api()
         self.picker_actions(monsters, two)
         self.package_roundtrips(monsters, two)
+        self.restore_stock_action(stock, recipe_sha256)
         self.clear_and_restart(recipes, recipe_sha256)
         self.old_fixture()
 

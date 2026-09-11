@@ -298,6 +298,12 @@ until Apply. `fusion_manager` mirrors these paths with `equip_batch`:E,
 `confirm_equips`:1/2/0; state includes `pick_selected` and every picker-button
 rectangle.
 
+`Restore stock...` is the single global way back: its two-step confirmation
+restores both ordinary fusion recipes and every Equip card's disc
+usable-monster list. Cancel preserves both kinds. The scripted
+`fusion_manager` `undo_all`/`confirm`:1,2 path uses the same implementation;
+`restore_equips` remains available for the narrower Equip-only diagnostic.
+
 Verified 2026-09-10 in a fresh portable software-rendered profile: Legendary
 Sword moved through stock 63, empty, 2 and all 621 monsters; a duplicate ID was
 rejected without changing the prior list; removing the 42 filtered `Dragon`
@@ -309,6 +315,12 @@ construction, but this artifact's card 301 member contains only its equip list;
 do not treat it as independent proof for price/password/color preservation or
 a post-clear restart. Evidence and canvas captures are under
 `/tmp/ygofm-equip-bulk-final-Mp1v8d/`.
+
+The combined-restore regression is
+`/tmp/ygofm-equip-restore-fix-results/results.json`. It stages one normal
+fusion edit and an explicitly empty Legendary Sword list, proves cancel keeps
+both, then confirms Restore stock returns all 63 stock equip links and a
+byte-identical fusion-table export while retaining unrelated card fields.
 
 Large lists are served through the same entry-hook lookup as type and attribute
 rules rather than expanded into the guest's fixed 0x2100-byte equip buffer.

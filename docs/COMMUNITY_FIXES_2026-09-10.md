@@ -526,6 +526,18 @@ earlier screenshots and guest lookup above. Ctrl+A is likewise not claimed by
 the debug injector, which cannot express modifier state; the shipping picker's
 Select filtered button, Delete path, and all mass operations are exercised.
 
+The later Restore-stock correction closes the split-backend gap: the visible
+Fusions-page action, Ctrl+Z and scripted confirmation now restore both the
+ordinary fusion table and per-card Equip usable-monster overrides. The button
+is named `Restore stock...`, and its confirmation counts both kinds explicitly.
+Cancellation still changes nothing. The 61-check isolated regression at
+`/tmp/ygofm-equip-restore-fix-results/results.json` (SHA-256
+`0c57f24533d9f85895b9893b3ec1a47c21693ead48843c8f9150afddc66d32cc`)
+staged one fusion edit plus an empty Legendary Sword list, then restored the
+exact stock fusion-table hash and all 63 stock equip links while preserving
+price, password and color fields. Both owned processes used fresh verified
+ports and exited 0 through `quit_graceful`.
+
 ### Card-view passwords
 
 Password editing already existed on the Cards page. This pass adds the missing

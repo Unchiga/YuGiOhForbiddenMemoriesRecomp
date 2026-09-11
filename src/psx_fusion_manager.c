@@ -299,7 +299,7 @@ static int     s_pick_selected_n;
 
 enum { BTN_BYCARD = 0, BTN_RECIPES, BTN_IMPORT, BTN_EXPORT, BTN_CLEAR, BTN_CLEAR_EQUIPS, BTN_RESTORE, BTN_COUNT };
 static const char *const BTN_LABEL[BTN_COUNT] = { "By card", "Recipes", "Import" S_ELLIP, "Export" S_ELLIP,
-                                                  "Clear fusions" S_ELLIP, "Clear equips" S_ELLIP, "Restore fusions" S_ELLIP };
+                                                  "Clear fusions" S_ELLIP, "Clear equips" S_ELLIP, "Restore stock" S_ELLIP };
 
 /* A modal ask, for the one action that cannot be undone from inside the
  * window. Everything else here is additive or reversible; throwing away a
@@ -1494,6 +1494,8 @@ static int cm_at(int x, int y)
 
 static void dialog_open(int kind);   /* the confirm these destructive items raise */
 static int equip_clear_all_now(char *err, unsigned cap);
+static int equip_override_count(void);
+static int equip_restore_all_now(char *err, unsigned cap);
 
 static void cm_run(int i)
 {
@@ -1681,13 +1683,17 @@ static void draw_dialog(void)
         snprintf(l1, sizeof l1, "Every Equip card will explicitly fit zero monsters.");
         snprintf(l2, sizeof l2, "Fusion recipes and other card edits stay; each equip's batch editor can restore or replace its list.");
     } else {
-        snprintf(head, sizeof head, "Restore the game's own fusion table?");
-        if (n || psx_fusion_table_cleared()) {
-            snprintf(l1, sizeof l1, "%d edit%s will be dropped and MODS " S_ARROW " Fusion edits switched off.",
-                     n, n == 1 ? "" : "s");
-            snprintf(l2, sizeof l2, "They are copied to fusion_edits_backup.txt first " S_DASH " Import brings them back.");
+        const int equips = equip_override_count();
+        snprintf(head, sizeof head, "Restore the game's fusion and Equip recipes?");
+        if (n || psx_fusion_table_cleared() || equips) {
+            snprintf(l1, sizeof l1, "%d fusion edit%s and %d Equip override%s will be removed.",
+                     n, n == 1 ? "" : "s", equips, equips == 1 ? "" : "s");
+            if (n || psx_fusion_table_cleared())
+                snprintf(l2, sizeof l2, "Fusion edits are backed up first; Equip cards return to their disc lists.");
+            else
+                snprintf(l2, sizeof l2, "Every edited Equip card returns to its disc usable-monster list.");
         } else {
-            snprintf(l1, sizeof l1, "There are no edits. This only switches the override off.");
+            snprintf(l1, sizeof l1, "There are no fusion or Equip recipe overrides to restore.");
             l2[0] = 0;
         }
     }
@@ -1822,6 +1828,17 @@ static int equip_clear_all_now(char *err, unsigned cap)
     rebuild_sel();
     snprintf(err, cap, "Cleared every usable-monster list on %d Equip cards. Fusion recipes and other card edits were preserved.", changed);
     return changed > 0;
+}
+
+static int equip_override_count(void)
+{
+    int count = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        PsxCardPack pk;
+        if (psx_card_packs_get(id, &pk) &&
+            (pk.equips_set || pk.equip_types)) count++;
+    }
+    return count;
 }
 
 static int equip_restore_all_now(char *err, unsigned cap)
@@ -1965,10 +1982,21 @@ static void ed_commit(void)
 
 static void restore_stock_now(void)
 {
-    char msg[512];
-    psx_fusion_table_restore_stock(msg, sizeof msg);
+    char msg[512], fusion[384], equips[256];
+    const int equip_count = equip_override_count();
+    if (!equip_restore_all_now(equips, sizeof equips)) {
+        say(equips);
+        return;
+    }
+    psx_fusion_table_restore_stock(fusion, sizeof fusion);
     refresh_index(1);
     rebuild_sel();
+    if (equip_count)
+        snprintf(msg, sizeof msg, "%.330s Restored %d Equip card%s to the disc's usable-monster list%s.",
+                 fusion, equip_count, equip_count == 1 ? "" : "s",
+                 equip_count == 1 ? "" : "s");
+    else
+        snprintf(msg, sizeof msg, "%.380s Every Equip card already uses its disc list.", fusion);
     say(msg);
 }
 
