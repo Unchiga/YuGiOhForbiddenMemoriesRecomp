@@ -18,6 +18,19 @@ cmake --build build-dbg --target psx-runtime     # debug
 cmake --build build     --target psx-runtime     # release
 ```
 
+`build-dbg` is a RELEASE-typed build with the debug tools on (Play.sh's
+documented configure line: `-DCMAKE_BUILD_TYPE=Release -DPSX_REWIND=OFF
+-DPSX_DEBUG_TOOLS=ON`). Check `grep CMAKE_BUILD_TYPE build-dbg/CMakeCache.txt`
+before trusting any timing: on 2026-09-11 it had been reconfigured as `Debug`
+(no optimisation), and because Play.sh prefers build-dbg the player's intro
+FMV ran at 56 fps with the guest thread 93% busy and tens of thousands of
+audio underruns per interval, worse at 2x. Reconfigured back to Release the
+same movie holds 59.9 / 119.9 fps at 1x / 2x with zero underruns. Measure
+with `PSX_RUNTIME_PERF_DIAG=1 PSX_RUNTIME_PERF_DIAG_MS=2000`, whose stdout
+`runtime cadence` lines carry guest Hz, SPU Hz, underruns, and the guest /
+pacer split in ms per second; `audio_stats` on the debug port gives the same
+tap counters.
+
 Only one game holds the debug port. A second launch prints `debug server
 bind(4370) FAILED` and every query keeps going to the OLD process. Verify the
 port before launch, record the exact PID/process handle returned by the test,

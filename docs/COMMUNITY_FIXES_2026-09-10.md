@@ -784,6 +784,25 @@ line and is cut with `...`; the panel is a host overlay, so the raw
 `screenshot` command never shows it and only `present_shot` does; the black
 band under the button row is the stock shop-field art, unchanged.
 
+### Debug build type and FMV audio at 2x
+
+Reported 2026-09-11: the opening movie's audio broke up at 2x and above, and
+had not before. The runtime was not at fault. `build-dbg/CMakeCache.txt` had
+been reconfigured at 01:15 that day as `CMAKE_BUILD_TYPE=Debug`, and Play.sh
+prefers build-dbg, so the player was running an unoptimised runtime. Measured
+on that binary with `audio_stats` and the cadence probe: during the movie the
+guest thread was about 93% busy, 56 of 59.9 fps at 1x and 109 of 119.9 at 2x,
+SPU output 40-42 kHz against a 44.1 kHz sink, 21,213 underruns in 8 s at 1x
+and 48,044 in 12 s at 2x. The optimised release build played the same movie
+at 2x with zero underruns and the guest thread 25-50% busy. build-dbg was
+reconfigured to the documented Release-with-debug-tools form; the rebuilt
+binary (`3ec391e991a169f54fa6d9dbc10f228a70e0008fc273b91a0674e33d0850687c`)
+holds 59.92 / 119.87 fps at 1x / 2x through the movie with zero underruns
+(`/tmp/ygofm-fmv-probe-fixed/results.json`; the Debug-typed runs are
+`/tmp/ygofm-fmv-probe-current` and `/tmp/ygofm-fmv-probe-diag`, the release
+build's cadence log `/tmp/ygofm-fmv-release/runtime.log`). The Sell evidence
+above was gathered on the Debug-typed binary; it exercises logic, not timing.
+
 ### Card descriptions
 
 Generated code, stock strings, and live Library rendering establish an eight
