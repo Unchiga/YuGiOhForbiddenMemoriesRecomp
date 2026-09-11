@@ -1,5 +1,57 @@
 # Release notes
 
+## 0.6.0
+
+Test release. Extract this over your existing install as usual. Your saves,
+save states and settings all carry over.
+
+### Fixed: first run stopped at "Failed to extract toolchain zip" / "tar exit 1"
+
+The setup host downloads a portable cmake/clang pack on a machine that has no
+compiler, then unpacks it. It used to hand that zip to the system's tar (and
+on Linux to unzip first), and judged success by the tool's exit code. GNU tar
+cannot read a zip, so a Linux box without unzip failed; on Windows only
+tar.exe was tried, and under Wine or Proton the stub PowerShell exits 0 having
+extracted nothing. The setup now unpacks the zip with its own built-in
+extractor first on every platform; tar, PowerShell and unzip are fallbacks
+only, and every attempt is judged by whether cmake actually landed. A download
+cut short is reported as an incomplete zip and leaves no half-installed
+directory, and the error names what was tried and how to unpack by hand and
+point the toolchain directory variable at it.
+
+### Card Shop: Sell
+
+Triangle in the Card Shop opens Sell. It lists every card in your trunk with
+the trunk count, the amount to sell and the price per card; Left/Right
+changes one, L1/R1 ten, Square takes every copy of that card, Start selects or
+clears the whole trunk, Triangle views the card. Cross opens a separate
+confirmation screen (SELL NOW / GO BACK) and only a second Cross sells. Cards
+in your deck are never sold. The totals read SALE VALUE, YOU GET and YOU WILL
+HAVE, and the shop stops crediting at the 999,999 StarChip limit. The default
+sell price is one eighth of the card's password price; cards priced 999,999
+sell for 500. Modders can set `sell_price` per card in `card.ini`.
+
+### FM Editor
+
+Bulk equip-recipe authoring, field-spell creature allow-lists, clearing a
+duelist's drop table safely, smart first card drops, drop and duel reward
+authoring, Free Duel completion progress (with a toggle), custom CPU names
+on every title surface, passwords on the card detail views, and an editor
+that fits scaled desktops.
+
+### Netplay
+
+Hidden-information 2P duels: the cover hides the other player's cards and
+hand strip only, and the fusion assistant draws nothing on their turn.
+
+### Also
+
+Audio at 2x stays fed on the software renderer; the app icon is the
+Millennium Puzzle at every size; the runtime moved onto the current upstream
+psxrecomp with the title's private layers carried over (plugin state in
+full-machine snapshots, an explicit quit lifecycle, and protected accelerated
+Form2 disc reads).
+
 ## 0.5.3
 
 Extract this over your existing install as usual. Your saves, save states and
