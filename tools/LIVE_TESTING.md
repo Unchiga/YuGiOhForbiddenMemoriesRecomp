@@ -174,7 +174,10 @@ g['btn'][i]            # button centres: 0 Save, 1 Restore stock, 2 Open folder,
                        # modal: modal_ok / modal_cancel), 13 Dev Card Effects
 g['value'][f]          # field rects [x,y,w,h]: 0 name, 1 description, 2 atk, 3 def,
                        # 4 star1, 5 star2, 6 type, 7 level, 8 attribute, 9 price,
-                       # 10 password, 11 color, then the effect fields
+                       # 10 password, 11 frame, 12 name color, 13 effect,
+                       # 14 amount, 15 target, 16 terrain, 17 ritual,
+                       # 18 equip bonus, 19 equips, 20 boosts,
+                       # 21 field creatures, 22 trap ATK max
 g['modal_ok'], g['modal_cancel']                 # the confirm dialog buttons
 dbg.q({'cmd':'card_manager_set','card':1})       # select a card
 dbg.q({'cmd':'card_manager_set','search':'elf'})
@@ -267,6 +270,39 @@ resolved card 301 + included card 1 as equip kind 2, raised both stats by 500,
 and recorded hook event `{a:301,b:1,out:1}`; excluded card 2 resolved as no
 equip. An intentional all-empty override now remains a valid resident table for
 the Fusion Hint instead of making its readiness probe fail.
+
+Field spells 330 through 335 have a `Field creatures` row on the Cards page's
+Effects tab. Its picker is an explicit card-ID allow-list: search matches card
+ID, edited/display name, effective type, or effective attribute; rows toggle
+individually, while `Select filtered`, `Remove filtered`, `Clear all`, Ctrl+A,
+Delete, Cancel, and Apply support batch work. `card_manager.field_picker`
+reports open/selected/matches/scroll/filter, and
+`card_manager.geom.field_picker` reports the modal, search/list, and button
+geometry. Apply changes only the pending card edit; the ordinary Save button is
+the second step that writes it. The clear `x` on the row removes the override
+and returns to stock type rules.
+
+The canonical `card.ini` key is `field_targets = 1, 2, ...`; `none` is an
+intentional empty list. Old files with no key preserve exact stock behavior.
+Selection is by stable card ID, not a saved type or attribute query, so a later
+unrelated card edit cannot silently add other creatures. At runtime the list
+filters only the signed per-duel-row terrain modifier at `row + 0x14`, for both
+sides. It does not alter base stats, the ordinary modifier at `+0x12`, flags,
+ownership, the field visual, or another terrain. The configured field's normal
+type amount still determines both boosts and penalties; an allowed creature
+whose type has zero for that terrain still receives zero.
+
+Verified 2026-09-10 with a real Umi activation: the board changed to `SEA`;
+included Great White got +500 and Ancient Tool got -500 on both sides, while
+excluded same-type Rare Fish and Ground Attacker Bugroth got zero. Explicit
+empty zeroed all eight modifiers; removing the key live restored the stock
+`+500,+500,-500,-500` result on each side. Save-state removal reconciliation,
+software-rendered picker batch/cancel/empty/save/restart, direct `.ygocards`,
+full `.ygomods`, malformed/future rejection, and the old full-coverage fixture
+all pass. A 722-ID imported list remained fully reachable in the picker,
+cleared pending, and returned intact on Cancel; mixed `none, 60` was rejected
+before replacing it. Evidence is under
+`/tmp/ygofm-field-targets-ui2-ZmHSco/evidence/`.
 
 The Drop Table Manager's top bar is Save, Import, Export, Randomize and a
 view-dependent slot (`geom` rects `save`, `import`, `export`, `randomize`,

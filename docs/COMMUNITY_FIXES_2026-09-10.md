@@ -172,6 +172,40 @@ owner. Exact eight-decimal-digit validation remains enforced; leading-zero
 input saves normally. Evidence is `password-duplicate-v10.json` and
 `password-manager-validation-v11.json`.
 
+### Field-spell creature allow-lists
+
+Cards 330 through 335 now expose `Field creatures` on the Cards page. It is an
+optional, searchable, batch-editable list of stable card IDs with individual
+toggle, Select filtered, Remove filtered, Clear all, Ctrl+A/Delete, Cancel and
+Apply. Apply remains pending until the normal Save, making clear-and-save the
+intentional two-step path. An absent list preserves the disc's type rules
+exactly; `field_targets = none` is a distinct explicit empty list. Existing
+files need no migration, and the canonical key is additive to card.ini,
+`.ygocards`, and `.ygomods`.
+
+The stock path was traced to the signed 20-type by 6-terrain table at
+`0x800909D4` and the dedicated volatile duel-row modifier at `+0x14`. The
+runtime filters that modifier symmetrically for player and opponent without
+changing base/permanent stats, the other modifier, flags/ownership, field
+visuals, or other field spells. The current type's configured/stock amount is
+still authoritative, including penalties. Hot removal and save-state load
+restore stock values instead of leaving filtered rows stale. Stock netplay
+continues to skip the entire card layer and refuses editor/debug mutation while
+preserving the on-disk allow-list byte-for-byte.
+
+`/tmp/ygofm-field-targets-ui2-ZmHSco/evidence/` contains the software-rendered
+picker captures, empty/46-card save and restart, direct and full-package round
+trips, malformed/partial/future cases, old fixture import, save-state removal,
+and live duel results. A real Umi activation changed the visible board to SEA;
+on both sides included card IDs 60 and 124 received +500 and -500, while
+excluded same-type IDs 230 and 275 received zero. Explicit empty yielded all
+zeroes and absence restored stock `+500,+500,-500,-500` per side. A current
+build also imported and displayed all 722 IDs, preserved them on Cancel after
+a pending clear, and rejected mixed `none, 60` before changing files. All 20 shared
+effect cases passed in `/tmp/ygofm-field-targets-effects-2026-09-10/results.json`.
+The isolated stock-netplay check passed with unchanged card 334 hashes on both
+peers in `/tmp/ygofm-field-targets-netplay-policy/stock-policy.json`.
+
 ### Restore all drops to stock
 
 The Drop Tables page has `Restore All Drops to Stock`. It requires two

@@ -94,6 +94,12 @@
 #define HOOK_MAGIC     0x80026BA4u
 #define HOOK_EQUIP     0x80019A08u
 #define STATS_STOCK    0x801D4244u
+#define DUEL_ROWS      0x801A7AD8u
+#define DUEL_ROW_SIZE  0x1Cu
+#define DUEL_TERRAIN   0x8009B364u
+#define ROW_CARD       0x0Cu
+#define ROW_TERRAIN    0x14u
+#define ROW_FLAGS      0x16u
 
 #define SCRATCH_KEY    0xFFFEu
 
@@ -142,6 +148,12 @@ static uint32_t s_state_mem;
 static int s_eq_active, s_eq_dirty, s_eq_bonus, s_eq_card;
 static uint16_t s_scratch_key = SCRATCH_KEY;
 
+/* Optional explicit card-ID eligibility for the active field spell. The
+ * stock game keys gDuel_aTerrainBoost only by monster type; this is applied
+ * to the dedicated per-row terrain modifier, never permanent card stats. */
+static int s_field_filter_active, s_field_filter_terrain;
+static unsigned s_field_filter_writes;
+
 /* hook log for the debug server */
 typedef struct { unsigned frame; uint32_t at; int a, b, out; } Ev;
 static Ev s_ev[16];
@@ -182,6 +194,57 @@ static const Fx *fx_of(int id)
     if (id < 1 || id > CARD_COUNT) return NULL;
     const Fx *f = s_fx[id];
     return (f && f->present) ? f : NULL;
+}
+
+static int field_target_has(const PsxCardPack *c, int id)
+{
+    if (!c || !c->field_targets_set || id < 1 || id > CARD_COUNT) return 0;
+    for (int i = 0; i < c->field_target_n; i++)
+        if ((int)c->field_target_ids[i] == id) return 1;
+    return 0;
+}
+
+static void field_target_apply(int filtered)
+{
+    const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
+    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
+    const PsxCardPack *cfg = (f && f->cfg.field_targets_set) ? &f->cfg : NULL;
+    if (filtered && !cfg) return;
+    for (int side = 0; side < 2; side++) {
+        for (int slot = 0; slot < 5; slot++) {
+            const int row_index = side * 15 + 5 + slot;
+            const uint32_t row = DUEL_ROWS + (uint32_t)row_index * DUEL_ROW_SIZE;
+            if (!(psx_mod_read_half(row + ROW_FLAGS) & 0x8000u)) continue;
+            const int id = (int)(psx_mod_read_half(row + ROW_CARD) & 0x3FFu);
+            const int type = card_type(id);
+            int amount = 0;
+            if (terrain >= 1 && terrain <= 6 && type >= 0 && type < 20 &&
+                (!filtered || field_target_has(cfg, id)))
+                amount = (int)(int8_t)s_want_terrain[type * 6 + terrain - 1] * 10;
+            if ((int)(int16_t)psx_mod_read_half(row + ROW_TERRAIN) != amount) {
+                psx_mod_write_half(row + ROW_TERRAIN, (uint16_t)(int16_t)amount);
+                s_field_filter_writes++;
+                ev(0xF1E1Du, id, side, amount);
+            }
+        }
+    }
+    s_field_filter_terrain = terrain;
+}
+
+static void field_target_tick(void)
+{
+    const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
+    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
+    const int active = f && f->cfg.field_targets_set;
+    if (active) {
+        field_target_apply(1);
+        s_field_filter_active = 1;
+    } else if (s_field_filter_active) {
+        /* Removing an override while its terrain remains active must not leave
+         * zeroed rows stale. Restore the ordinary type result once. */
+        field_target_apply(0);
+        s_field_filter_active = 0;
+    }
 }
 
 static uint8_t clamp_u8(long v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
@@ -280,7 +343,7 @@ const char *psx_card_effects_note(int id, int type)
     if (type == 21) return (id >= 681 && id <= 686) ? "A trap that stops an attacker at or under its ATK ceiling."
                                                      : "This trap is pure code (Goblin Fan, Simochi, Reverse Trap, Fake Trap): nothing to set.";
     if (type == 22 && fx_index(id) >= 0) return "A ritual: three material ids on your field become the result.";
-    if (id >= 330 && id <= 335) return "A field card: each monster type's boost while this field is up.";
+    if (id >= 330 && id <= 335) return "A field card: set each type's boost, then optionally choose exact creature IDs. No list keeps stock type rules.";
     if (type == 20 || type == 22) return (fx_index(id) >= 0) ? "A magic card: pick what it does when played and how much."
                                                             : "Played as a spell: pick what it does and how much (a card born a monster cannot be a ritual or do nothing).";
     if (type < 20) return "Monster effects: how it fights, what it casts when summoned, destroyed, attacking or each turn, bonuses, immunities.";
@@ -413,7 +476,7 @@ static void rebuild(void)
         int present = 0;
         if (have) {
             present = c.effect >= 0 || c.amount >= 0 || c.equip_bonus >= 0 || c.equips_set || c.equip_types ||
-                      c.boost_set || c.trap_atk_max >= 0 || c.ritual_set;
+                      c.boost_set || c.field_targets_set || c.trap_atk_max >= 0 || c.ritual_set;
         }
         if (present) {
             if (!s_fx[id]) s_fx[id] = (Fx *)calloc(1, sizeof(Fx));
@@ -523,6 +586,8 @@ static void tick(void)
     for (int i = 0; i < 120; i++) assert_byte(TERRAIN_TAB + (uint32_t)i, s_want_terrain[i]);
     for (int i = 0; i < 6; i++)   assert_byte(TRAP_TAB + (uint32_t)i, s_want_trap[i]);
     for (int i = 0; i < 101; i++) assert_byte(CLASS_TAB + (uint32_t)i, s_want_class[i]);
+    if (psx_mod_read_byte(MODE_BYTE) == 0xC3u) field_target_tick();
+    else s_field_filter_active = 0;
     if (s_hold.active) {
         const int done = s_frame > s_hold.since + 2 && !(psx_mod_read_half(FX_STATE) & 0x8000u);
         if (psx_mod_read_byte(MODE_BYTE) != 0xC3) {
@@ -818,6 +883,12 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
         char e[560]; snprintf(e, sizeof e, "Field: %s.", list);
         wrap_append(out, cap, e);
     }
+    if (c->field_targets_set) {
+        char e[120];
+        snprintf(e, sizeof e, "Field affects only %d selected creature%s.",
+                 c->field_target_n, c->field_target_n == 1 ? "" : "s");
+        wrap_append(out, cap, e);
+    }
     /* monster effects */
     {
         static const char *const when[6] = { "When summoned face-up", "When flipped face-up", "When destroyed", "When it attacks", "Each of your turns", "Each of the opponent's turns" };
@@ -876,10 +947,12 @@ int psx_card_effects_state_json(char *out, unsigned cap)
         "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u,\"stalled\":%d},"
         "\"holds_stalled\":%d,\"holds_cancelled\":%d,"
         "\"equip_bonus\":{\"active\":%d,\"bonus\":%d,\"card\":%d,\"dirty\":%d},\"scratch_key\":%u,\"frame\":%u,"
+        "\"field_targets\":{\"active\":%d,\"terrain\":%d,\"writes\":%u},"
         "\"fx_state\":%u,\"events\":[",
         s_stock_ok, n_fx, s_equip_override, s_equip_bytes, s_equip_dropped, s_ritual_override, s_ritual_records,
         s_hold.active, s_hold.kind, s_hold.since, s_hold_stalled, s_holds_stalled, s_holds_cancelled,
         s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
+        s_field_filter_active, s_field_filter_terrain, s_field_filter_writes,
         s_stock_ok ? psx_mod_read_half(FX_STATE) : 0);
     const unsigned first = s_ev_n > 16u ? s_ev_n - 16u : 0u;
     for (unsigned i = first; i < s_ev_n && n + 80 < cap; i++) {
@@ -926,6 +999,8 @@ static void state_before_save(void)
     card_state_put(&i, (uint32_t)s_eq_active); card_state_put(&i, (uint32_t)s_eq_dirty);
     card_state_put(&i, (uint32_t)s_eq_bonus); card_state_put(&i, (uint32_t)s_eq_card);
     card_state_put(&i, s_scratch_key);
+    card_state_put(&i, (uint32_t)s_field_filter_active);
+    card_state_put(&i, (uint32_t)s_field_filter_terrain);
 }
 
 static void state_after_load(void)
@@ -936,6 +1011,9 @@ static void state_after_load(void)
     s_malus_dirty = s_hold_amount = s_hold_stalled = 0;
     s_holds_stalled = s_holds_cancelled = 0;
     s_eq_active = s_eq_dirty = s_eq_bonus = s_eq_card = 0;
+    s_field_filter_active = 0;
+    s_field_filter_terrain = 0;
+    s_field_filter_writes = 0;
     s_scratch_key = SCRATCH_KEY; s_ev_n = 0;
     if (magic != CFX_STATE_MAGIC || version != CFX_STATE_VERSION) {
         s_frame = 0; s_rng = 0xA341316Cu;
@@ -952,6 +1030,11 @@ static void state_after_load(void)
     s_eq_active = (int)card_state_get(&i); s_eq_dirty = (int)card_state_get(&i);
     s_eq_bonus = (int)card_state_get(&i); s_eq_card = (int)card_state_get(&i);
     s_scratch_key = (uint16_t)card_state_get(&i);
+    /* These were trailing zeroes in older v1 snapshots. If the saved state
+     * had a filter but the package no longer does, the next tick restores the
+     * stock type result; an old snapshot with no filter remains untouched. */
+    s_field_filter_active = (int)card_state_get(&i);
+    s_field_filter_terrain = (int)card_state_get(&i);
 }
 
 PSX_MOD_CONSTRUCTOR(psx_card_effects_install)

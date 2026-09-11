@@ -316,12 +316,15 @@ static void parse_manifest(const unsigned char *m, PsxCardShareInfo *info)
     }
 }
 
-/* Extract the description value from a card.ini. The pack parser accepts the
- * same three keys. Return -1 for an invalid description, 0 when absent, and
- * its encoded guest-RAM size when valid. */
-static int ini_description_bytes(const unsigned char *data, char *err, unsigned errcap)
+/* Validate fields whose exact spelling/shape matters before an import changes
+ * any files. The runtime's own parsers remain the single source of truth for
+ * the new list; this pass also computes description-arena use. Return -1 for
+ * an invalid card.ini, 0 when its description is absent, or its encoded size. */
+static int ini_description_bytes(int id, const unsigned char *data,
+                                 char *err, unsigned errcap)
 {
     const char *p = (const char *)data;
+    int desc_bytes = 0;
     while (*p) {
         const char *e = strchr(p, '\n');
         const size_t len = e ? (size_t)(e - p) : strlen(p);
@@ -337,19 +340,36 @@ static int ini_description_bytes(const unsigned char *data, char *err, unsigned 
                 char *ke = q + strlen(q);
                 while (ke > q && (ke[-1] == ' ' || ke[-1] == '\t' || ke[-1] == '\r')) *--ke = 0;
                 for (char *k = q; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
+                while (*eq == ' ' || *eq == '\t') eq++;
+                char *ve = eq + strlen(eq);
+                while (ve > eq && (ve[-1] == ' ' || ve[-1] == '\t' || ve[-1] == '\r')) *--ve = 0;
                 if (!strcmp(q, "description") || !strcmp(q, "desc") || !strcmp(q, "text")) {
-                    while (*eq == ' ' || *eq == '\t') eq++;
-                    char *ve = eq + strlen(eq);
-                    while (ve > eq && (ve[-1] == ' ' || ve[-1] == '\t' || ve[-1] == '\r')) *--ve = 0;
                     if (!psx_card_packs_validate_description(eq, err, errcap)) return -1;
-                    return eq[0] ? psx_card_packs_description_bytes(eq) : 0;
+                    desc_bytes = eq[0] ? psx_card_packs_description_bytes(eq) : 0;
+                } else if (!strcmp(q, "password") && eq[0]) {
+                    int valid = strlen(eq) == 8;
+                    for (int i = 0; valid && i < 8; i++)
+                        if (eq[i] < '0' || eq[i] > '9') valid = 0;
+                    if (!valid) {
+                        if (err) snprintf(err, errcap, "password must be exactly eight decimal digits");
+                        return -1;
+                    }
+                } else if (!strcmp(q, "field_targets") ||
+                           !strcmp(q, "terrain_targets") ||
+                           !strcmp(q, "field_allowlist")) {
+                    PsxCardPack parsed; memset(&parsed, 0, sizeof parsed); parsed.id = id;
+                    if (id < 330 || id > 335) {
+                        if (err) snprintf(err, errcap, "only cards 330 through 335 are field spells");
+                        return -1;
+                    }
+                    if (!psx_card_packs_parse_field_targets(eq, &parsed, err, errcap)) return -1;
                 }
             }
         }
         if (!e) break;
         p = e + 1;
     }
-    return 0;
+    return desc_bytes;
 }
 
 static int import_descriptions_fit(const unsigned char *zip, long zip_n,
@@ -366,7 +386,7 @@ static int import_descriptions_fit(const unsigned char *zip, long zip_n,
         char path[1200]; snprintf(path, sizeof path, "%s/%d/card.ini", dir, id);
         long n; unsigned char *d = read_file(path, &n);
         if (!d) continue;
-        const int v = ini_description_bytes(d, NULL, 0);
+        const int v = ini_description_bytes(id, d, NULL, 0);
         if (v > 0) bytes[id] = v;
         free(d);
     }
@@ -376,7 +396,7 @@ static int import_descriptions_fit(const unsigned char *zip, long zip_n,
         if (!parse_card_name(ents[i].name, &id, &file) || file != 0) continue;
         long n; unsigned char *d = zip_extract(zip, zip_n, &ents[i], &n);
         if (!d) { snprintf(err, errcap, "cards/%d/card.ini is damaged", id); return 0; }
-        char why[160]; const int v = ini_description_bytes(d, why, sizeof why); free(d);
+        char why[160]; const int v = ini_description_bytes(id, d, why, sizeof why); free(d);
         if (v < 0) { snprintf(err, errcap, "cards/%d/card.ini: %s", id, why); return 0; }
         bytes[id] = v;
     }

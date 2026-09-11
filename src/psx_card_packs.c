@@ -652,6 +652,30 @@ int psx_card_packs_validate(const PsxCardPack *candidate, char *err, unsigned er
     }
     if (candidate->description[0] &&
         !psx_card_packs_validate_description(candidate->description, err, errcap)) return 0;
+    if (candidate->field_targets_set) {
+        if (candidate->id < 330 || candidate->id > 335) {
+            if (err) snprintf(err, errcap, "Only field-spell cards can have a creature allow-list");
+            return 0;
+        }
+        if (candidate->field_target_n < 0 ||
+            candidate->field_target_n > PSX_CARD_PACK_FIELD_TARGET_MAX) {
+            if (err) snprintf(err, errcap, "A field-spell creature list can contain at most 722 cards");
+            return 0;
+        }
+        uint8_t seen[CARD_COUNT + 1]; memset(seen, 0, sizeof seen);
+        for (int i = 0; i < candidate->field_target_n; i++) {
+            const int id = candidate->field_target_ids[i];
+            if (id < 1 || id > CARD_COUNT) {
+                if (err) snprintf(err, errcap, "Field-spell creature ids are 1 to 722");
+                return 0;
+            }
+            if (seen[id]) {
+                if (err) snprintf(err, errcap, "A field-spell creature list cannot contain duplicate ids");
+                return 0;
+            }
+            seen[id] = 1;
+        }
+    }
     int sizes[CARD_COUNT + 1]; memset(sizes, 0, sizeof sizes);
     for (int id = 1; id <= CARD_COUNT; id++) {
         const char *desc = NULL;
@@ -1111,6 +1135,8 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->equips_set = 0; c->equip_types = 0; c->equip_n = 0;
     c->boost_set = 0;
     for (int t = 0; t < 20; t++) c->boost[t] = PSX_CARD_PACK_BOOST_UNSET;
+    c->field_targets_set = 0;
+    c->field_target_n = 0;
     c->ritual_set = 0;
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
@@ -1208,6 +1234,47 @@ int psx_card_packs_parse_boost(const char *v, PsxCardPack *c, char *err, unsigne
     return 1;
 }
 
+int psx_card_packs_parse_field_targets(const char *v, PsxCardPack *c,
+                                       char *err, unsigned errcap)
+{
+    static char tok[PSX_CARD_PACK_FIELD_TARGET_MAX][48];
+    const int n = split_list(v, tok, PSX_CARD_PACK_FIELD_TARGET_MAX);
+    uint8_t seen[CARD_COUNT + 1];
+    uint16_t list[PSX_CARD_PACK_FIELD_TARGET_MAX];
+    int ids = 0;
+    memset(seen, 0, sizeof seen);
+    for (int i = 0; i < n; i++) {
+        const char *t = tok[i];
+        if (!strcmp(t, "none") || !strcmp(t, "None") || !strcmp(t, "NONE")) {
+            if (n != 1) {
+                seterr(err, errcap, "'none' must be the whole field target list");
+                return 0;
+            }
+            continue;
+        }
+        /* Deliberately card IDs only: type/attribute rules would make a saved
+         * list change meaning after an unrelated card edit. */
+        for (const char *p = t; *p; p++) {
+            if (*p < '0' || *p > '9') {
+                seterr(err, errcap, "field targets are card ids from 1 to 722");
+                return 0;
+            }
+        }
+        const int id = atoi(t);
+        if (id < 1 || id > CARD_COUNT) {
+            seterr(err, errcap, "field targets are card ids from 1 to 722");
+            return 0;
+        }
+        if (seen[id]) continue;       /* canonicalize old/hand-written duplicates */
+        seen[id] = 1;
+        list[ids++] = (uint16_t)id;
+    }
+    c->field_targets_set = 1;
+    c->field_target_n = ids;
+    memcpy(c->field_target_ids, list, (size_t)ids * sizeof list[0]);
+    return 1;
+}
+
 int psx_card_packs_parse_ritual(const char *v, PsxCardPack *c, char *err, unsigned errcap)
 {
     int m[3], r;
@@ -1241,6 +1308,17 @@ void psx_card_packs_format_boost(const PsxCardPack *c, char *out, unsigned cap)
         n += (unsigned)snprintf(out + n, cap - n, "%s%s %+d", n ? ", " : "", TYPE_NAMES[t], c->boost[t]);
         if (n >= cap) break;
     }
+    if (!n) snprintf(out, cap, "none");
+}
+
+void psx_card_packs_format_field_targets(const PsxCardPack *c, char *out,
+                                         unsigned cap)
+{
+    unsigned n = 0;
+    out[0] = 0;
+    for (int i = 0; i < c->field_target_n && n + 8 < cap; i++)
+        n += (unsigned)snprintf(out + n, cap - n, "%s%u", n ? ", " : "",
+                                (unsigned)c->field_target_ids[i]);
     if (!n) snprintf(out, cap, "none");
 }
 
@@ -1314,6 +1392,10 @@ static int read_ini(int id, PsxCardPack *c)
             (void)psx_card_packs_parse_equips(val, c, NULL, 0);
         } else if (!strcmp(key, "boost") || !strcmp(key, "boosts")) {
             (void)psx_card_packs_parse_boost(val, c, NULL, 0);
+        } else if (!strcmp(key, "field_targets") ||
+                   !strcmp(key, "terrain_targets") ||
+                   !strcmp(key, "field_allowlist")) {
+            (void)psx_card_packs_parse_field_targets(val, c, NULL, 0);
         } else if (!strcmp(key, "trap_atk_max") || !strcmp(key, "trap_atk")) {
             const int v = atoi(val); if (v >= 0 && v <= 25500) c->trap_atk_max = v / 100 * 100;
         } else if (!strcmp(key, "ritual") || !strcmp(key, "recipe")) {
@@ -1810,6 +1892,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->equip_bonus >= 0) fprintf(f, "equip_bonus = %d\n", c->equip_bonus);
     if (c->equips_set)     { char b[4096]; psx_card_packs_format_equips(c, b, sizeof b); fprintf(f, "equips = %s\n", b); }
     if (c->boost_set)      { char b[512];  psx_card_packs_format_boost(c, b, sizeof b);  fprintf(f, "boost = %s\n", b); }
+    if (c->field_targets_set) { char b[4096]; psx_card_packs_format_field_targets(c, b, sizeof b); fprintf(f, "field_targets = %s\n", b); }
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);

@@ -20,6 +20,7 @@ extern "C" {
 #define PSX_CARD_PACK_NAME_MAX 40
 #define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 8 x 20 */
 #define PSX_CARD_PACK_EQUIP_MAX   722   /* every monster, by id: the biggest stock groups hold 292 and 621 */
+#define PSX_CARD_PACK_FIELD_TARGET_MAX 722 /* explicit creature ids for one field spell */
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
 #define PSX_CARD_PACK_FILTER_TYPE 1000
@@ -77,6 +78,9 @@ typedef struct {
     uint16_t equip_ids[PSX_CARD_PACK_EQUIP_MAX];
     int  boost_set;                       /* the 20 boosts below apply (field cards 330..335) */
     int  boost[20];                       /* per monster type, -1280..1270, x10; PSX_CARD_PACK_BOOST_UNSET = stock */
+    int  field_targets_set;               /* explicit allow-list replaces type eligibility; absent = exact stock */
+    int  field_target_n;
+    uint16_t field_target_ids[PSX_CARD_PACK_FIELD_TARGET_MAX];
     int  trap_atk_max;                    /* 0..25500; -1 = stock (traps 681..686) */
     int  ritual_set;
     int  ritual_mat[3], ritual_result;    /* card ids */
@@ -194,9 +198,12 @@ int  psx_card_packs_parse_effect(const char *v);
  * Return 1 on success and describe a problem in err when given. */
 int  psx_card_packs_parse_equips(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 int  psx_card_packs_parse_boost(const char *v, PsxCardPack *c, char *err, unsigned errcap);
+/* Comma-separated stable card ids, or "none" for an explicit empty list. */
+int  psx_card_packs_parse_field_targets(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 int  psx_card_packs_parse_ritual(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 void psx_card_packs_format_equips(const PsxCardPack *c, char *out, unsigned cap);
 void psx_card_packs_format_boost(const PsxCardPack *c, char *out, unsigned cap);
+void psx_card_packs_format_field_targets(const PsxCardPack *c, char *out, unsigned cap);
 void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap);
 /* Set every effect field of a pack to unset. */
 void psx_card_packs_effects_reset(PsxCardPack *c);
