@@ -47,6 +47,20 @@ void psx_card_drops_tick(void);
  * awards. Returns 0 and changes nothing if the value is out of range. */
 int  psx_card_drops_set(int drops);
 
+/* Optional first-normal-award filter. It excludes cards owned at three or
+ * more across deck + trunk, preserving the active rank table's relative
+ * weights. The saved preference remains configured during stock netplay but
+ * is not effective there. */
+int  psx_card_drops_smart_set(int enabled);
+int  psx_card_drops_smart_state_json(char *out, unsigned cap);
+
+/* Deterministic, non-mutating distribution probe over the currently resident
+ * tier and ownership. COUNTS and WEIGHTS each have 722 entries. */
+int  psx_card_drops_smart_distribution(
+    int tier, uint32_t seed, int rolls,
+    uint32_t counts[722], uint16_t weights[722],
+    int *eligible, int *excluded, int *fallback, uint32_t *final_seed);
+
 /* ---- debug-server surface ---------------------------------------------- */
 
 /* Why the mod did or did not add cards (`card_drops_state`). Any pointer

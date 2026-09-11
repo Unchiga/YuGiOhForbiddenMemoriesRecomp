@@ -46,6 +46,7 @@ def main():
             packs = peer.q({"cmd": "card_packs"})
             drops = peer.q({"cmd": "drop_edits"})
             story = peer.q({"cmd": "story_rewards"})
+            drop_mode = peer.q({"cmd": "card_drops_state"})
             probes = {
                 "speed_4x": peer.q({"cmd": "game_speed", "mult": 4}),
                 "turbo": peer.q({"cmd": "turbo", "enabled": 1}),
@@ -60,6 +61,7 @@ def main():
                 "story_edit": peer.q({"cmd": "story_rewards", "duelist": 1,
                                       "card": 1, "every": 1}),
                 "drop_count": peer.q({"cmd": "card_drops_set", "drops": 99}),
+                "smart_drop": peer.q({"cmd": "card_drops_set", "smart": 0}),
                 "fill_library": peer.q({"cmd": "fill_library", "on": 1}),
                 "card_set": peer.q({"cmd": "card_packs", "dev": 1}),
                 "monster_effect": peer.q({"cmd": "monster_effects", "fx": 1,
@@ -89,9 +91,14 @@ def main():
                 raise AssertionError((slot, "custom card pack active", packs))
             if drops.get("entries", 0) < 1 or story.get("pairs", 0) < 1:
                 raise AssertionError((slot, "offline edit fixtures missing", drops, story))
+            smart = drop_mode.get("smart", {})
+            if (smart.get("configured") != 1 or smart.get("effective") != 0 or
+                    smart.get("row_enabled") != 0):
+                raise AssertionError((slot, "smart drop netplay policy", drop_mode))
             report["peers"][np.NAMES[slot]] = {
                 "speed": speed, "menus": menus, "card_packs": packs,
                 "drop_edits": drops, "story_rewards": story,
+                "card_drops": drop_mode,
                 "blocked": probes,
             }
     finally:

@@ -48,10 +48,18 @@ int psx_card_inventory_snapshot(PsxCardInventorySnapshot *out)
 
 int psx_card_inventory_owned(int card_id)
 {
-    if (card_id < 1 || card_id > PSX_CARD_INVENTORY_CARDS) return -1;
-    PsxCardInventorySnapshot s;
-    if (!psx_card_inventory_snapshot(&s)) return -1;
-    return (int)s.deck[card_id - 1] + (int)s.trunk[card_id - 1];
+    if (card_id < 1 || card_id > PSX_CARD_INVENTORY_CARDS ||
+        !psx_ygo_save_is_live())
+        return -1;
+    int owned = (int)psx_mod_read_byte(
+        SAVE_LIVE + SAVE_TRUNK_OFF + (uint32_t)(card_id - 1));
+    for (int slot = 0; slot < SAVE_DECK_N; slot++) {
+        const int id = (int)psx_mod_read_half(
+            SAVE_LIVE + (uint32_t)slot * 2u);
+        if (id < 1 || id > PSX_CARD_INVENTORY_CARDS) return -1;
+        if (id == card_id) owned++;
+    }
+    return owned;
 }
 
 int psx_card_inventory_commit_trunk(

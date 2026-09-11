@@ -13,6 +13,7 @@
  * cadence and the same frame stamp the framework rings use.
  */
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -244,6 +245,53 @@ static void handle_card_drops_sim(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,\"tier\":%d,\"drops\":%d,"
              "\"card\":%u,\"granted\":%d,\"bail\":%d}",
              id, tier, drops, card, granted, bail);
+}
+
+/* card_drops_smart_sim tier=N seed=N rolls=N — no award and no guest write.
+ * It runs the exact LCG/11-bit roll over the filtered resident row so large,
+ * reproducible distribution checks do not need thousands of re-entrant guest
+ * calls (which the warning above explicitly forbids). */
+static void handle_card_drops_smart_sim(int id, const char *json)
+{
+    static uint32_t counts[722];
+    static uint16_t weights[722];
+    const int tier = json_get_int(json, "tier", 0);
+    const int rolls = json_get_int(json, "rolls", 10000);
+    const uint32_t seed = (uint32_t)json_get_int(json, "seed", 1);
+    int eligible = 0, excluded = 0, fallback = 0;
+    uint32_t final_seed = 0;
+    if (!psx_card_drops_smart_distribution(
+            tier, seed, rolls, counts, weights,
+            &eligible, &excluded, &fallback, &final_seed)) {
+        send_err(id, "smart simulation needs a live save and valid tier/roll count");
+        return;
+    }
+    char *body = (char *)malloc(96000u);
+    if (!body) { send_err(id, "alloc failed"); return; }
+    unsigned n = 0;
+    uint64_t count_sum = 0;
+    uint32_t weight_sum = 0;
+    int entries = 0;
+    n += (unsigned)snprintf(body + n, 96000u - n, "[");
+    for (int i = 0; i < 722; i++) {
+        count_sum += counts[i];
+        weight_sum += weights[i];
+        if (!weights[i]) continue;
+        n += (unsigned)snprintf(body + n, 96000u - n,
+            "%s{\"id\":%d,\"weight\":%u,\"count\":%u}",
+            entries ? "," : "", i + 1, (unsigned)weights[i],
+            (unsigned)counts[i]);
+        entries++;
+        if (n + 128u >= 96000u) { free(body); send_err(id, "result too long"); return; }
+    }
+    snprintf(body + n, 96000u - n, "]");
+    send_fmt("{\"id\":%d,\"ok\":true,\"tier\":%d,\"seed\":%u,"
+             "\"final_seed\":%u,\"rolls\":%d,\"eligible\":%d,"
+             "\"excluded\":%d,\"fallback\":%d,\"weight_sum\":%u,"
+             "\"count_sum\":%" PRIu64 ",\"entries\":%s}",
+             id, tier, seed, final_seed, rolls, eligible, excluded, fallback,
+             weight_sum, count_sum, body);
+    free(body);
 }
 
 /* fusion_db / fusion_hand / fusion_list / fusion_try — the in-duel fusion
@@ -1348,15 +1396,21 @@ static void handle_card_drops_state(int id, const char *json)
     int new_count = 0, chest_builds = 0, overlays = 0;
     int page_duel = 0, awarded_total = 0;
     uint32_t last_ra = 0;
+    char smart[512];
     psx_card_drops_debug(&setting, &calls, &last_ra, &tier, &granted, &bails,
                          &new_count, &chest_builds, &overlays,
                          &page_duel, &awarded_total);
+    if (!psx_card_drops_smart_state_json(smart, sizeof smart)) {
+        send_err(id, "smart state unavailable"); return;
+    }
     send_fmt("{\"id\":%d,\"ok\":true,\"setting\":%d,\"calls\":%d,"
              "\"last_ra\":\"0x%08X\",\"last_tier\":%d,\"granted\":%d,"
              "\"bails\":%d,\"new_count\":%d,\"chest_builds\":%d,"
-             "\"overlays\":%d,\"page_duel\":%d,\"awarded_total\":%d}",
+             "\"overlays\":%d,\"page_duel\":%d,\"awarded_total\":%d,"
+             "\"smart\":{%s}}",
              id, setting, calls, last_ra, tier, granted, bails,
-             new_count, chest_builds, overlays, page_duel, awarded_total);
+             new_count, chest_builds, overlays, page_duel, awarded_total,
+             smart);
 }
 
 #ifndef PSX_NO_DEBUG_TOOLS
@@ -1454,14 +1508,28 @@ static void handle_card_drops_layout(int id, const char *json)
              id, text_y, split, name_x, num_x, spr_x, spr_y, spr_dy);
 }
 
-/* card_drops_set drops=N — set the CARD DROPS slider live (test loop). */
+/* card_drops_set drops=N and/or smart=0|1 — drive persisted-row behavior in
+ * the live test loop without reaching into module statics. */
 static void handle_card_drops_set(int id, const char *json)
 {
     if (reject_stock_netplay_mutation(id)) return;
-    extern int psx_card_drops_set(int);
     int drops = json_get_int(json, "drops", -1);
-    if (!psx_card_drops_set(drops)) { send_err(id, "bad drops"); return; }
-    send_fmt("{\"id\":%d,\"ok\":true,\"drops\":%d}", id, drops);
+    int smart = json_get_int(json, "smart", -1);
+    if (drops < 0 && smart < 0) { send_err(id, "need drops and/or smart"); return; }
+    if (drops >= 0 && !psx_card_drops_set(drops)) {
+        send_err(id, "bad drops"); return;
+    }
+    if (smart >= 0 && smart > 1) { send_err(id, "smart is 0 or 1"); return; }
+    if (smart >= 0) {
+        (void)psx_card_drops_smart_set(smart);
+        psx_video_menu_note_change();
+    }
+    char state[512];
+    if (!psx_card_drops_smart_state_json(state, sizeof state)) {
+        send_err(id, "state unavailable"); return;
+    }
+    send_fmt("{\"id\":%d,\"ok\":true,\"drops\":%d,\"smart\":{%s}}",
+             id, drops, state);
 }
 
 /* ---- duel-start fade ring -------------------------------------------------
@@ -1600,6 +1668,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_drops_layout", handle_card_drops_layout);
     (void)psx_debug_add_command("card_drops_test",   handle_card_drops_test);
     (void)psx_debug_add_command("card_drops_sim",    handle_card_drops_sim);
+    (void)psx_debug_add_command("card_drops_smart_sim", handle_card_drops_smart_sim);
     (void)psx_debug_add_command("fusion_db",         handle_fusion_db);
     (void)psx_debug_add_command("fusion_hand",       handle_fusion_hand);
     (void)psx_debug_add_command("fusion_list",       handle_fusion_list);

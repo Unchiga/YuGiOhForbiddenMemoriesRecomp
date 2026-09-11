@@ -84,6 +84,52 @@ card 37 as award-order entry zero with `kind: story` and later entries marked
 `normal`. A separate self-launch proof is under
 `story-self-launch-final-v2/results.json`.
 
+### Smart first normal drop
+
+`MODS > Smart first drop` is an optional, persisted setting whose default is
+Off. For the first normal reward only, it excludes weighted cards the player
+already owns at least three of across the 40-card deck and trunk. It uses the
+resident opponent/rank table after Drop Table edits and other transforms, then
+rescales eligible weights to exactly 2048 with deterministic largest-remainder
+rounding and card-ID tie breaking. The guest still performs its one ordinary
+RNG call. The original table is restored byte-for-byte before later normal
+awards, so their table and RNG stream are unchanged.
+
+A guaranteed campaign reward retains position zero. With two or more total
+drops, Smart applies to the first normal reward after it and sees ownership
+after the guaranteed card was awarded; with one total drop there is no normal
+reward to filter. If every weighted card is already owned at least three times,
+the intentional deterministic fallback is one unfiltered roll from the
+selected rank table. There is no retry loop.
+
+Seeded coverage used 1, 2, 16, and 99 drops, ownership counts 0, 1, 2, 3 and
+255, a deck/trunk split of 1+2, all three rank bands, duplicate weights, an
+all-ineligible table, and 100,000-roll distributions. A controlled live Free
+Duel used `1:2000, 2:48`: card 1 was present 40 times in the deck and card 2
+was absent, so award zero was card 2 while the other 15 awards returned to the
+original table (14 card 1, one additional card 2). The results page showed
+Mystical Elf x2 and Blue-eyes White Dragon x14; card 2's New state was true and
+card 1's false. Screenshots and the exact fixture are under
+`/tmp/ygofm-smart-live-filter-EtFaWE/`. A separate live all-ineligible run
+under `/tmp/ygofm-smart-live-duel-G29EGf/` took the unfiltered fallback and
+rendered 16 distinct rewards across multiple result pages without hanging.
+
+The setting survived save/restart and a MOD-package export, clear, import and
+restart/import cycle. The old `full-coverage-2026-09-07.ygomods` fixture, which
+has no Smart key, still imports and leaves the additive default Off. During
+stock netplay the stored On preference remains configured, but effective state
+and row-enabled state are both false; mutation is rejected on both peers and
+the hostile fixture hashes remain unchanged after graceful shutdown. Evidence
+is `/tmp/ygofm-smart-netplay-policy-SdVaeX/stock-policy.json`.
+The consolidated machine-readable result, including exact seeded counts,
+package hash, live award order and screenshot hashes, is
+`/tmp/ygofm-smart-first-final-evidence/results.json`.
+
+Adding the distribution probe exposed the framework debug-command registry's
+silent 64-command ceiling. psxrecomp commit `adbef3b9` raises the fixed registry
+to 128 and adds a capacity/dispatch regression, restoring all previously
+registered title probes.
+
 ### FM Editor
 
 VIEW exposes one `FM Editor` action. Cards, Drop Tables, Fusions, Dialogue,

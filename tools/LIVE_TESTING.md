@@ -703,6 +703,30 @@ the copied authorized slot state and writes this evidence as JSON:
 python3 -B tools/story_reward_regression.py --help
 ```
 
+`card_drops_set` also accepts `smart:0|1`. `card_drops_state.smart` separates
+the persisted `configured` choice from `effective` and `row_enabled`, then
+reports attempts, applied/unchanged/fallback counts, restores, active-table
+state, tier, eligible/excluded counts, surviving source weight and selected
+card. Stock netplay must report configured 1 / effective 0 / row-enabled 0
+when an offline On setting was loaded, reject a debug mutation, and leave the
+settings file byte-identical.
+
+`card_drops_smart_sim` is the non-mutating distribution probe. It takes
+`tier`, `seed`, and `rolls` (1 through 1,000,000), snapshots the live deck and
+trunk, builds the same filtered resident row as gameplay, and returns each
+surviving card's exact rescaled weight and seeded count. Use it for large
+distribution checks instead of thousands of re-entrant guest calls. The
+shipping selection still uses the game's roll routine and one normal RNG call;
+the probe merely makes that probability calculation measurable.
+
+Smart means the first applicable **normal** reward. A story reward stays at
+position zero; Smart starts after it only when another reward exists. Count
+deck plus trunk, with 0/1/2 copies eligible and 3+ excluded. If all weighted
+cards are excluded, expect one unfiltered selected-rank roll and `fallbacks`
+to increment—never a retry. For multi-drop evidence, compare stock and Smart
+from the same seed: only award zero may differ, the tail and final seed must
+match, and the resident 1,444-byte band must be byte-identical before/after.
+
 The Drop Tables page's Restore All Drops to Stock action is separate from
 MODS > Revert to Stock. It needs two activations in ten seconds, resets only
 the 39 x 3 x 722 drop weights, preserves story rewards and other editors, and
