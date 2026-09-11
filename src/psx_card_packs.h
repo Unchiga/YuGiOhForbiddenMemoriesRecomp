@@ -275,6 +275,9 @@ int  psx_card_packs_get(int id, PsxCardPack *out);
  * it, else the game's own. psx_card_db_name() stays the stock name, which is
  * what "back to stock" and the stock snapshots need. */
 const char *psx_card_packs_display_name(int id);
+/* Effective password-screen starchip price: a loaded card.ini override when
+ * present, otherwise the disc value. Returns -1 before the card DB is ready. */
+int psx_card_packs_price(int id);
 /* The two string arenas in the free tail of the game's name blob. The blob's
  * last stock string ends at 0x801D8C66 and 0x801D916F..0x801DA000 is zero in
  * the SLUS and in every state sampled (psx_card_extend.c); 0x801DA000 is NOT

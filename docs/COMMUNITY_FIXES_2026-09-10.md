@@ -262,6 +262,41 @@ its export contained only the exact POW key and no redundant pins for the other
 bands. That state and software capture are under
 `/tmp/ygofm-clear-drop-final-WRiHso/evidence/`.
 
+### Sell Extra Cards
+
+The optional Card Shop now exposes `Triangle: Sell Extras`. Its preview lists
+every affected card, the number sold, the number retained, the effective
+per-card password-screen value, gross value, actual credit, final starchips,
+and any value lost to the 999,999 cap. Up/Down browses the complete list,
+Triangle opens the selected card's ordinary full-card view, Circle cancels
+without mutation, and Cross performs the confirmed batch. A fresh preview is
+required if deck, trunk, starchips, or a listed price changed while it was open.
+
+Forbidden Memories removes deck copies from the trunk, so the shared inventory
+backend counts the 40 live deck slots plus all 722 trunk bytes. For each card,
+the sale retains `min(3, deck + trunk)` total copies and removes only surplus
+trunk copies; it never edits or reconstructs the active deck. If the deck
+already contains three copies, all trunk copies are extra. Sale value is the
+current Cards-page/password price (including a live card.ini override), and a
+zero-value extra is still removed after being shown as zero. Gross arithmetic
+is 64-bit; credited and stored starchips are capped at 999,999 with the lost
+amount stated before confirmation. The player must use the game's normal Save
+flow afterward. The feature has no persistent setting and every mutation path
+is rejected during stock netplay.
+
+Fresh portable software-rendered tests used isolated card images under
+`/tmp/ygofm-sell-extras-ui-lRVRCb/`,
+`/tmp/ygofm-sell-extras-restart-gYdOgb/`, and
+`/tmp/ygofm-sell-extras-shipping-ui-C1iu9x/`. They cover cancellation, stale
+preview rejection, a zero-price override, deck/trunk splits of 0/3 through
+3/255, cap saturation, no extras, card viewing, the actual Card Shop controls,
+the two game Save confirmations, and restart. The restarted save retained the
+original 40 deck slots, all 722 cards had exactly three total copies, the shop
+showed 999,999 starchips, and a new preview reported no extras. An all-722-card
+stress confirmation sold 181,984 trunk copies from 722 card types with gross
+value 30,816,957,390, capped safely, preserved the deck, and again left exactly
+three total copies of every card.
+
 ### Card descriptions
 
 Generated code, stock strings, and live Library rendering establish an eight

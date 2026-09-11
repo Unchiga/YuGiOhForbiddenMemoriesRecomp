@@ -1824,6 +1824,20 @@ const char *psx_card_packs_display_name(int id)
     return psx_card_db_name(id);
 }
 
+int psx_card_packs_price(int id)
+{
+    if (id < 1 || id > CARD_COUNT || !psx_card_db_ready()) return -1;
+    Pack *pk = s_packs[id];
+    if (pk && pk->present && pk->cfg.price >= 0) return pk->cfg.price;
+    uint8_t sec[SECTOR];
+    const uint32_t off = (uint32_t)id * 8u;
+    if (!psx_mod_cd_read_stock_sector(PW_LBA + off / SECTOR, sec)) return -1;
+    const uint8_t *e = sec + off % SECTOR;
+    const uint32_t value = (uint32_t)e[0] | ((uint32_t)e[1] << 8) |
+                           ((uint32_t)e[2] << 16) | ((uint32_t)e[3] << 24);
+    return value <= 999999u ? (int)value : -1;
+}
+
 int psx_card_packs_stock(int id, PsxCardStock *out)
 {
     if (id < 1 || id > CARD_COUNT || !out || !psx_card_db_ready()) return 0;

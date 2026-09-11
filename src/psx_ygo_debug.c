@@ -39,6 +39,7 @@
 #include "psx_mod_package.h"
 #include "psx_story_rewards.h"
 #include "psx_card_manager.h"
+#include "psx_card_shop.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
 #include "psx_card_password_view.h"
@@ -1290,6 +1291,35 @@ static void handle_card_shop(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
+/* card_shop_sell op=preview|confirm|cancel|state. Preview is the exact list
+ * the panel shows and performs no guest write; only confirm mutates. */
+static void handle_card_shop_sell(int id, const char *json)
+{
+    char op[16] = "state", msg[96] = "";
+    (void)json_get_str(json, "op", op, sizeof op);
+    int ok = 1;
+    if (!strcmp(op, "preview")) {
+        ok = psx_card_shop_sell_preview(msg, sizeof msg);
+    } else if (!strcmp(op, "confirm")) {
+        if (reject_stock_netplay_mutation(id)) return;
+        ok = psx_card_shop_sell_confirm(msg, sizeof msg);
+    } else if (!strcmp(op, "cancel")) {
+        psx_card_shop_sell_cancel();
+        snprintf(msg, sizeof msg, "CANCELLED");
+    } else if (strcmp(op, "state")) {
+        send_err(id, "op is preview, confirm, cancel or state");
+        return;
+    }
+    char *buf = (char *)malloc(120000u);
+    if (!buf) { send_err(id, "alloc failed"); return; }
+    if (!psx_card_shop_sell_state_json(buf, 120000u)) {
+        free(buf); send_err(id, "sell state too long"); return;
+    }
+    send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\",%s}",
+             id, ok ? "true" : "false", msg, buf);
+    free(buf);
+}
+
 /* card_shop_card name=<card> — the rarity the config resolved for one card and
  * the pools it actually sits in. "That card came out of the wrong pack" is
  * otherwise only observable by buying packs until it turns up again, and a
@@ -1562,6 +1592,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_edits",        handle_drop_edits);
     (void)psx_debug_add_command("duelist_icons",     handle_duelist_icons);
     (void)psx_debug_add_command("card_shop",         handle_card_shop);
+    (void)psx_debug_add_command("card_shop_sell",    handle_card_shop_sell);
     (void)psx_debug_add_command("card_shop_card",    handle_card_shop_card);
     (void)psx_debug_add_command("card_drops_list",   handle_card_drops_list);
     (void)psx_debug_add_command("card_drops_p3",     handle_card_drops_p3);

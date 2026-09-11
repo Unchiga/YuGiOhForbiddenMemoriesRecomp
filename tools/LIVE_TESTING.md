@@ -113,6 +113,27 @@ next digit (6-frame holds, ~0.5 s apart), cross 12 confirms and shows the card
 (title strip, frame color, art) with CARD NUMBER and the starchip price,
 then an EXCHANGE / QUIT menu. down 6 + cross 12 quits without buying.
 
+CARD SHOP: from CAMPAIGN on the loaded-save menu, Cross enters the shopkeeper
+room. Dismiss `Hello there!`, select CARD SHOP, and dismiss `What are you
+looking for?` to open Buy Card Packs. Triangle opens Sell Extra Cards. The
+preview is read-only: Up/Down browses, Triangle views the selected card, Circle
+cancels, and Cross confirms the batch. It keeps up to three copies total across
+the 40 deck slots and trunk, never changes the deck, uses the effective
+Cards/password price, and shows gross value, credited value, final starchips,
+and cap loss. After a sale, close the panel, move from CARD SHOP to SAVE, and
+confirm both SAVE? and OVERWRITE?; mounting/loading changes the memory-card
+mtime and is not proof that a save occurred. Restart with a new explicit
+portable `--memcard-dir` containing a copy of that saved card.
+
+For deterministic checks, debug command `card_shop_sell` takes `op` equal to
+`preview`, `state`, `confirm`, or `cancel`. Preview returns all entries and
+does not write. Confirm rechecks the snapshotted deck, trunk, starchips and
+listed prices, returning `INVENTORY OR PRICES CHANGED - REVIEW AGAIN` if any
+changed. Confirm is rejected during stock netplay. The inventory addresses are
+live deck `0x801D0200` (40
+u16 card IDs), live trunk `0x801D0250` (722 bytes), and live starchips
+`0x801D07E0` (u32); the save mirror is `+0x3000`. The title cap is 999,999.
+
 Free Duel and duels: `tools/goto_freeduel.py`, `tools/goto_duel.py`,
 `tools/duel_turns.py`. From the loaded-save menu: FREE DUEL, cross 20,
 cross 40 (clears the SELECT OPPONENT prompt) -> grid (mode 0xC6) with the
