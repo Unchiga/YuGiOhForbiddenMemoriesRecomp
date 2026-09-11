@@ -162,6 +162,11 @@ story-first ordering; exact resident-table restore; New markers; and result
 pagination. The 99-drop case exhausted its 40 available copy slots and safely
 skipped the remaining positions. Seeded 100,000-roll checks on each imported
 rank band produced `49780 / 25185 / 25035` for weights `1024 / 512 / 512`.
+The same three-band distribution was repeated against the final debug binary
+in `/tmp/ygofm-smart-distribution-provenance-20260911/results.json` (SHA-256
+`42eb6501c0e545e2cb029989326405d7e882888e3a97e3c3ff822dd1b4a0f966`).
+It records executable SHA-256 `419cb795...`, the explicit USA cue hash, PID
+3162412, port 52677, and a successful `quit_graceful` exit code 0.
 
 The live fixture's displayed S-TEC result nevertheless reached the guest hook
 as effective tier 0. Real-duel filtering is therefore demonstrated at tier 0;
@@ -382,6 +387,21 @@ Because the shared card-effect hook changed, all 20 executable effect cases
 were rerun and passed, including speed, queue saturation, and mid-cast restore;
 the new result is `/tmp/ygofm-equip-effects-2026-09-10/results.json`.
 
+The independent final-binary sweep is
+`/tmp/ygofm-equip-bulk-provenance-v5-20260911/results.json` (SHA-256
+`46bc3a230dd9e07a7dae77f5f6064873cdeaa4954b0ae4dae2ee435fe4250d94`).
+It passes 51 executable checks across stock, empty, two-card and 621-card
+lists; duplicate refusal; searchable picker add/remove/clear/cancel/apply;
+two-step global equip clearing; exact 25,146-recipe preservation; direct and
+full-package round trips; old-package import; and a two-process restart. Both
+owned software-rendered processes used separate verified ports and exited 0
+through `quit_graceful`. The historical in-duel slot does not retain an
+initialized Fusion Hint cache, so that new harness records the probe as
+unsupported; the live included/excluded resolution remains established by the
+earlier screenshots and guest lookup above. Ctrl+A is likewise not claimed by
+the debug injector, which cannot express modifier state; the shipping picker's
+Select filtered button, Delete path, and all mass operations are exercised.
+
 ### Card-view passwords
 
 Password editing already existed on the Cards page. This pass adds the missing
@@ -508,6 +528,21 @@ its export contained only the exact POW key and no redundant pins for the other
 bands. That state and software capture are under
 `/tmp/ygofm-clear-drop-final-WRiHso/evidence/`.
 
+The consolidated final-binary regression is
+`/tmp/ygofm-drop-clear-provenance-v6-20260911/results.json` (SHA-256
+`b72a9d72549bacbbbdf6006655a299495342260bb8d3745a28938acb1b5cab94`).
+It repeats each individual band and all-three two-step clears, every empty
+Save/export refusal, first-card rebuild, seeded Randomize, per-duelist and
+global restore, byte-exact restart, format-2/unversioned compatibility, and
+transactional malformed/future rejection. Its real Free Duel awarded card 1
+from an exact `1:2048` rebuilt table, changed only that trunk byte, and left
+the card-0 sentinel at 2. The copied historical near-results state carried
+non-stock resident weights, so the harness explicitly normalizes only those
+fixture rows to the exact current baked stock hashes before invoking the
+production edit backend; it never writes an edited table directly. Both
+software-rendered owned processes used fresh verified ports and exited 0 via
+`quit_graceful`.
+
 ### Sell Extra Cards
 
 The optional Card Shop now exposes `Triangle: Sell Extras`. Its preview lists
@@ -542,6 +577,18 @@ showed 999,999 starchips, and a new preview reported no extras. An all-722-card
 stress confirmation sold 181,984 trunk copies from 722 card types with gross
 value 30,816,957,390, capped safely, preserved the deck, and again left exactly
 three total copies of every card.
+
+The repeatable final-binary suite is
+`/tmp/ygofm-sell-extras-provenance-v7-20260911/results.json` (SHA-256
+`537ec7d7a57016a05cf563adfa83642f72ec443aac1a7bc093aae78e91ca568d`).
+All 52 assertions pass, including raw live/save-mirror arrays, the complete
+722-card overflow case, zero-value removal, stale inventory and hot-reloaded
+price rejection, Circle cancellation, Triangle preview, Cross confirmation,
+native Save/Overwrite, copied-card restart, and visible no-extras reopening.
+The Card Shop setting is enabled only in the two fresh portable profiles; the
+authorized source card is hashed before and after and remains unchanged. Both
+tracked software-rendered processes used separate verified ports and exited 0
+through `quit_graceful`; the suite retains the native route and panel captures.
 
 ### Card descriptions
 

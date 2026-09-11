@@ -712,11 +712,13 @@ def run_tier_probe(port, output, tier):
 
 def stop(proc, port):
     if proc.poll() is not None:
-        return
+        return {"graceful": proc.returncode == 0,
+                "exit_code": proc.returncode, "already_exited": True}
     try:
         q(port, {"cmd": "quit_graceful"})
         proc.wait(timeout=15)
-        return
+        return {"graceful": proc.returncode == 0,
+                "exit_code": proc.returncode, "already_exited": False}
     except Exception:
         proc.terminate()  # exact owned child only
     try:
@@ -724,6 +726,8 @@ def stop(proc, port):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5)
+    return {"graceful": False, "exit_code": proc.returncode,
+            "already_exited": False}
 
 
 def main():
@@ -921,9 +925,9 @@ def main():
             report["distribution"] = run_distribution(port, args.output)
             print("PASS seeded 100000-roll distribution", flush=True)
     finally:
+        report["process_exit"] = stop(proc, port)
         (args.output / "results.json").write_text(
             json.dumps(report, indent=2) + "\n")
-        stop(proc, port)
         log.close()
     print(f"PASS {len(report['cases'])} actual-duel cases; "
           f"evidence: {args.output / 'results.json'}")
