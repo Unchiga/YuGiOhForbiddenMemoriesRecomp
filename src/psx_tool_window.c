@@ -279,9 +279,13 @@ int psx_fm_editor_state_json(char *out, unsigned cap)
         SDL_GetWindowMinimumSize(s_editor_win, &min_w, &min_h);
         display = SDL_GetWindowDisplayIndex(s_editor_win);
         workarea_estimated = editor_usable_bounds(display, &bounds, &usable);
+        /* Keep this verdict identical to the decorated ``outer`` rectangle
+         * reported below.  Checking only the right/bottom borders let a
+         * window whose title bar overflowed a tightly scaled work area claim
+         * that it fitted. */
         fit = x >= usable.x && y >= usable.y &&
-              x + w + right <= usable.x + usable.w &&
-              y + h + bottom <= usable.y + usable.h;
+              x + w + left + right <= usable.x + usable.w &&
+              y + h + top + bottom <= usable.y + usable.h;
     }
     const int n = snprintf(out, cap,
         "\"open\":%d,\"page\":%d,\"page_name\":\"%s\",\"tabs\":5,"

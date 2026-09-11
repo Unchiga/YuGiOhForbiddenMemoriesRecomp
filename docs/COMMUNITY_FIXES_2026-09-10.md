@@ -50,9 +50,10 @@ VRAM, rollback state, and hashes are not changed.
 Current-binary policy evidence is
 `/tmp/ygofm-final-netplay-20260911-policy-root2/stock-policy.json` (SHA-256
 `b5a5be9b7c9efcdc8bb79c7d39e9a7dfe09dc34d143d1100d8f7c9713f0ba0d0`).
-Both peers exited 0 with requested/effective speed 1, every current mutation
-probe rejected, offline Smart/zero-drop/starchip/CPU/package fixtures still
-loaded but inactive, and no persistent fixture hash change.
+Both peers exited 0 with requested/effective speed 1. Mutation probes were
+rejected, except that a 4x request was accepted only as a clamp back to 1x.
+Offline Smart/zero-drop/starchip/CPU/package fixtures stayed loaded but
+inactive, with no persistent fixture hash change.
 
 Face-down evidence for both owners is in each current `privacy-results.json`:
 
@@ -235,6 +236,20 @@ the exact pre-test monitor modes, scale, priority and placement were restored.
 `tools/fm_editor_desktop_regression.py` makes the five-page containment and
 oversize check repeatable without changing display configuration itself.
 
+A later evidence audit caught a real false positive in the retained 200%
+five-page result: Fusions reasserted a 458-pixel client minimum, leaving its
+decorated outer height (and the following tabs) at 494 against a 492-pixel work
+area, while `fits_usable` omitted the top/left borders. Both defects are fixed.
+The provenance-bound rerun used an isolated KWin virtual output rather than
+changing the restored CRT and is under
+`/tmp/ygofm-fm-editor-virtual-200-provenance-20260911/`: all five pages and the
+oversize case report outer 928x492 within usable 960x492, one window ID, and
+nonempty native captures. `geometry/results.json` SHA-256 is
+`ce3ec23fe57b82e86ca394350e541cd192cce564acd54711cfca5f3f26831553`;
+it binds debug executable SHA-256
+`419cb795feee79d2574f5715565198852c0f3d8774826c8d892eaab661e6c454`,
+and the owned process exited 0 through `quit_graceful`.
+
 ### Free Duel collection progress
 
 The upper-right of the native `FREE DUEL` title now shows the selected CPU's
@@ -301,15 +316,22 @@ reward twice. Loading an older state with no marker starts with no cached
 decision. Leaving results clears every per-duel selector and amount, including
 the debug state for an unmatched stock fallback.
 
-Current-binary follow-up evidence is
-`/tmp/ygofm-final-starchip-savestate-cpu-20260911/` and
+Actual-result evidence covers campaign and Free Duel wins plus a genuine
+CPU-caused loss. The retained boundary duels all resolved S-TEC; other rank
+selectors are covered by rule-editor/import checks rather than claimed as
+separate live duel outcomes.
+
+The corrected focused evidence is
 `/tmp/ygofm-final-starchip-followup2-cpu-20260911/results.json`. A matched 777
 reward changed 100 to 877, survived a save/load after an intervening mutation
 to 43,210, and remained applied exactly once for another 420 result callbacks.
 A nonmatching rule kept 500 with no overlay; an explicit amount zero canceled
-the stock increment and kept 700 while rendering `x0`. The focused result is
-6/6 PASS (SHA-256
+the stock increment and kept 700 while rendering `x0`. That result is 6/6 PASS
+(SHA-256
 `b6279fc1c670141012b6ab4238aca415398323036fed1e45b5b81ed07664dbe4`).
+The preceding `/tmp/ygofm-final-starchip-savestate-cpu-20260911/results.json`
+is retained as a failed harness attempt: it asserted the pre-load debug cache
+instead of the guest-backed state after loading and is not counted as a pass.
 
 Rules and the Smart toggle are additive sections in `drop_table_edits.ini`
 format 3. This keeps weight tables, scripted story rewards, Smart filtering
@@ -464,11 +486,12 @@ last safe stock/mod table, never normalizes the editor back to stock, and hot
 import, clear, restore, and removal now reconcile the resident table without
 requiring a new duel.
 
-Saved rebuilt bands use additive drop-table `format = 2` keys such as
-`pow_table = 1:2028, 2:20`. IDs must be unique, weights positive, and the exact
-sparse list must total 2048. Old unversioned vector/reward files remain valid;
-future versions, empty exact lists, malformed numeric rows, duplicates, and
-wrong totals are rejected transactionally.
+Current rebuilt-band exports use additive drop-table `format = 3` keys such as
+`pow_table = 1:2028, 2:20`. Format 2 is the compatible older sparse form. IDs
+must be unique, weights positive, and the exact sparse list must total 2048.
+Old unversioned vector/reward files remain valid; future versions, empty exact
+lists, malformed numeric rows, duplicates, and wrong totals are rejected
+transactionally.
 
 Software UI, restart, invalid/old/direct round trips, and menu captures are in
 `/tmp/ygofm-clear-drop-live-zyg2yP/evidence/`. Package, randomize/restore, old
@@ -549,13 +572,13 @@ eight-line Library image is
   title build successfully. The function-entry generator change required a
   forced regeneration; all 69 regenerated game shards matched their
   pre-regeneration content. Final SHA-256 values are
-  `64895239c27d97eec774b6b79aa939cd8d8c0c0a5eb79cb753f0669e18e741ba`
+  `89ef0e1f16c8cd1ca4ce1a637773c2b0dd0be849ee2955d7bcf725bd00eafa7a`
   (`psxrecomp-game`),
-  `661ed38c86db0c6a7390053f10d61f2648f7c023394f883df81c3d2f99200d86`
+  `b22d50841a8b47f26a930c09a56b4c1328056a8b7ae61794be09b4046b08ab4d`
   (`psxrecomp-bios`),
-  `da61649a8d2b39f74799bd44ff2573cb819db5fec0cecb8b86b82a546ea3d2a7`
+  `419cb795feee79d2574f5715565198852c0f3d8774826c8d892eaab661e6c454`
   (debug game), and
-  `3d9258dbf178adf8fa76dc3c60ea8f5aa43612120c9bdb9eb016a8aca9f66292`
+  `9f64808f656cf8992542d25eda058e2d631cf02e109919087addc3b3ab624f1c`
   (release game).
 - `build-dbg/menu_preview --selftest`: PASS.
 - Description boundary/live suite: PASS.
@@ -569,8 +592,8 @@ eight-line Library image is
   `/tmp/ygofm-final-followup-cpu-20260911/package-roundtrip.log` (SHA-256
   `15e73f2657725718cd3d2f6bd1f84298749712dc197fa465dc99574a0e91d085`).
 - All 20 executable effect regressions: PASS in
-  `/tmp/ygofm-final-effects-20260910-d/results.json` (aggregate SHA-256
-  `89c612bcec44a40d52b29d33e20fbdde112a20f86b9c03d01836904dbcbb6330`).
+  `/tmp/ygofm-final-effects-20260910-d/results.json` (file SHA-256
+  `89c6a57cac4a874adc9e334cac7e3b78f02c9030f1a9a60726badf2d4a2cd92f`).
 - Offline OpenGL audio speed: PASS at 1x, 2x, 3x, 4x with 59.933, 119.877,
   179.831, and 239.751 game fps and 44,050-44,060 Hz SPU production, with no
   queue underrun/overflow. Evidence is
@@ -579,9 +602,11 @@ eight-line Library image is
   The retained software-renderer run passed 1x but could sustain only 114.844
   fps/42,205 Hz at 2x and recorded 50,675 device underruns; it is not counted
   as a speed pass (`/tmp/ygofm-final-audio-20260911-final/results.json`).
-- Netplay normal, rollback 35/15, and seeded 5 percent loss: PASS on the final
-  debug binary, including both face-down owners, result/trade continuation,
-  graceful carry-back and zero simulator overflow. The old fixed 256-packet
+- Netplay normal, rollback 35/15, and seeded 5 percent loss: PASS on debug
+  binary `da61649a...`, the last build containing guest mutation/serialization
+  changes. The later binary differs only in FM Editor native-window geometry.
+  Coverage includes both face-down owners, result/trade continuation, graceful
+  carry-back and zero simulator overflow. The old fixed 256-packet
   delay queue did overflow in the first 35/15 attempt; recomp-net commit
   `6cf5b01d` expands burst capacity and adds a deterministic 512-packet
   regression (17/17 recomp-net tests pass). psxrecomp commit `0703254c`

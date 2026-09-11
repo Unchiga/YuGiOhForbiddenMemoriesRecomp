@@ -895,6 +895,8 @@ def main():
     print(f"START harness={os.getpid()} game={proc.pid} port={port}",
           flush=True)
     report = {"schema": 1, "pid": proc.pid, "port": port,
+              "executable_sha256": sha(args.exe.read_bytes()),
+              "disc_sha256": sha(args.disc.read_bytes()),
               "fixture": fixture_meta, "command": cmd,
               "cases": [], "tier_probe": None, "distribution": None}
     try:

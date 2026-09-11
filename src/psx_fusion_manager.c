@@ -2480,12 +2480,11 @@ void psx_fusion_manager_open(void)
     if (s_win) { SDL_RaiseWindow(s_win); return; }
     s_win = psx_fm_editor_acquire(PSX_FM_PAGE_FUSIONS, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Fusion manager: no window", 2000); return; }
-    /* Four tables side by side stop being readable well before they stop
-     * being drawable, and a window dragged down to nothing would leave the
-     * panels with negative heights. */
-    (void)SDL_SetWindowMinimumSize(
-        s_win, PSX_FM_EDITOR_MIN_W,
-        PSX_FM_EDITOR_MIN_CONTENT_H + PSX_FM_EDITOR_TAB_H);
+    /* The shared editor owns the minimum. Its normal 720x458 floor keeps the
+     * four panes readable, but on a tightly scaled desktop it may lower that
+     * floor by a few pixels so the complete decorated window still fits.
+     * Reasserting 720x458 here used to undo that adaptive fit for this page
+     * and every tab opened after it. */
     gl_capture();
     s_ren = psx_tool_renderer_create(s_win, "Fusion Manager", -1, &s_ren_software);
     gl_restore();

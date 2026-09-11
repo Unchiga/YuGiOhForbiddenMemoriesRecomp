@@ -279,10 +279,12 @@ Sword moved through stock 63, empty, 2 and all 621 monsters; a duplicate ID was
 rejected without changing the prior list; removing the 42 filtered `Dragon`
 matches stayed pending and Cancel retained all 621. Direct `.ygocards` and full
 `.ygomods` exported byte-identical 621-ID `cards/301/card.ini` files and both
-round-tripped. Clear-all produced zero links for all 34 stock equip cards,
-survived restart, retained all 25,149 imported fusion recipes, and retained
-card 301's imported price, password and colors. Evidence and canvas captures
-are under `/tmp/ygofm-equip-bulk-final-Mp1v8d/`.
+round-tripped. Clear-all produced zero links for all 34 stock equip cards and
+retained all 25,146 fusion recipes. The card-pack writer is field-preserving by
+construction, but this artifact's card 301 member contains only its equip list;
+do not treat it as independent proof for price/password/color preservation or
+a post-clear restart. Evidence and canvas captures are under
+`/tmp/ygofm-equip-bulk-final-Mp1v8d/`.
 
 Large lists are served through the same entry-hook lookup as type and attribute
 rules rather than expanded into the guest's fixed 0x2100-byte equip buffer.
@@ -338,12 +340,14 @@ Choose the same Clear item twice within ten seconds. Debug automation uses
 Empty bands are deliberately pending authoring state. They appear empty in the
 editor but are not written into guest RAM; Save and every export path refuse
 them until a card is added, Randomize is used, or defaults are restored. The
-first added card gets weight 2048. Saved rebuilt bands use drop-table
-`format = 2` exact sparse keys (`pow_table`, `bcd_table`, `tec_table`), while
-unversioned files retain the original vector semantics. Exact lists must have
-unique IDs, positive weights and total 2048. Evidence for the UI/restart and
-real-duel award paths is under `/tmp/ygofm-clear-drop-live-zyg2yP/evidence/`
-and `/tmp/ygofm-clear-drop-duel-nT1Vp9/evidence/`.
+first added card gets weight 2048. Current exports use drop-table `format = 3`
+and exact sparse keys (`pow_table`, `bcd_table`, `tec_table`); format 2 remains
+an accepted older sparse format, while unversioned files retain the original
+vector semantics. Exact lists must have unique IDs, positive weights and total
+2048. Evidence for the UI and real-duel award paths is under
+`/tmp/ygofm-clear-drop-live-zyg2yP/evidence/` and
+`/tmp/ygofm-clear-drop-duel-nT1Vp9/evidence/`; those retained artifacts do not
+independently prove a post-rebuild restart.
 
 Randomize is armed by one click and done by a second within ten seconds;
 `drop_viewer_set` with `randomize`:seed does it in one step, window open or

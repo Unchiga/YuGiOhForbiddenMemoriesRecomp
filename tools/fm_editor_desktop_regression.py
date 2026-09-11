@@ -7,6 +7,7 @@ optional Spectacle captures include the compositor's native decorations.
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -89,6 +90,12 @@ def main():
         help="optional loaded KWin script object, for example /Scripting/Script0",
     )
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--executable", type=Path,
+                        help="running executable, recorded and SHA-256 bound")
+    parser.add_argument("--physical-display",
+                        help="physical mode represented by this run, e.g. 1920x1080")
+    parser.add_argument("--desktop-scale", type=float,
+                        help="desktop scale represented by this run, e.g. 2.0")
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -151,6 +158,18 @@ def main():
             "native_captures_nonempty": bool(args.native),
         },
     }
+    if args.executable:
+        executable = args.executable.resolve()
+        payload = executable.read_bytes()
+        result["executable"] = {
+            "path": str(executable),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+    if args.physical_display:
+        result["physical_display"] = args.physical_display
+    if args.desktop_scale is not None:
+        result["desktop_scale"] = args.desktop_scale
     (args.output / "results.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
