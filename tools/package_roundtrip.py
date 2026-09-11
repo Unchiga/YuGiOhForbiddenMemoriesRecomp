@@ -129,7 +129,7 @@ def state():
     cd = q({'cmd': 'cpu_data'})
     fm = q({'cmd': 'fusion_manager'})
     di = q({'cmd': 'dialogue'})
-    return dict(cards=n_cards, drops=dr.get('entries'), decks=cd.get('decks'), ai=cd.get('ai'),
+    return dict(cards=n_cards, drops=dr.get('entries'), decks=cd.get('decks'), ai=cd.get('ai'), names=cd.get('names'),
                 portraits=cd.get('portraits'), fusion_edits=fm.get('edits'), fusion_applied=fm.get('applied'),
                 dialogue=di.get('translated', di.get('texts_translated', di.get('imported'))),
                 card_drops=q({'cmd': 'card_drops_state'}).get('setting'),
@@ -177,10 +177,16 @@ def main():
         from PIL import Image
         png = io.BytesIO(); Image.new('RGB', (48, 48), (200, 40, 120)).save(png, 'PNG')
         # a CPU import replaces the whole layer, so the zip carries the seed's decks and AI too
-        cpu_ini = zipfile.ZipFile(seed).read('cpu-duelists.ini').decode().replace('[Weevil Underwood]\n', '[Weevil Underwood]\nname = Roundtrip\n', 1)
+        quoted_name = 'Round "Trip"'
+        cpu_ini = zipfile.ZipFile(seed).read('cpu-duelists.ini').decode().replace(
+            '[Weevil Underwood]\n', '[Weevil Underwood]\nname = %s\n' % quoted_name, 1)
         duel = os.path.join(tmp, 'portrait.ygoduelists')
         z = zipfile.ZipFile(duel, 'w'); z.writestr('cpu_manager.ini', cpu_ini); z.writestr('duelists/10/portrait.png', png.getvalue()); z.close()
         print('import portrait ->', q({'cmd': 'cpu_data', 'import': duel})['msg'])
+        cpu_after_name = q({'cmd': 'cpu_data'})
+        weevil = next(row for row in cpu_after_name['duelists'] if row['d'] == 9)
+        check(weevil['shown'] == quoted_name,
+              'CPU rename accepts the full documented glyph set and returns valid JSON')
         # the two inis, through a mini package so the managers reload them
         mini = os.path.join(tmp, 'inis.ygomods')
         write_mini_package(mini, {
@@ -204,7 +210,7 @@ def main():
         print('revert ->', q({'cmd': 'mod_package', 'reset': 1})['msg'])
         time.sleep(3)
         empty = state(); print('after revert:', empty)
-        check(not empty['cards'] and not empty['drops'] and not empty['decks'] and not empty['fusion_edits'], 'Revert to Stock empties every manager')
+        check(not empty['cards'] and not empty['drops'] and not empty['decks'] and not empty['names'] and not empty['fusion_edits'], 'Revert to Stock empties every manager')
         check(empty['card_drops'] == 1 and not empty['fill_library'] and not empty['drop_missing'], 'Revert to Stock puts the settings rows back')
 
         # 5. import A, export B, compare

@@ -1076,7 +1076,11 @@ static void handle_cpu_data(int id, const char *json)
             if (!big) { send_err(id, "oom"); return; }
             uint16_t cards[722], weights[722];
             const int n = psx_cpu_deck_list(d, cards, weights, 722);
-            unsigned p = (unsigned)snprintf(big, CAP, "\"duelist\":%d,\"cards\":%d,\"pool\":[", d, n);
+            char name[PSX_CPU_NAME_MAX * 2 + 8];
+            (void)psx_cpu_display_name_json(d, name, sizeof name);
+            unsigned p = (unsigned)snprintf(big, CAP,
+                "\"duelist\":%d,\"name\":\"%s\",\"cards\":%d,\"pool\":[",
+                d, name, n);
             for (int i = 0; i < n && p + 32u < CAP; i++)
                 p += (unsigned)snprintf(big + p, CAP - p, "%s[%u,%u]", i ? "," : "", cards[i], weights[i]);
             snprintf(big + p, CAP - p, "]");

@@ -75,6 +75,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
+#include "psx_cpu_data.h"
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
 #include "psx_ygo_netplay.h"
@@ -203,9 +204,11 @@ int psx_story_rewards_state_json(char *out, unsigned cap)
         int every = 0;
         const int card = psx_drop_edits_reward(d, &every);
         if (!card) continue;
+        char name[PSX_CPU_NAME_MAX * 2 + 8];
+        (void)psx_cpu_display_name_json(d, name, sizeof name);
         n += (unsigned)snprintf(out + n, cap - n,
             "%s{\"duelist\":%d,\"id\":%d,\"name\":\"%s\",\"card\":%d,\"every\":%d}",
-            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name, card, every);
+            first ? "" : ",", d, d + 1, name, card, every);
         first = 0;
     }
     n += (unsigned)snprintf(out + n, cap - n, "]");

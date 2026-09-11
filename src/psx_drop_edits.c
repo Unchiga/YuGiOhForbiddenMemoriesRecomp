@@ -31,6 +31,7 @@
 
 #include "mod_plugins.h"
 #include "psx_card_db.h"        /* the randomizer draws monsters, so it needs each card's type */
+#include "psx_cpu_data.h"
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
@@ -161,7 +162,7 @@ static int validate_loaded_edits(char *err, unsigned errcap)
             if (rc == 1) continue;
             if (err && errcap) snprintf(err, errcap,
                 "%s %s cannot form a valid 2048-weight table",
-                PSX_DROP_DB[d].name, PSX_DROP_TIER_NAMES[t]);
+                psx_cpu_display_name(d), PSX_DROP_TIER_NAMES[t]);
             return 0;
         }
     }
@@ -457,7 +458,7 @@ int psx_drop_edits_validate(char *err, unsigned errcap)
             if (!psx_drop_edits_band_empty(d, t)) continue;
             if (err && errcap) snprintf(err, errcap,
                 "%s %s is empty; add a card, Randomize, or restore defaults before Save/export",
-                PSX_DROP_DB[d].name, PSX_DROP_TIER_NAMES[t]);
+                psx_cpu_display_name(d), PSX_DROP_TIER_NAMES[t]);
             return 0;
         }
     }

@@ -1445,12 +1445,14 @@ int psx_cpu_manager_state_json(char *out, unsigned cap)
     const Layout *L = &s_L;
     int wins = 0, losses = 0;
     const int have = psx_cpu_record(s_sel, &wins, &losses);
+    char shown[PSX_CPU_NAME_MAX * 2 + 8];
+    (void)psx_cpu_display_name_json(s_sel, shown, sizeof shown);
     unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"view\":\"%s\",\"sel\":%d,\"name\":\"%s\",\"rows\":%d,\"search\":\"%s\","
         "\"record\":[%d,%d],\"has_record\":%d,\"deck_edited\":%d,\"ai_edited\":%d,\"name_edited\":%d,\"dirty\":%d,"
         "\"canvas\":[%d,%d],\"list_rows\":%d,\"hover\":[%d,%d],\"hover_btn\":%d,\"edit\":%d,"
         "\"edit_row\":%d,\"edit_buf\":\"%s\",\"all_cards\":%d,\"menu\":%d,\"msg\":\"%s\"",
-        s_win != NULL, s_view == VIEW_AI ? "ai" : "decks", s_sel, psx_cpu_display_name(s_sel),
+        s_win != NULL, s_view == VIEW_AI ? "ai" : "decks", s_sel, shown,
         s_view == VIEW_AI ? PSX_CPU_AI_BYTES : s_rows_n, s_search,
         wins, losses, have, psx_cpu_deck_edited(s_sel), psx_cpu_ai_edit(s_sel, NULL), psx_cpu_name_edited(s_sel), psx_cpu_dirty(),
         s_w, s_h, s_win ? list_rows() : 0, s_hover_pane, s_hover_row, s_hover_btn,

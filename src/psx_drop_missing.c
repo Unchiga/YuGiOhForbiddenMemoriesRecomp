@@ -39,6 +39,7 @@
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_edits.h"
+#include "psx_cpu_data.h"
 #include "psx_drop_missing_table.h"
 
 #include <stdio.h>
@@ -479,8 +480,7 @@ void psx_drop_missing_tick(void)
         if (ok) {
             g_applied++;
             g_last_duelist = g_matched;
-            snprintf(g_status, sizeof(g_status), "updated %.70s live",
-                     PSX_DROP_DUELISTS[g_matched].name);
+            snprintf(g_status, sizeof(g_status), "updated live");
         }
         return;
     }
@@ -497,7 +497,7 @@ void psx_drop_missing_tick(void)
             g_applied++;
             g_last_duelist = r;
             g_last_fp = resident_fingerprint();  /* our own write is not a change */
-            snprintf(g_status, sizeof(g_status), "applied to %s", PSX_DROP_DUELISTS[r].name);
+            snprintf(g_status, sizeof(g_status), "applied");
         } else {
             g_last_duelist = r;
         }
@@ -512,6 +512,10 @@ int psx_drop_missing_enabled(void) { return g_enabled; }
 int psx_drop_missing_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 160u) return 0;
+    char last_name[PSX_CPU_NAME_MAX * 2 + 8];
+    if (g_last_duelist >= 0)
+        (void)psx_cpu_display_name_json(g_last_duelist, last_name, sizeof last_name);
+    else snprintf(last_name, sizeof last_name, "-");
     return snprintf(out, cap,
         "\"enabled\":%d,\"loaded\":%d,\"from_ini\":%d,\"applied\":%d,"
         "\"fingerprint\":\"0x%08X\",\"matched\":%d,"
@@ -520,7 +524,7 @@ int psx_drop_missing_state_json(char *out, unsigned cap)
         g_enabled, g_loaded, g_from_ini, g_applied,
         g_last_fp, g_matched, g_tier_ok[0], g_tier_ok[1], g_tier_ok[2],
         g_edit_ok[0], g_edit_ok[1], g_edit_ok[2],
-        (g_last_duelist >= 0) ? PSX_DROP_DUELISTS[g_last_duelist].name : "-",
+        last_name,
         g_status);
 }
 

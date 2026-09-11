@@ -337,6 +337,14 @@ def main():
         Image.new('RGB',(48,48),(200,40,120)).save(portrait)
         q({'cmd':'cpu_data','duelist':0,'portrait':str(portrait)})
         q({'cmd':'cpu_data','duelist':0,'name':'Catchup Simon','save':1})
+        time.sleep(.5)
+        cpu = q({'cmd':'cpu_data'})
+        simon = next(row for row in cpu['duelists'] if row['d'] == 0)
+        assert simon['shown'] == 'Catchup Simon', simon
+        # The native FREE DUEL caption looks up global string entry 809.
+        # Its edited offset must point at Simon's fixed name slot before the
+        # screenshot below is accepted as evidence of the game-side rename.
+        assert int.from_bytes(p.rd(0x801D5E52,2),'little') == 0x9CC0
         q({'cmd':'story_rewards','duelist':0,'card':37,'every':1,'save':1})
         q({'cmd':'dialogue_export','path':str(root/'dialogue.txt')})
         dialogue=root/'dialogue.txt'

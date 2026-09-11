@@ -1879,7 +1879,7 @@ static void rclick(int x, int y)
             /* grey ALL CPU row: the duelist does not drop the card yet */
             for (int t = 0; t < NTIER; t++) {
                 snprintf(buf, sizeof buf, "Add to %.24s (%s)",
-                         PSX_DROP_DB[s_rows[i].duelist].name, PSX_DROP_TIER_NAMES[t]);
+                         psx_cpu_display_name(s_rows[i].duelist), PSX_DROP_TIER_NAMES[t]);
                 cmenu_add(buf, CM_ADD, s_rows[i].duelist, s_rows[i].card, t);
             }
         } else if (i >= 0 && i < s_rows_n) {
@@ -2399,6 +2399,19 @@ static void tick(void)
         if (gen != seen_gen) {
             seen_gen = gen;
             if (psx_card_db_ready()) { rebuild_order(); rebuild_rows(); }
+            s_dirty = 1;
+        }
+    }
+    /* A rename is authored on the CPU page, but this page owns several live
+     * name-sorted lists plus the starchip opponent picker. Follow the CPU
+     * backend generation so switching tabs (or importing a MOD package)
+     * immediately resorts and redraws every one of those surfaces. */
+    {
+        static unsigned seen_cpu_gen = (unsigned)-1;
+        const unsigned gen = psx_cpu_generation();
+        if (gen != seen_cpu_gen) {
+            seen_cpu_gen = gen;
+            if (psx_card_db_ready()) { rebuild_duel_order(); rebuild_rows(); }
             s_dirty = 1;
         }
     }
