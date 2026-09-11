@@ -38,6 +38,8 @@ enum {
     PSX_FM_PAGE_COUNT
 };
 #define PSX_FM_EDITOR_TAB_H 38
+#define PSX_FM_EDITOR_MIN_W 720
+#define PSX_FM_EDITOR_MIN_CONTENT_H 420
 SDL_Window *psx_fm_editor_acquire(int page, int content_w, int content_h);
 void psx_fm_editor_release(int page);
 void psx_fm_editor_open_page(int page);
@@ -57,6 +59,13 @@ int psx_fm_editor_state_json(char *out, unsigned cap);
 /* Test/automation input through the same event path as a physical click or
  * Ctrl+1..5. keyboard=0 clicks the tab, nonzero sends the shortcut. */
 int psx_fm_editor_inject_tab(int page, int keyboard);
+/* Native-window test/control seam. Negative x/y/w/h leave that component
+ * unchanged. restore happens before resize/move; maximize and fit happen
+ * afterward. FIT clamps the complete decorated window inside its current
+ * display's usable work area and requests centering where the compositor
+ * permits it. */
+int psx_fm_editor_set_geometry(int x, int y, int w, int h,
+                               int restore, int maximize, int fit);
 #ifdef __cplusplus
 }
 #endif

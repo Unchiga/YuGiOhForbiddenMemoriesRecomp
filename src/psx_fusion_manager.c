@@ -2429,7 +2429,6 @@ static int           s_ren_software;
 static void gl_capture(void) { s_gl_win = SDL_GL_GetCurrentWindow(); s_gl_ctx = SDL_GL_GetCurrentContext(); }
 static void gl_restore(void)
 {
-    if (s_ren_software) return;
     if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx) SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
 }
 
@@ -2484,7 +2483,9 @@ void psx_fusion_manager_open(void)
     /* Four tables side by side stop being readable well before they stop
      * being drawable, and a window dragged down to nothing would leave the
      * panels with negative heights. */
-    (void)SDL_SetWindowMinimumSize(s_win, 720, 420);
+    (void)SDL_SetWindowMinimumSize(
+        s_win, PSX_FM_EDITOR_MIN_W,
+        PSX_FM_EDITOR_MIN_CONTENT_H + PSX_FM_EDITOR_TAB_H);
     gl_capture();
     s_ren = psx_tool_renderer_create(s_win, "Fusion Manager", -1, &s_ren_software);
     gl_restore();

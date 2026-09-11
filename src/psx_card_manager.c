@@ -870,9 +870,9 @@ static void layout_compute(void)
             if (b > need) need = b;
         }
         s_tab = tab;
-        if (need <= s_h || s_u <= 1.0f) break;
+        if (need <= s_h || s_u <= 0.60f) break;
         float u = s_u * (float)s_h / (float)need;
-        if (u < 1.0f) u = 1.0f;
+        if (u < 0.60f) u = 0.60f;
         if (u >= s_u) break;
         s_u = u;
     }
@@ -2808,10 +2808,9 @@ static void gl_capture(void)
     s_gl_win = SDL_GL_GetCurrentWindow();
     s_gl_ctx = SDL_GL_GetCurrentContext();
 }
-static int s_ren_software;      /* the window draws through its own surface: no context to put back */
+static int s_ren_software;
 static void gl_restore(void)
 {
-    if (s_ren_software) return;
     if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx)
         SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
 }
@@ -2828,7 +2827,10 @@ static int ensure_canvas(int w, int h)
     if (!s_tex) { free(s_px); s_px = NULL; s_w = s_h = 0; return 0; }
     s_w = w; s_h = h;
     s_u_base = (float)h / 480.0f;
-    if (s_u_base < 1.0f) s_u_base = 1.0f;
+    /* A 1080p desktop has only 540 logical pixels at 200%. The canvas is
+     * already density-scaled there, so permit smaller design units to keep
+     * every field, action and status line reachable at the minimum size. */
+    if (s_u_base < 0.60f) s_u_base = 0.60f;
     if (s_u_base > 8.0f) s_u_base = 8.0f;
     s_u = s_u_base;
     s_dirty = 1;

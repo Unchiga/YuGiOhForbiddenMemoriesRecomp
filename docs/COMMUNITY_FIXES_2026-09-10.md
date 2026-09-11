@@ -145,9 +145,45 @@ records all five pages and the return to Cards using window ID 6. An unsaved
 3100 ATK edit and search survived the round trip and then saved. Software
 rendering was exercised live for every page, including resize, synthetic
 mouse/keyboard input, reopen, and package operations. Native tool-window
-rendering remains the supported qualification path; the existing OpenGL
-tool-window limitation was not represented as fixed. A 1920x1080 containment
-audit is intentionally left for the next task.
+rendering remains the supported qualification path.
+
+The follow-up 1920x1080 audit exercised the complete compositor-managed FM
+Editor at 100, 125, 150 and 200 percent desktop scale. Initial placement,
+minimum and deliberately oversized resize, maximized state, close/reopen, all
+five tab canvases, native KDE file pickers, long validation text, confirmations
+and the field/equip batch pickers remained reachable. The minimum client is
+720x458; on the 200 percent 960x540 logical desktop it is reduced only as far
+as the actual work area permits. The Cards layout can scale below one design
+unit so its Password, Frame, Name color, actions, status and help do not clip.
+Tab changes retain one native window ID and preserve unsaved page state.
+
+SDL/KWin Wayland reports neither its server-side Breeze decoration size nor
+the bottom-panel work area. The fitter therefore reserves measured
+conservative logical extents (32 top, 4 on the other decoration edges, and 48
+for system UI when SDL reports bounds == usable bounds), plus a horizontal
+placement gutter. The debug state reports both SDL's raw values and these
+effective estimates. An oversize request also exposed KWin moving a full-width
+window to the larger adjacent output; sizes are now clamped against the
+pre-resize display before they reach the compositor.
+
+The page windows use a software SDL renderer by default, including when the
+main game uses OpenGL. Testing found that renderer creation can still disturb
+the current main GL context; all five pages now restore it. This removes the
+previous black tool-window failure, and both software-main/software-tool and
+OpenGL-main/software-tool combinations rendered live. Current OpenGL caveat:
+the editor itself is still intentionally a software tool renderer rather than
+a native OpenGL tool surface.
+
+Machine-readable geometry and canvas/native captures are under
+`/tmp/ygofm-fm-editor-1080-final/`. Final repeated page/oversize runs are in
+`scale-125-final/results.json` and `scale-150-final/results.json`; 100 percent
+minimum/maximized coverage is in `scale-100-v2/results.json`, and the tightest
+200 percent coverage plus all modal/file-dialog/lifecycle cases is split
+between `scale-200-final/results.json` and the JSON files in `scale-200/`.
+`kscreen-original.txt` and `kscreen-restored.txt` are byte-identical, proving
+the exact pre-test monitor modes, scale, priority and placement were restored.
+`tools/fm_editor_desktop_regression.py` makes the five-page containment and
+oversize check repeatable without changing display configuration itself.
 
 ### Continuation: reward-only exports and equip authoring
 

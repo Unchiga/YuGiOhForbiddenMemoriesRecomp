@@ -684,10 +684,34 @@ SIGTERM skips netplay carry-back.
 ## 16. Community-fix probes (2026-09-10)
 
 `fm_editor` is the general shared-window command. `page` is 0 Cards, 1 Drop
-Tables, 2 Fusions, 3 Dialogue, or 4 CPU; `tab` injects a mouse tab click and
-`keytab` uses Ctrl+1 through Ctrl+5. The state reports `window_id`, page, and
-window size. Legacy manager commands remain compatible and select the matching
-page. FM Editor and every legacy entry return a netplay error online.
+Tables, 2 Fusions, 3 Dialogue, or 4 CPU; `click_tab` injects a mouse tab click
+and `key_tab` uses Ctrl+1 through Ctrl+5. Legacy manager commands remain
+compatible and select the matching page. FM Editor and every legacy entry
+return a netplay error online.
+
+The state is also the native-window geometry oracle. It reports logical client
+size/position, drawable pixels, raw and effective decoration borders, complete
+outer rectangle, minimum size, display bounds, usable work area, containment,
+maximize/minimize/resizable flags and fit counters. `x`, `y`, `w`, `h`,
+`restore`, `maximize`, and `fit` drive resize cases; `fit` clamps against the
+window's pre-resize display. On KWin Wayland, `borders_estimated` and
+`workarea_estimated` explain the conservative decoration/panel fallback used
+because the protocol does not expose those desktop extents.
+
+With the desired physical 1920x1080 mode and desktop scale already selected,
+the repeatable five-page/oversize check is:
+
+```sh
+python3 -B tools/fm_editor_desktop_regression.py \
+  --port 4370 --output /tmp/fm-editor-150 \
+  --expected-display 1280x720
+```
+
+Add `--native --kwin-script-object /Scripting/ScriptN` only after loading a
+KWin activation script for `FM Editor`; this lets Spectacle include the native
+title bar and border. The regression tool does **not** alter monitor modes,
+scale, placement, or priority. Always snapshot those separately before a
+physical scale matrix and restore/compare the snapshot when finished.
 
 `card_description_validate` runs the exact planner used by editor save and
 import. The capacity is eight lines by 20 columns. `|`, actual newlines, and a

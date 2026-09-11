@@ -77,7 +77,7 @@ static void handle_netplay_privacy(int id, const char *json)
 
 static void handle_fm_editor(int id, const char *json)
 {
-    char page_name[32], path[1024], state[256];
+    char page_name[32], path[1024], state[1024];
     int page = json_get_int(json, "page", -1);
     if (json_get_str(json, "page_name", page_name, sizeof page_name)) {
         if (!strcmp(page_name, "cards")) page = PSX_FM_PAGE_CARDS;
@@ -91,6 +91,19 @@ static void handle_fm_editor(int id, const char *json)
     else if (page >= 0 || json_get_int(json, "open", -1) == 1) {
         if (psx_ygo_netplay_session()) { send_err(id, "FM Editor unavailable during netplay"); return; }
         psx_fm_editor_open_page(page >= 0 ? page : PSX_FM_PAGE_CARDS);
+    }
+    {
+        const int x = json_get_int(json, "x", -1);
+        const int y = json_get_int(json, "y", -1);
+        const int w = json_get_int(json, "w", -1);
+        const int h = json_get_int(json, "h", -1);
+        const int restore = json_get_int(json, "restore", 0);
+        const int maximize = json_get_int(json, "maximize", 0);
+        const int fit = json_get_int(json, "fit", 0);
+        if ((x >= 0 || y >= 0 || w > 0 || h > 0 || restore || maximize || fit) &&
+            !psx_fm_editor_set_geometry(x, y, w, h, restore, maximize, fit)) {
+            send_err(id, "FM Editor is closed"); return;
+        }
     }
     {
         const int click_tab = json_get_int(json, "click_tab", -1);
