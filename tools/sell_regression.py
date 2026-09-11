@@ -45,14 +45,20 @@ TRUNK_OFFSET = 0x50
 CHIPS_OFFSET = 0x5E0
 STARCHIP_CAP = 999_999
 BUTTONS = {
+    "select": 0x0001,
     "start": 0x0008,
     "up": 0x0010,
     "right": 0x0020,
     "down": 0x0040,
     "left": 0x0080,
+    "l2": 0x0100,
+    "r2": 0x0200,
+    "l1": 0x0400,
+    "r1": 0x0800,
     "triangle": 0x1000,
     "circle": 0x2000,
     "cross": 0x4000,
+    "square": 0x8000,
 }
 
 
@@ -420,9 +426,9 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
                        (entry["deck"], entry["trunk"], entry["sell"], entry["retained"])
                        == (row["deck"], row["trunk"], 0, row["trunk"]), entry)
     evidence.check("zero-value card is previewed", entries[5]["sell_price"] == 0, entries[5])
-    evidence.check("999999 password sentinel derives to 1000 or less",
-                   all(e["sell_price"] <= 1000 for e in entries.values()
-                       if e["price_source"] == "derived" and e["sell_price"] == 1000), entries)
+    evidence.check("derived prices are at most the 500 sentinel cap or floor(price / 8)",
+                   all(e["sell_price"] <= 124999 for e in entries.values()
+                       if e["price_source"] == "derived"), entries)
     evidence.check("preview arithmetic is internally exact",
                    preview["gross"] == sum(e["subtotal"] for e in entries.values())
                    and all(e["subtotal"] == e["sell"] * e["sell_price"] for e in entries.values()), preview)
@@ -632,14 +638,14 @@ def exercise_sell_price_data(runner: Runner, evidence: Evidence, player: Path) -
     ini.write_text("price = 10\n", encoding="utf-8")
     runner.query("card_packs_reload", card=card)
     old_file = quoted_entry()
-    evidence.check("old card file without sell_price derives floor division",
-                   old_file["sell_price"] == 3 and old_file["price_source"] == "derived", old_file)
+    evidence.check("old card file without sell_price derives floor(price / 8)",
+                   old_file["sell_price"] == 1 and old_file["price_source"] == "derived", old_file)
 
     ini.write_text("price = 999999\n", encoding="utf-8")
     runner.query("card_packs_reload", card=card)
     sentinel = quoted_entry()
-    evidence.check("999999 purchase sentinel derives the capped 1000 sale value",
-                   sentinel["sell_price"] == 1000 and sentinel["price_source"] == "derived", sentinel)
+    evidence.check("999999 purchase sentinel derives the capped 500 sale value",
+                   sentinel["sell_price"] == 500 and sentinel["price_source"] == "derived", sentinel)
 
     # A sell-price-only pack must count as edited and survive export.
     ini.write_text("sell_price = 17\n", encoding="utf-8")

@@ -549,6 +549,7 @@ static int      s_vs_valid;
 static uint16_t s_award_q[SHOP_PULL_MAX];
 static int      s_award_n;
 static char     s_msg[80];
+static int      s_msg_tone;          /* 0 error (red), 1 note (grey), 2 success (green) */
 static uint16_t s_stock_entry;       /* table[17] before our repoint        */
 static int      s_say;               /* 0 idle, 1 kick pending, 2 line up   */
 static int      s_say_timer;         /* frames until the pending kick       */
@@ -1277,7 +1278,30 @@ static void fit_text(char *out, size_t cap, const char *src, int max_width)
 #define BOX_C_Y 150
 #define BOX_C_H 80
 
-#define SELL_ROWS 6
+#define SELL_ROWS 5
+
+/* Sell layout, in panel pixels. Content spans SELL_X0..SELL_X1 of the
+ * 304-wide canvas (the frame edges are 8px sprites). The game's own font is
+ * about 9px per capital, so one line holds roughly 31 capitals: the row table
+ * carries name / trunk / sell / price, and the strip under it spells out the
+ * selected card's number, deck count, retained count and price source in
+ * full. Every text line sits on a 13px pitch from SELL_LINE(0); the 12-row
+ * glyphs leave row 12 free, which is where the rules go, so a rule costs no
+ * height. Six-digit prices are 54px wide in this font and the old layout
+ * right-aligned them at x=318 on a 304px canvas, which clipped them. */
+#define SELL_X0 14
+#define SELL_X1 290
+#define SELL_XC 152
+#define SELL_COL_TRUNK 184
+#define SELL_COL_SELL  228
+#define SELL_COL_PRICE 290
+#define SELL_NAME_MAX  (SELL_COL_TRUNK - 45 - 8 - SELL_X0 - 4)
+#define SELL_LINE(k)   (52 + 13 * (k))
+#define SELL_HINT_Y    208
+#define SELL_MSG_LINES 3
+
+#define C_RULE    0xFF6A7490u   /* separators inside the sell panel       */
+#define C_WARN    0xFF5A1E1Eu   /* the confirmation screen's warning band */
 
 static void draw_hint(const PsxSprite *btn, const char *label, int x, int y)
 {
@@ -1285,100 +1309,284 @@ static void draw_hint(const PsxSprite *btn, const char *label, int x, int y)
     put_text(label, x + btn->w + 2, y + 4, C_WHITE);
 }
 
-static void draw_sell_panel(void)
+static int put_text_r(const char *s, int xr, int y, uint32_t tint) {
+    return put_text(s, xr - text_width(s), y, tint);
+}
+static int put_text_c(const char *s, int xc, int y, uint32_t tint) {
+    return put_text(s, xc - text_width(s) / 2, y, tint);
+}
+static void sell_rule(int y) {
+    px_fill(SELL_X0 - 2, y, SELL_X1 - SELL_X0 + 4, 1, C_RULE);
+}
+
+/* Word-wrap into at most max_lines lines of max_width pixels; a word that
+ * is wider than a line on its own is cut with an ellipsis, and so is the
+ * last line when the text needs more lines than there are. */
+static int wrap_text(const char *src, int max_width, char (*lines)[64],
+                     int max_lines)
+{
+    int n = 0;
+    const char *p = src;
+    if (!src || !*src || max_lines < 1) return 0;
+    lines[0][0] = 0;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *e = p;
+        while (*e && *e != ' ') e++;
+        char word[64];
+        snprintf(word, sizeof word, "%.*s", (int)(e - p), p);
+        char trial[64];
+        if (lines[n][0]) snprintf(trial, sizeof trial, "%s %s", lines[n], word);
+        else             snprintf(trial, sizeof trial, "%s", word);
+        if (text_width(trial) <= max_width || !lines[n][0]) {
+            /* fit_text copies src into out, so never alias the two. */
+            if (text_width(trial) > max_width) fit_text(lines[n], 64, trial, max_width);
+            else                               snprintf(lines[n], 64, "%s", trial);
+        } else if (n + 1 < max_lines) {
+            n++;
+            snprintf(lines[n], 64, "%s", word);
+            if (text_width(word) > max_width) fit_text(lines[n], 64, word, max_width);
+        } else {
+            /* Out of lines: keep what fits and mark the cut. */
+            snprintf(trial, sizeof trial, "%s %s", lines[n], word);
+            fit_text(lines[n], 64, trial, max_width);
+            return n + 1;
+        }
+        p = e;
+    }
+    return lines[n][0] ? n + 1 : n;
+}
+
+static uint32_t msg_tint(void) {
+    return s_msg_tone == 2 ? C_GREEN : s_msg_tone == 1 ? C_GREY : C_RED;
+}
+
+/* The three totals lines both sell screens share, so the numbers the player
+ * confirms are the numbers the player edited. Gross and after-sale are full
+ * width (a gross can run to twelve digits); credited and cap loss share a
+ * line because credited is at most six digits. A cap loss too wide for its
+ * half drops the label rather than overprinting it. */
+static void draw_sell_totals(int y)
+{
+    char line[40];
+    const uint64_t loss = s_sell_gross - s_sell_credit;
+    put_text("SALE VALUE", SELL_X0, y, C_GREY);
+    snprintf(line, sizeof line, "%" PRIu64, s_sell_gross);
+    put_text_r(line, SELL_X1, y, s_sell_gross ? C_GOLD : C_GREY);
+
+    put_text("CREDITED", SELL_X0, y + 13, C_GREY);
+    snprintf(line, sizeof line, "%u", s_sell_credit);
+    put_text_r(line, 146, y + 13, C_WHITE);
+    snprintf(line, sizeof line, "%" PRIu64, loss);
+    if (!loss) {
+        put_text("CAP LOSS", 154, y + 13, C_GREY);
+        put_text_r(line, SELL_X1, y + 13, C_GREY);
+    } else if (154 + text_width("CAP LOSS") + 6 + text_width(line) <= SELL_X1) {
+        put_text("CAP LOSS", 154, y + 13, C_RED);
+        put_text_r(line, SELL_X1, y + 13, C_RED);
+    } else {
+        snprintf(line, sizeof line, "%" PRIu64 " LOST", loss);
+        put_text_r(line, SELL_X1, y + 13, C_RED);
+    }
+
+    put_text("AFTER SALE", SELL_X0, y + 26, C_GREY);
+    snprintf(line, sizeof line, "%u", s_sell_after);
+    put_text_r(line, SELL_X1, y + 26, C_GOLD);
+}
+
+static void draw_sell_header(const char *title, uint32_t tint)
 {
     s_img_w = PANEL_W; s_img_h = PANEL_H;
     memset(s_px, 0, sizeof s_px);
     skin_box(0, BOX_A_Y, PANEL_W, BOX_A_H);
     skin_box(0, BOX_B_Y, PANEL_W, PANEL_H - BOX_B_Y);
-    put_text(s_sell_mode == 2 ? "Confirm Sale" : "Sell Cards", 16,
-             BOX_A_Y + 15, C_GOLD);
+    put_text(title, 16, BOX_A_Y + 15, tint);
     skin_blit(&psx_spr_shop_star, 206, BOX_A_Y + 12, 0, 0,
               psx_spr_shop_star.w, psx_spr_shop_star.h);
-    char line[96];
+    char line[40];
     snprintf(line, sizeof line, "x %u", s_sell_snapshot.starchips);
     put_text(line, 226, BOX_A_Y + 16, C_WHITE);
+}
 
-    if (!s_sell_n) {
-        put_text("TRUNK IS EMPTY", 105, 96, C_GOLD);
-        put_text("Deck cards cannot be sold.", 78, 120, C_WHITE);
-        draw_hint(&psx_spr_shop_obtn, "BACK", 122, 190);
-        return;
-    }
+static void draw_sell_message(int y)
+{
+    char lines[SELL_MSG_LINES][64];
+    const int n = wrap_text(s_msg, SELL_X1 - SELL_X0, lines, SELL_MSG_LINES);
+    for (int i = 0; i < n; i++)
+        put_text_c(lines[i], SELL_XC, y + 13 * i, msg_tint());
+}
 
-    int selected_types = 0;
-    for (int i = 0; i < s_sell_n; i++) selected_types += s_sell_entry[i].sell != 0;
-    snprintf(line, sizeof line, "%d CARDS  %u COPIES", selected_types,
-             s_sell_copies);
-    put_text(line, 16, 53, C_WHITE);
-    snprintf(line, sizeof line, "SALE VALUE %" PRIu64, s_sell_gross);
-    put_text(line, 16, 66, C_GOLD);
-    snprintf(line, sizeof line, "CHIPS %u -> %u", s_sell_snapshot.starchips,
-             s_sell_after);
-    put_text(line, 16, 79, C_WHITE);
-    if (s_sell_gross > s_sell_credit) {
-        snprintf(line, sizeof line, "CAP LOSS %" PRIu64,
-                 s_sell_gross - s_sell_credit);
-        put_text(line, 16, 92, C_RED);
-    } else {
-        put_text(s_sell_mode == 2 ? "CROSS APPLIES THE COMPLETE SALE"
-                                  : "DECK COPIES ARE NEVER SOLD", 16, 92,
-                 C_GREY);
-    }
+static void draw_sell_empty(void)
+{
+    draw_sell_header("Sell Cards", C_GOLD);
+    put_text_c("YOUR TRUNK IS EMPTY.", SELL_XC, 92, C_GOLD);
+    put_text_c("THERE IS NOTHING TO SELL.", SELL_XC, 112, C_WHITE);
+    put_text_c("CARDS IN YOUR DECK ARE NEVER SOLD.", SELL_XC, 132, C_GREY);
+    if (s_msg[0]) draw_sell_message(158);
+    const int w = psx_spr_shop_obtn.w + 2 + text_width("BACK");
+    draw_hint(&psx_spr_shop_obtn, "BACK", SELL_XC - w / 2, 190);
+}
+
+/* Quantity editor: totals, a five-row table around the cursor, the selected
+ * card's full strip, and the controls. A pending message takes the strip's
+ * three lines until the next press. */
+static void draw_sell_editor(void)
+{
+    draw_sell_header("Sell Cards", C_GOLD);
+    char line[96];
+    draw_sell_totals(SELL_LINE(0));
+    sell_rule(SELL_LINE(2) + 12);
 
     int first = s_sell_sel - SELL_ROWS / 2;
-    if (first < 0) first = 0;
     if (first > s_sell_n - SELL_ROWS) first = s_sell_n - SELL_ROWS;
     if (first < 0) first = 0;
-    snprintf(line, sizeof line, "%d-%d/%d", first + 1,
-             first + SELL_ROWS < s_sell_n ? first + SELL_ROWS : s_sell_n,
-             s_sell_n);
-    put_text("CARD", 16, 105, C_GREY);
-    put_text(line, 113 - text_width(line), 105, C_GREY);
-    put_text("TRUNK", 147 - text_width("TRUNK"), 105, C_GREY);
-    px_fill(151, 104, 1, 10, C_GREY);
-    put_text("DECK", 181 - text_width("DECK"), 105, C_GREY);
-    px_fill(185, 104, 1, 10, C_GREY);
-    put_text("SELL", 219 - text_width("SELL"), 105, C_GREY);
-    px_fill(223, 104, 1, 10, C_GREY);
-    put_text("LEFT", 257 - text_width("LEFT"), 105, C_GREY);
-    px_fill(261, 104, 1, 10, C_GREY);
-    put_text("PRICE", 318 - text_width("PRICE"), 105, C_GREY);
+    const int hy = SELL_LINE(3);
+    /* Position in the list; "CARD 722 OF 722" would reach the TRUNK tick,
+     * so the word is dropped once the numbers alone need the room. */
+    snprintf(line, sizeof line, "CARD %d OF %d", s_sell_sel + 1, s_sell_n);
+    if (SELL_X0 + 4 + text_width(line) > SELL_COL_TRUNK - 45 - 8)
+        snprintf(line, sizeof line, "%d OF %d", s_sell_sel + 1, s_sell_n);
+    put_text(line, SELL_X0 + 4, hy, C_GREY);
+    put_text_r("TRUNK", SELL_COL_TRUNK, hy, C_GREY);
+    put_text_r("SELL",  SELL_COL_SELL,  hy, C_GREY);
+    put_text_r("PRICE", SELL_COL_PRICE, hy, C_GREY);
+    sell_rule(hy + 12);
+    /* Column ticks sit in the gutters, clear of a six-digit price. */
+    const int tick_h = 12 + 13 * SELL_ROWS + 1;
+    px_fill(SELL_COL_TRUNK - 45 - 4, hy, 1, tick_h, C_SLOT);
+    px_fill(SELL_COL_SELL - 36 - 4,  hy, 1, tick_h, C_SLOT);
+    px_fill(SELL_COL_PRICE - 54 - 4, hy, 1, tick_h, C_SLOT);
 
     for (int r = 0; r < SELL_ROWS && first + r < s_sell_n; r++) {
         const int i = first + r;
-        const int y = 118 + r * 13;
+        const int y = SELL_LINE(4 + r);
         const SellEntry *e = &s_sell_entry[i];
-        if (i == s_sell_sel) px_fill(10, y - 2, PANEL_W - 20, 13, C_SEL);
-        char name[64], fitted[64];
-        snprintf(name, sizeof name, "%03u %s", (unsigned)e->id,
-                 psx_card_packs_display_name(e->id));
-        /* Leave a real gutter before the first numeric column. A one-pixel
-         * gap made a long fitted name read as though its final character was
-         * the SELL count at native resolution. */
-        fit_text(fitted, sizeof fitted, name, 98);
-        put_text(fitted, 16, y, i == s_sell_sel ? C_GOLD : C_WHITE);
+        const int cur = i == s_sell_sel;
+        if (cur) {
+            px_fill(10, y - 2, PANEL_W - 20, 13, C_SEL);
+            px_fill(10, y - 2, 3, 13, C_GOLD);
+        }
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_NAME_MAX);
+        put_text(fitted, SELL_X0 + 4, y, cur ? C_GOLD : C_WHITE);
         snprintf(line, sizeof line, "%u", (unsigned)e->trunk);
-        put_text(line, 147 - text_width(line), y, C_WHITE);
-        snprintf(line, sizeof line, "%u", (unsigned)e->deck);
-        put_text(line, 181 - text_width(line), y, C_WHITE);
+        put_text_r(line, SELL_COL_TRUNK, y, C_WHITE);
         snprintf(line, sizeof line, "%u", (unsigned)e->sell);
-        put_text(line, 219 - text_width(line), y, e->sell ? C_GOLD : C_WHITE);
-        snprintf(line, sizeof line, "%u", (unsigned)e->retained);
-        put_text(line, 257 - text_width(line), y, C_WHITE);
-        snprintf(line, sizeof line, "%u%s", e->value,
-                 e->overridden ? "*" : "");
-        put_text(line, 318 - text_width(line), y, C_GOLD);
+        put_text_r(line, SELL_COL_SELL, y, e->sell ? C_GOLD : C_GREY);
+        if (cur) {
+            /* The editable cell: an outline round the SELL value, the way
+             * the password screen frames the digit the arrows change. */
+            const int bx = SELL_COL_SELL - 36 - 3, bw = 42;
+            px_fill(bx, y - 2, bw, 1, C_GOLD);
+            px_fill(bx, y + 10, bw, 1, C_GOLD);
+            px_fill(bx, y - 2, 1, 13, C_GOLD);
+            px_fill(bx + bw - 1, y - 2, 1, 13, C_GOLD);
+        }
+        snprintf(line, sizeof line, "%u", e->value);
+        put_text_r(line, SELL_COL_PRICE, y,
+                   e->overridden ? C_BLUE : e->value ? C_GOLD : C_GREY);
     }
-    if (s_sell_mode == 2) {
-        draw_hint(&psx_spr_shop_xbtn, "SELL", 88, 208);
-        draw_hint(&psx_spr_shop_obtn, "BACK", 185, 208);
+    /* Scroll position beside the rows once the trunk outgrows the table. */
+    if (s_sell_n > SELL_ROWS) {
+        const int ty = SELL_LINE(4) - 2, th = 13 * SELL_ROWS;
+        px_fill(PANEL_W - 11, ty, 2, th, C_SLOT);
+        int len = th * SELL_ROWS / s_sell_n;
+        if (len < 4) len = 4;
+        const int pos = (th - len) * first / (s_sell_n - SELL_ROWS);
+        px_fill(PANEL_W - 11, ty + pos, 2, len, C_WHITE);
+    }
+    const int sy = SELL_LINE(4 + SELL_ROWS);
+    sell_rule(sy - 1);
+    if (s_msg[0]) {
+        draw_sell_message(sy);
     } else {
-        put_text("L/R 1  L1/R1 10  SQUARE MAX  START ALL", 15, 197, C_GREY);
-        draw_hint(&psx_spr_shop_tbtn, "VIEW", 42, 210);
-        draw_hint(&psx_spr_shop_xbtn, "REVIEW", 113, 210);
-        draw_hint(&psx_spr_shop_obtn, "CANCEL", 211, 210);
+        const SellEntry *e = &s_sell_entry[s_sell_sel];
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_X1 - SELL_X0);
+        put_text(fitted, SELL_X0, sy, C_GOLD);
+        snprintf(line, sizeof line, "No.%03u  DECK %u  KEEP %u  ",
+                 (unsigned)e->id, (unsigned)e->deck, (unsigned)e->retained);
+        const int x = put_text(line, SELL_X0, sy + 13, C_WHITE);
+        put_text(e->overridden ? "OVERRIDE" : "DERIVED", x, sy + 13,
+                 e->overridden ? C_BLUE : C_GREY);
+        put_text("L/R 1 L1/R1 10  SQUARE MAX  START ALL", SELL_X0 - 2,
+                 sy + 26, C_GREY);
     }
+    draw_hint(&psx_spr_shop_tbtn, "VIEW",   30,  SELL_HINT_Y);
+    draw_hint(&psx_spr_shop_xbtn, "REVIEW", 118, SELL_HINT_Y);
+    draw_hint(&psx_spr_shop_obtn, "CANCEL", 214, SELL_HINT_Y);
+}
+
+/* Confirmation: the same totals, a red warning band naming the irreversible
+ * action, and only the cards being sold with their subtotals. Nothing here
+ * is editable, and the only two buttons are SELL NOW and GO BACK. */
+static void draw_sell_confirm(void)
+{
+    draw_sell_header("Confirm Sale", C_RED);
+    px_fill(16, BOX_A_Y + 29, text_width("Confirm Sale"), 1, C_RED);
+    char line[96];
+    draw_sell_totals(SELL_LINE(0));
+    sell_rule(SELL_LINE(2) + 12);
+
+    int types = 0;
+    for (int i = 0; i < s_sell_n; i++) types += s_sell_entry[i].sell != 0;
+    px_fill(10, SELL_LINE(3) - 1, PANEL_W - 20, 27, C_WARN);
+    snprintf(line, sizeof line, "SELL %u COP%s OF %d CARD%s?", s_sell_copies,
+             s_sell_copies == 1 ? "Y" : "IES", types, types == 1 ? "" : "S");
+    put_text_c(line, SELL_XC, SELL_LINE(3), C_WHITE);
+    put_text_c("THIS CANNOT BE UNDONE.", SELL_XC, SELL_LINE(4), C_RED);
+
+    const int hy = SELL_LINE(5) + 2;
+    put_text("CARD", SELL_X0 + 4, hy, C_GREY);
+    put_text_r("SELL",  SELL_COL_TRUNK, hy, C_GREY);
+    put_text_r("VALUE", SELL_COL_PRICE, hy, C_GREY);
+    sell_rule(hy + 12);
+    int shown = 0, y = hy + 13;
+    const int room = 4;
+    for (int i = 0; i < s_sell_n && shown < room; i++) {
+        const SellEntry *e = &s_sell_entry[i];
+        if (!e->sell) continue;
+        if (shown == room - 1 && types > room) break;
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_NAME_MAX);
+        put_text(fitted, SELL_X0 + 4, y, C_WHITE);
+        snprintf(line, sizeof line, "%u", (unsigned)e->sell);
+        put_text_r(line, SELL_COL_TRUNK, y, C_GOLD);
+        snprintf(line, sizeof line, "%" PRIu64, e->subtotal);
+        put_text_r(line, SELL_COL_PRICE, y, e->subtotal ? C_GOLD : C_GREY);
+        shown++; y += 13;
+    }
+    if (types > shown) {
+        snprintf(line, sizeof line, "AND %d MORE CARD%s", types - shown,
+                 types - shown == 1 ? "" : "S");
+        put_text(line, SELL_X0 + 4, y, C_GREY);
+    }
+    const int ny = hy + 13 * (room + 1) + 2;
+    if (s_msg[0])
+        draw_sell_message(ny);
+    else if (!s_sell_gross)
+        put_text_c("SELECTED CARDS HAVE NO SALE VALUE.", SELL_XC, ny, C_RED);
+    else if (s_sell_gross > s_sell_credit)
+        put_text_c("STARCHIPS ABOVE 999999 ARE LOST.", SELL_XC, ny, C_RED);
+    else
+        put_text_c("YOUR DECK IS NOT CHANGED.", SELL_XC, ny, C_GREY);
+    const int w = psx_spr_shop_xbtn.w + 2 + text_width("SELL NOW") + 20 +
+                  psx_spr_shop_obtn.w + 2 + text_width("GO BACK");
+    int x = SELL_XC - w / 2;
+    draw_hint(&psx_spr_shop_xbtn, "SELL NOW", x, SELL_HINT_Y);
+    x += psx_spr_shop_xbtn.w + 2 + text_width("SELL NOW") + 20;
+    draw_hint(&psx_spr_shop_obtn, "GO BACK", x, SELL_HINT_Y);
+}
+
+static void draw_sell_panel(void)
+{
+    if (!s_sell_n)            draw_sell_empty();
+    else if (s_sell_mode == 2) draw_sell_confirm();
+    else                       draw_sell_editor();
 }
 
 static void draw_panel(void) {
@@ -1426,7 +1634,19 @@ static void draw_panel(void) {
         put_text(line, 254, y, C_GOLD);
     }
 
-    if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
+    int msg_lines = 0;
+    if (s_msg[0]) {
+        if (s_pull_n) {
+            put_text(s_msg, 16, BOX_C_Y + 8, C_GREY);
+        } else {
+            /* A sale result or refusal: wrapped, and coloured by outcome
+             * rather than always red (a completed sale is not an error). */
+            char lines[2][64];
+            msg_lines = wrap_text(s_msg, PANEL_W - 32, lines, 2);
+            for (int i = 0; i < msg_lines; i++)
+                put_text(lines[i], 16, BOX_C_Y + 8 + 13 * i, msg_tint());
+        }
+    }
     /* Button hints share the header line with the short "RESULTS:" label,
      * right-aligned. (With the old "LEGENDARY MONSTER:" header there was no
      * room here and the triangle button sat on top of the text.)
@@ -1468,7 +1688,7 @@ static void draw_panel(void) {
         int y = hy;
         if (!s_pull_n && s_msg[0]) {
             x = 37;
-            y = BOX_C_Y + 28;
+            y = BOX_C_Y + 28 + (msg_lines > 1 ? 14 : 0);
         }
         for (int i = 0; i < nbtn; i++) {
             if (i) x += 12;
@@ -1530,16 +1750,16 @@ static void buy(int pack) {
     const int price = s_cfg_price[tier];
     build_pools();
     if (!s_pools_built || !s_pool_n[pack][tier]) {
-        snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET");
+        snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     if (!save_live()) {
-        snprintf(s_msg, sizeof s_msg, "NO SAVE LOADED");
+        snprintf(s_msg, sizeof s_msg, "NO SAVE LOADED"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     const uint32_t chips = psx_mod_read_word(SHOP_CHIPS_ADDR);
     if (chips < (uint32_t)price) {
-        snprintf(s_msg, sizeof s_msg, "NOT ENOUGH CHIPS");
+        snprintf(s_msg, sizeof s_msg, "NOT ENOUGH CHIPS"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     sfx_req(SHOP_SE_BUY);
@@ -1557,7 +1777,7 @@ static void buy(int pack) {
     /* Short label: the rarity and pack are both still on screen in the
      * highlighted row above, and the room this leaves on the header line
      * is what lets the button hints share it. */
-    snprintf(s_msg, sizeof s_msg, "RESULTS:");
+    snprintf(s_msg, sizeof s_msg, "RESULTS:"); s_msg_tone = 1;
     /* The pack-open ceremony: the first card is on the table already;
      * every X flips the next, then the list can be browsed and viewed. */
     s_ceremony = 1;
@@ -1744,14 +1964,28 @@ void psx_card_shop_tick(void) {
         /* The game's card viewer is up: every button is its. The hook
          * clears s_view when the viewer's own Circle closes it. */
     } else if (s_sell_mode) {
-        if (s_sell_mode == 2) {
+        /* A pending message (refusal, result, note) lives until the next
+         * press; the press that produces a new one writes it after this. */
+        if (np && s_msg[0]) { s_msg[0] = 0; s_dirty = 1; }
+        const int was_confirm = s_sell_mode == 2;
+        if (was_confirm) {
             if (np & SHOP_NP_CROSS) {
-                if (sell_confirm(s_msg, sizeof s_msg)) sfx_req(SHOP_SE_BUY);
-                else                                  sfx_req(SHOP_SE_DENY);
+                if (sell_confirm(s_msg, sizeof s_msg)) {
+                    s_msg_tone = 2; sfx_req(SHOP_SE_BUY);
+                } else {
+                    s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+                }
                 s_dirty = 1;
             }
             if (np & SHOP_NP_CIRCLE) {
-                s_sell_mode = 1; sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+                /* GO BACK: to the editor with the quantities kept. This used
+                 * to fall through to the editor's own Circle below and cancel
+                 * the whole session, so BACK on the confirmation threw the
+                 * player's selection away. */
+                s_sell_mode = 1;
+                snprintf(s_msg, sizeof s_msg, "NOTHING SOLD. QUANTITIES KEPT.");
+                s_msg_tone = 1;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
             }
         } else if (s_sell_n) {
             if (np & SHOP_NP_UP) {
@@ -1797,16 +2031,24 @@ void psx_card_shop_tick(void) {
                 s_dirty = 1;
             }
             if (np & SHOP_NP_CROSS) {
-                if (sell_review(s_msg, sizeof s_msg)) sfx_req(SHOP_SE_CURSOR);
-                else                                 sfx_req(SHOP_SE_DENY);
+                /* The confirmation screen states the copies and cards
+                 * itself; its review line would only repeat that. */
+                if (sell_review(s_msg, sizeof s_msg)) {
+                    s_msg[0] = 0; sfx_req(SHOP_SE_CURSOR);
+                } else {
+                    s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+                }
                 s_dirty = 1;
             }
         } else if (np & SHOP_NP_CROSS) {
-            snprintf(s_msg, sizeof s_msg, "TRUNK IS EMPTY");
+            snprintf(s_msg, sizeof s_msg, "TRUNK IS EMPTY"); s_msg_tone = 0;
             sfx_req(SHOP_SE_DENY); s_dirty = 1;
         }
-        if (np & SHOP_NP_CIRCLE) {
-            sell_cancel(); sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+        if (!was_confirm && (np & SHOP_NP_CIRCLE)) {
+            sell_cancel();
+            snprintf(s_msg, sizeof s_msg, "SELL CANCELLED. NOTHING SOLD.");
+            s_msg_tone = 1;
+            sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
         }
         eat |= (uint16_t)(np & (SHOP_NP_UP | SHOP_NP_DOWN | SHOP_NP_LEFT |
                                 SHOP_NP_RIGHT | SHOP_NP_CROSS | SHOP_NP_CIRCLE |
@@ -1847,8 +2089,11 @@ void psx_card_shop_tick(void) {
         if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
         if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
         if (np & SHOP_NP_TRIANGLE) {
-            if (sell_preview_build(s_msg, sizeof s_msg)) sfx_req(SHOP_SE_CURSOR);
-            else                                         sfx_req(SHOP_SE_DENY);
+            if (sell_preview_build(s_msg, sizeof s_msg)) {
+                s_msg[0] = 0; sfx_req(SHOP_SE_CURSOR);
+            } else {
+                s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+            }
             eat |= SHOP_NP_TRIANGLE; s_dirty = 1;
         }
         if (np & SHOP_NP_CROSS) { buy(s_sel); eat |= SHOP_NP_CROSS; s_dirty = 1; }

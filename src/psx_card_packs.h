@@ -279,7 +279,8 @@ const char *psx_card_packs_display_name(int id);
 /* Effective password-screen starchip price: a loaded card.ini override when
  * present, otherwise the disc value. Returns -1 before the card DB is ready. */
 int psx_card_packs_price(int id);
-/* Deterministic stock-compatible sale value for an effective password cost. */
+/* Deterministic sale value for an effective password cost: floor(cost / 8),
+ * and 500 for the 999999 sentinel. */
 int psx_card_packs_derive_sell_price(int purchase_price);
 /* Effective shop sell price. An explicit card.ini `sell_price` wins;
  * otherwise floor(effective password cost / 3) is used, except the stock

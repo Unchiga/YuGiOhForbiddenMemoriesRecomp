@@ -2156,7 +2156,7 @@ static void draw_editor(void)
         } else if (f == F_SELL_PRICE) {
             const int sx = v->x + v->w + px(8.0f);
             psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs),
-                             "derived: floor(Price / 3)", COL_DIM, fs,
+                             "derived: floor(Price / 8)", COL_DIM, fs,
                              right - sx);
         }
     }

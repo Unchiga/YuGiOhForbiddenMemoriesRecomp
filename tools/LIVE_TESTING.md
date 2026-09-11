@@ -118,11 +118,49 @@ room. Dismiss `Hello there!`, select CARD SHOP, and dismiss `What are you
 looking for?` to open Buy Card Packs. Triangle opens Sell. The quantity editor
 is read-only: Up/Down browses, Left/Right changes one, L1/R1 changes ten,
 Square toggles the selected card's maximum, Start toggles the complete trunk,
-Triangle views the selected card, and Circle cancels. Cross opens a separate
-confirmation screen; only a second Cross commits. Every trunk copy can be
-selected, regardless of deck count, and the active deck is never changed. The
-screen shows trunk, deck, sell, retained, per-card sell price, gross value,
-credited value, before/after starchips, and cap loss. After a sale, close the
+L2 clears every quantity, R2 selects every trunk copy, Triangle views the
+selected card, and Circle cancels the whole Sell visit (the pack panel then
+says `SELL CANCELLED. NOTHING SOLD.`). Cross opens a separate confirmation
+screen; only a second Cross commits, and Circle there is GO BACK: it returns
+to the editor with every quantity kept and the note `NOTHING SOLD. QUANTITIES
+KEPT.` (it used to fall through to the editor's Circle and cancel the visit).
+Every trunk copy can be selected, regardless of deck count, and the active
+deck is never changed.
+
+Layout (2026-09-11), all on the 304x230 panel at guest (8,5). The header box
+carries the title and the star readout of the CURRENT starchips. The body
+starts with three totals lines: `SALE VALUE` (gross, full width, up to twelve
+digits), `CREDITED` beside `CAP LOSS` (red once nonzero; a loss too wide for
+its half prints as `N LOST`), then `AFTER SALE`. Under a rule, the table
+header reads `CARD n OF m` / `TRUNK` / `SELL` / `PRICE` with column ticks in
+the gutters, followed by five rows around the cursor (names cut with `...`
+at 113px; six-digit prices are 54px in this font and end at x=290; a derived
+price is gold, an override is blue, a zero price is grey; the cursor row has a
+gold bar, a gold name, and a gold outline round its SELL cell). A two-pixel
+scrollbar on the right appears once the trunk has more than five cards. The
+strip below spells out the selected card: the full name (only "Graveyard and
+the Hand of Invitation" is wider than the 276px line and is cut), then
+`No.NNN  DECK d  KEEP k  DERIVED|OVERRIDE`, then the key line `L/R 1 L1/R1 10
+SQUARE MAX  START ALL`, and the VIEW / REVIEW / CANCEL buttons. Any pending
+message (`SELECT AT LEAST ONE CARD`, `INVENTORY OR PRICES CHANGED - REVIEW
+AGAIN`, the GO BACK note) replaces that strip, word-wrapped and centred on up
+to three lines, red for a refusal and grey for a note, until the next press.
+The confirmation screen keeps the same totals under a red `Confirm Sale`
+title, then a dark-red band `SELL n COPIES OF m CARDS?` / `THIS CANNOT BE
+UNDONE.`, a `CARD / SELL / VALUE` list of only the selected cards (four rows
+plus `AND n MORE CARDS`), one status line (`YOUR DECK IS NOT CHANGED.`,
+`SELECTED CARDS HAVE NO SALE VALUE.` or `STARCHIPS ABOVE 999999 ARE LOST.`),
+and only the SELL NOW / GO BACK buttons. An empty trunk shows `YOUR TRUNK IS
+EMPTY.` / `THERE IS NOTHING TO SELL.` / `CARDS IN YOUR DECK ARE NEVER SOLD.`
+with a BACK button. A completed sale returns to the pack panel with `SOLD n
+COPIES +c CHIPS` in green (wrapped onto two lines when wide); refusals there
+stay red. The raw `screenshot` never contains the panel; use `present_shot`
+(960x755 with the host menu bar, the game area is exactly 3x native).
+`python3 tools/sell_ui_capture.py --card <copy source> --output /tmp/<new>`
+walks every Sell state with controller presses plus a ydotool keyboard pass
+and writes both the composed and the native captures with hashes.
+
+After a sale, close the
 panel, move from CARD SHOP to SAVE, and
 confirm both SAVE? and OVERWRITE?; mounting/loading changes the memory-card
 mtime and is not proof that a save occurred. Restart with a new explicit
@@ -227,8 +265,8 @@ Editing a text field: click its value rect, ctrl+a, type, return, then click
 Save (btn 0). The state json's `msg` is the status line; `edited` says whether
 the selected card has a pack; `name`, `desc`, `atk` ... are the editor's values.
 Sell price is additive: an absent `sell_price` derives
-`floor(effective password Price / 3)`; effective Price 999,999 is the one
-exception and derives 1,000. The Cards page labels the value `derived` or
+`floor(effective password Price / 8)`; effective Price 999,999 is the one
+exception and derives 500. The Cards page labels the value `derived` or
 `override`, and Restore stock removes the override. Valid explicit values
 are 0 through 999,999.
 

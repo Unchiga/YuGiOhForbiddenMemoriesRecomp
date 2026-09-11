@@ -690,14 +690,36 @@ software-rendered owned processes used fresh verified ports and exited 0 via
 The optional Card Shop now exposes `Triangle: Sell`. It lists every card with
 a nonzero trunk count, even when the player has fewer than three total copies.
 Up/Down browses; Left/Right changes one; L1/R1 changes ten; Square toggles the
-selected maximum; Start selects or clears the complete trunk; and Triangle
-uses the ordinary full-card viewer. Each row names trunk count, active-deck
-count, quantity selected, trunk quantity retained, and per-card sell price.
-The header shows gross sale value and StarChips before and after the sale,
-including value lost at the 999,999 cap.
+selected maximum; Start selects or clears the complete trunk; L2 clears and
+R2 selects everything; and Triangle uses the ordinary full-card viewer.
+
+The panel was relaid out on 2026-09-11 for the native 320x240 screen, where
+the game's own font holds about 31 capitals per line. The header carries the
+current StarChips; three totals lines give the gross sale value, the credited
+value beside the value lost at the 999,999 cap (red when nonzero), and the
+balance after the sale. The table header is `CARD n OF m / TRUNK / SELL /
+PRICE` over five rows around the cursor, with column ticks in the gutters, a
+gold cursor bar, a gold outline on the editable SELL cell, and a scrollbar
+once the trunk holds more than five cards. Derived prices are gold, override
+prices blue, and zero prices grey. Six-digit prices now end inside the panel
+(the earlier layout right-aligned them at x=318 on a 304-pixel canvas and
+clipped them). A strip under the table spells out the selected card in full:
+name, `No.NNN`, deck count, trunk copies kept, and `DERIVED` or `OVERRIDE`,
+followed by the key line and the VIEW / REVIEW / CANCEL buttons. Refusals
+and notes (nothing selected, stale inventory or prices, going back from the
+confirmation) replace that strip, word-wrapped and centred on up to three
+lines, until the next press; the old panel never drew them at all.
 
 Circle is always non-mutating. The first Cross enters an explicit confirmation
-screen and a second Cross is required to apply. Confirmation rechecks all 722
+screen and a second Cross is required to apply. The confirmation is visibly a
+different screen: a red `Confirm Sale` title, the same totals, a dark-red band
+`SELL n COPIES OF m CARDS?` / `THIS CANNOT BE UNDONE.`, a `CARD / SELL /
+VALUE` list of only the selected cards, one status line (deck unchanged, no
+sale value, or cap loss), and only SELL NOW / GO BACK. Circle there now
+returns to the editor with every quantity kept; it used to fall through to
+the editor's Circle and cancel the whole visit. An empty trunk gets a
+three-line explanation with BACK, and a completed sale returns to the pack
+panel with `SOLD n COPIES +c CHIPS` in green instead of red. Confirmation rechecks all 722
 trunk bytes, all 40 deck slots, StarChips, and every snapshotted sell price.
 Any stale value cancels the transaction and requires a fresh review. The
 shared commit validates every target before its first write, updates live and
@@ -707,8 +729,9 @@ rejected while the saved offline Card Shop setting remains intact.
 
 Sell price is a single additive `sell_price = 0..999999` field in
 `card.ini`. When absent, the backend uses deterministic floor division of
-the effective integer password purchase price by three. The purchase sentinel
-999,999 is explicitly capped to a 1,000 sell price. The Cards page reports
+the effective integer password purchase price by eight (about one eighth of
+the stock password price). The purchase sentinel 999,999 is explicitly capped
+to a 500 sell price. The Cards page reports
 `derived` versus `override`, and Restore stock deletes the override and
 returns to the derived stock-compatible value. Hot reload, direct card shares,
 full `.ygomods`, and the shop all consume this same backend. Old card files
@@ -728,6 +751,30 @@ Cards-page Restore, native Save/Overwrite, and a separate-process restart.
 Both owned processes (PIDs 3266261/3266780, ports 53775/34987) used copied
 cards and fresh portable directories, exited 0 through `quit_graceful`, and
 the source memory-card hash remained unchanged.
+
+The 2026-09-11 layout and price-formula pass was verified on debug binary
+`69adbc6c870216ffbea6c6d5967576a329165940f06bf1e1519c78c605efaf2d` (release
+`27b1736d2bf4394b1491832b29bda947ffa74e5e67cff26a562a7dc604becfa6`). The
+regression reran green, 77 of 77, as
+`/tmp/ygofm-sell-regression-20260911/results.json` (SHA-256
+`3ce72cb5c91727f618d107403735fbb0fb52b27dcc39e786ee9190b11c047f59`; PIDs
+3305281/3305552, ports 34723/38193, both exit 0 via `quit_graceful`). The
+screen captures come from `tools/sell_ui_capture.py`, whose run
+`/tmp/ygofm-sell-ui-20260911/results.json` (SHA-256
+`1dce997fd7fa9b1b730507fdd7cc5110b24bfb9b494c2448683853a2e9d37d97`; PID
+3304983, port 56023, exit 0) passed 25 of 25 checks with controller presses
+for every binding and a ydotool keyboard pass (X refused with nothing
+selected, Right added one, X reviewed, S went back). Its `screenshots/`
+directory holds the composed 960x755 `ui-ui-<state>.png` and the exact native
+`ui-<state>-native.png` for the empty trunk, quantities 1/10/99/255, long
+names, mixed derived/override prices, zero value, six-digit prices and
+totals, cap loss, confirmation, GO BACK, zero selection, stale transaction,
+cancellation, a completed sale and the 722-card scroll. `menu_preview
+--selftest` passes. Known limits: the card name "Graveyard and the Hand of
+Invitation" is wider than the 276px detail line and is cut with `...`; the
+panel is a host overlay, so the raw `screenshot` command never shows it and
+only `present_shot` does; the black band under the button row is the stock
+shop-field art, unchanged.
 
 ### Card descriptions
 
