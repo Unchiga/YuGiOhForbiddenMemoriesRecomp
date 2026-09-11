@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+import zipfile
 
 from PIL import Image, ImageChops, ImageStat
 
@@ -135,7 +136,13 @@ def main():
         else:
             raise AssertionError("debug server did not start")
 
+        default_boot = q("free_duel_completion")
+        assert default_boot["enabled"] == 0 and not default_boot["visible"], default_boot
+        mods_menu = q("video_menu", menu=6)
+        assert "Free Duel progress" in mods_menu.get("rows", []), mods_menu
         q("game_speed", mult=8)
+        enabled_boot = q("free_duel_completion", enabled=1)
+        assert enabled_boot["enabled"] == 1, enabled_boot
         reference = Image.open(ROOT / "tools/refs/title_80x60.png").convert("L")
         deadline = time.monotonic() + 180
         title_diff = None
@@ -223,6 +230,50 @@ def main():
         assert selected["top_row"] > 0, selected
         composed_shot("03-selected-progress")
 
+        # The overlay consumes the manager backend's effective tables and its
+        # generation counter, not an independent UI copy. Replace all three
+        # selected-opponent bands with one card and require 1 immediately;
+        # restore while the MODS toggle is Off, then require the stock count
+        # as soon as the toggle returns On.
+        edited_fixture = scratch / "completion-one-card.ygodrops.ini"
+        edited_fixture.write_text(
+            "format = 3\n[Duel Master K]\n"
+            "pow_table = 1:2048\n"
+            "bcd_table = 1:2048\n"
+            "tec_table = 1:2048\n", encoding="utf-8")
+        blank_fixture = scratch / "completion-stock.ygodrops.ini"
+        blank_fixture.write_text("format = 3\n", encoding="utf-8")
+        imported_edit = q("drop_viewer_set", **{"import": str(edited_fixture)})
+        assert imported_edit["ok"], imported_edit
+        deadline = time.monotonic() + 5
+        edited_count = None
+        while time.monotonic() < deadline:
+            edited_count = q("free_duel_completion")
+            if (edited_count["obtainable"] == 1 and
+                    edited_count["edit_gen"] > selected["edit_gen"]):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"drop edit did not update completion: {edited_count}")
+        composed_shot("04-drop-edit-live-one-card")
+
+        edit_disabled = q("free_duel_completion", enabled=0)
+        assert not edit_disabled["visible"], edit_disabled
+        imported_stock = q("drop_viewer_set", **{"import": str(blank_fixture)})
+        assert imported_stock["ok"], imported_stock
+        q("free_duel_completion", enabled=1)
+        deadline = time.monotonic() + 5
+        restored_count = None
+        while time.monotonic() < deadline:
+            restored_count = q("free_duel_completion")
+            if restored_count["visible"] and \
+                    restored_count["obtainable"] == selected["obtainable"]:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"Off-time drop restore was stale: {restored_count}")
+        composed_shot("05-drop-edit-cleared-while-off")
+
         # Scratch-process-only completion fixture: own every card in live and
         # mirror trunks. The source memory card is only a copied seed.
         all_owned = bytes([1]) * 722
@@ -238,7 +289,7 @@ def main():
         else:
             raise AssertionError(f"completion state did not update: {complete}")
         before_frame = complete["frame"]
-        first_complete = composed_shot("04-complete-frame-a")
+        first_complete = composed_shot("06-complete-frame-a")
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             animated = q("free_duel_completion")
@@ -247,27 +298,82 @@ def main():
             time.sleep(0.05)
         else:
             raise AssertionError(f"border frame did not animate: {animated}")
-        second_complete = composed_shot("05-complete-frame-b")
-        assert ImageChops.difference(first_complete.convert("RGB"),
-                                     second_complete.convert("RGB")).getbbox(), \
-            "animated composed captures are identical"
+        second_complete = None
+        for visual_try in range(8):
+            second_complete = composed_shot(
+                f"07-complete-frame-b-{visual_try + 1}")
+            if ImageChops.difference(first_complete.convert("RGB"),
+                                     second_complete.convert("RGB")).getbbox():
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("animated composed captures stayed identical")
 
         scrolled = q("free_duel_completion")
         assert scrolled["top_row"] > 0, scrolled
         assert scrolled["borders"] > 0, scrolled
-        composed_shot("06-scrolled-complete")
+        composed_shot("08-scrolled-complete")
+
+        # The whole feature is one persisted MODS switch: Off removes both
+        # the selected ratio and every portrait frame, then On rebuilds the
+        # current screen without requiring a re-entry. A .ygomods bundle owns
+        # the same key through the menu's single settings serializer.
+        disabled = q("free_duel_completion", enabled=0)
+        assert disabled["enabled"] == 0 and not disabled["visible"], disabled
+        off_image = composed_shot("09-toggle-off-stock-grid")
+        assert ImageChops.difference(second_complete.convert("RGB"),
+                                     off_image.convert("RGB")).getbbox(), \
+            "turning completion progress off left the composed view unchanged"
+        reenabled = q("free_duel_completion", enabled=1)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            reenabled = q("free_duel_completion")
+            if reenabled["visible"] and reenabled["complete"] and reenabled["borders"]:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"toggle did not rebuild the overlay: {reenabled}")
+        composed_shot("10-toggle-on-restored")
+
+        q("menu_settings_save")
+        settings_paths = [player / "menu_settings.ini", exe.parent / "menu_settings.ini"]
+        settings_path = next((p for p in settings_paths if p.exists()), None)
+        assert settings_path is not None, settings_paths
+        settings_text = settings_path.read_text(encoding="utf-8")
+        assert "free_duel_progress=1" in settings_text.replace(" ", ""), settings_text
+
+        package = scratch / "free-duel-progress.ygomods"
+        exported = q("mod_package", export=str(package))
+        assert package.exists() and package.stat().st_size, exported
+        with zipfile.ZipFile(package) as zf:
+            package_settings = zf.read("mod_settings.ini").decode("utf-8")
+        assert "free_duel_progress=1" in package_settings.replace(" ", ""), package_settings
+        q("free_duel_completion", enabled=0)
+        imported = q("mod_package", **{"import": str(package)})
+        assert imported["ok"], imported
+        package_restored = q("free_duel_completion")
+        assert package_restored["enabled"] == 1, package_restored
 
         result = {
             "pid": proc.pid,
             "port": port,
             "scratch": str(scratch),
             "title_mean_difference": title_diff,
+            "default_boot": default_boot,
+            "mods_menu": mods_menu,
             "build_deck": empty,
             "unavailable_cell": hole_state,
             "selected": selected,
+            "edited_count": edited_count,
+            "restored_count": restored_count,
             "complete": complete,
             "animated": animated,
             "scrolled": scrolled,
+            "disabled": disabled,
+            "reenabled": reenabled,
+            "settings_path": str(settings_path),
+            "package": str(package),
+            "package_restored": package_restored,
         }
         (scratch / "results.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2), flush=True)

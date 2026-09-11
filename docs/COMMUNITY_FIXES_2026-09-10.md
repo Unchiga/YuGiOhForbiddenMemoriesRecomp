@@ -257,6 +257,13 @@ and the owned process exited 0 through `quit_graceful`.
 
 ### Free Duel collection progress
 
+`MODS > Free Duel progress` controls the entire addition: both the selected
+opponent's fraction and every animated portrait frame. It defaults Off for a
+stock-compatible launch. The `free_duel_progress` value persists in
+`menu_settings.ini` and travels through the existing `mod_settings.ini` entry
+in `.ygomods`; turning it Off never deletes the preference or any Drop Table
+edit. Turning it On while the grid is already open rebuilds immediately.
+
 The upper-right of the native `FREE DUEL` title now shows the selected CPU's
 unique owned / obtainable cards. Obtainable is the union of nonzero card IDs
 from all three effective rank bands after Drop Missing Cards and valid saved
@@ -272,6 +279,23 @@ PNG hash and all 2,304 pixels per frame are verified by
 Deck/empty cells show no ratio, scrolling follows real D-pad navigation, and
 stock netplay hides the complete overlay because local inventory and authoring
 state are intentionally unavailable there.
+
+The completion cache follows the Drop Table backend's generation counter. In
+the final isolated live regression, Duel Master K changed from stock `12/157`
+at generation 2 to `0/1` at generation 3 immediately after importing three
+one-card bands. Stock was restored while the toggle was Off; switching it back
+On immediately returned `12/157` at generation 4. A later ownership fill made
+all 39 opponents complete. Off reported no visible overlay, zero borders and
+no stale border coordinates; On rebuilt the current ratio/frame. The same run
+saved `free_duel_progress=1`, found it in an exported `.ygomods`, changed Off,
+and restored On by importing that package.
+
+Evidence is `/tmp/ygofm-fd-toggle-20260911-d/results.json` (SHA-256
+`d8b446a48f351e5dcad85781644bcba364782ef0e934cb18d1d08a545d72aa4d`);
+the package SHA-256 is
+`ce684ac397f89fcbd6f9f999ef69933342c9601566315720a5ec51ab52af1fdd`.
+The owned PID 3222206 exited 0 through `quit_graceful` in a 960x720 virtual
+KWin desktop; the physical CRT configuration was not read or changed.
 
 The isolated software-rendered live result is
 `/tmp/ygofm-fd-completion-20260910-f/results.json`. Real input reached Duel
@@ -299,7 +323,9 @@ the starchip label while confirming that the saved starchip rule remains
 
 ### Conditional duel starchip rewards
 
-The Drop Tables page now owns an ordered, first-match-wins reward-rule editor.
+Open the editor through `MODS > FM Editor`, choose `Drop Tables`, then press
+`Starchip rewards...`; this opens the `Duel starchip rewards` modal. The Drop
+Tables page owns an ordered, first-match-wins reward-rule editor.
 Each condition can be Any or one campaign/Free Duel mode, opponent ID,
 win/loss outcome, and D-through-S TEC/POW rank. Earlier rules have priority;
 the UI supports add, remove, reorder, two-step clear, Done-without-save and

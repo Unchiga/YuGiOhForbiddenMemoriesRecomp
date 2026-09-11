@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_inventory.h"
 #include "psx_cpu_data.h"
@@ -36,6 +37,7 @@
 #include "psx_fusion_font.h"
 #include "psx_game_hooks.h"
 #include "psx_guest_overlay.h"
+#include "psx_video_menu.h"
 #include "psx_ygo_netplay.h"
 
 #define MODE_ADDR       0x8009B26Cu
@@ -84,6 +86,8 @@ static int s_placement[10];
 static unsigned s_edit_gen;
 static unsigned s_cpu_gen;
 static int s_missing_on = -1;
+static int s_enabled;
+static int s_menu_row = -1;
 
 static int border_x(int col)
 {
@@ -280,14 +284,14 @@ static void tick(void)
 
     if (screen != s_screen) {
         s_screen = screen;
-        s_visible = screen;
+        s_visible = s_enabled && screen;
         s_top_row = screen ? clamp_top(selected_row) : 0;
         if (!screen) s_selected = -1;
         s_counts_ready = 0;
         s_dirty = 1;
         s_present_hold = 3;
     }
-    if (!screen) return;
+    if (!screen || !s_enabled) return;
 
     if (selected != s_selected) {
         s_selected = selected;
@@ -343,7 +347,7 @@ static void tick(void)
 
 int psx_free_duel_completion_image(const uint32_t **pixels, int *w, int *h)
 {
-    if (!s_visible || psx_ygo_netplay_session()) return 0;
+    if (!s_enabled || !s_visible || psx_ygo_netplay_session()) return 0;
     if (s_dirty) redraw();
     if (pixels) *pixels = s_canvas;
     if (w) *w = SCREEN_W;
@@ -359,7 +363,10 @@ void psx_free_duel_completion_origin(int *x, int *y)
 
 int psx_free_duel_completion_needs_present(void)
 {
-    return s_visible && s_present_hold > 0;
+    /* An Off transition still needs a present so the compositor removes the
+     * last ratio/frame instead of leaving it stranded until unrelated video
+     * activity happens. */
+    return s_present_hold > 0;
 }
 
 void psx_free_duel_completion_placed(const int *placement)
@@ -382,7 +389,7 @@ int psx_free_duel_completion_state_json(char *out, unsigned cap)
     const int complete = s_selected >= 0 && s_counts_ready
                              ? s_complete[s_selected] : 0;
     const int n = snprintf(out, cap,
-        "\"screen\":%d,\"visible\":%d,\"netplay\":%d,"
+        "\"enabled\":%d,\"screen\":%d,\"visible\":%d,\"netplay\":%d,"
         "\"selected\":%d,\"name\":\"%s\",\"owned\":%d,"
         "\"obtainable\":%d,\"complete\":%d,\"empty_is_complete\":false,"
         "\"completed_opponents\":%d,\"top_row\":%d,\"frame\":%d,"
@@ -390,7 +397,7 @@ int psx_free_duel_completion_state_json(char *out, unsigned cap)
         "\"inventory_ready\":%d,\"drop_missing\":%d,"
         "\"edit_gen\":%u,\"cpu_gen\":%u,"
         "\"placement\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
-        s_screen, s_visible && !psx_ygo_netplay_session(),
+        s_enabled, s_screen, s_enabled && s_visible && !psx_ygo_netplay_session(),
         psx_ygo_netplay_session(), s_selected, name, owned, obtainable,
         complete, s_completed_total, s_top_row, s_frame, s_border_count,
         s_last_border_x, s_last_border_y, s_inventory_ready, s_missing_on,
@@ -403,7 +410,12 @@ int psx_free_duel_completion_state_json(char *out, unsigned cap)
 
 static void handle_debug(int id, const char *json)
 {
-    (void)json;
+    const int enabled = json_get_int(json, "enabled", -1);
+    if ((enabled == 0 || enabled == 1) && s_menu_row >= 0 &&
+        psx_video_menu_get_row(s_menu_row) != enabled) {
+        psx_video_menu_set_row(s_menu_row, enabled);
+        psx_video_menu_note_change();
+    }
     char body[1024];
     if (!psx_free_duel_completion_state_json(body, sizeof body)) {
         send_err(id, "free duel completion state unavailable");
@@ -412,8 +424,41 @@ static void handle_debug(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, body);
 }
 
+static void enabled_changed(int value)
+{
+    s_enabled = value ? 1 : 0;
+    s_visible = s_enabled && s_screen;
+    s_counts_ready = 0;
+    if (s_enabled) {
+        s_dirty = 1;
+    } else {
+        memset(s_canvas, 0, sizeof s_canvas);
+        s_border_count = 0;
+        s_last_border_x = s_last_border_y = -1;
+        s_dirty = 0;
+    }
+    s_present_hold = 3;
+    if (psx_video_menu_is_restoring()) return;
+    host_osd_push(s_enabled ? "Free Duel progress: on"
+                            : "Free Duel progress: off", 1000);
+}
+
+static void register_menu(void)
+{
+    static const char *const ONOFF[] = { "Off", "On" };
+    static const char *const HINTS[] = {
+        "Use the stock Free Duel portraits without collection progress",
+        "Show owned/drop totals and glow completed opponents",
+    };
+    s_menu_row = psx_video_menu_add_option(
+        PSX_VM_MENU_MODS, "Free Duel progress", HINTS[0],
+        ONOFF, 2, "free_duel_progress", 0, enabled_changed);
+    psx_video_menu_set_row_hints(s_menu_row, HINTS);
+}
+
 PSX_MOD_CONSTRUCTOR(psx_free_duel_completion_install)
 {
+    register_menu();
     PsxGuestOverlay overlay = {
         psx_free_duel_completion_image,
         psx_free_duel_completion_origin,
