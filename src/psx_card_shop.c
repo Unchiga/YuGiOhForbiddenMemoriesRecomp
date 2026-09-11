@@ -1278,7 +1278,7 @@ static void fit_text(char *out, size_t cap, const char *src, int max_width)
 #define BOX_C_Y 150
 #define BOX_C_H 80
 
-#define SELL_ROWS 5
+#define SELL_ROWS 6
 
 /* Sell layout, in panel pixels. Content spans SELL_X0..SELL_X1 of the
  * 304-wide canvas (the frame edges are 8px sprites). The game's own font is
@@ -1298,7 +1298,7 @@ static void fit_text(char *out, size_t cap, const char *src, int max_width)
 #define SELL_NAME_MAX  (SELL_COL_TRUNK - 45 - 8 - SELL_X0 - 4)
 #define SELL_LINE(k)   (52 + 13 * (k))
 #define SELL_HINT_Y    208
-#define SELL_MSG_LINES 3
+#define SELL_MSG_LINES 2
 
 #define C_RULE    0xFF6A7490u   /* separators inside the sell panel       */
 #define C_WARN    0xFF5A1E1Eu   /* the confirmation screen's warning band */
@@ -1363,34 +1363,29 @@ static uint32_t msg_tint(void) {
 }
 
 /* The three totals lines both sell screens share, so the numbers the player
- * confirms are the numbers the player edited. Gross and after-sale are full
- * width (a gross can run to twelve digits); credited and cap loss share a
- * line because credited is at most six digits. A cap loss too wide for its
- * half drops the label rather than overprinting it. */
+ * confirms are the numbers the player edited, in plain words: what the cards
+ * are worth, what the player gets, what the player will then hold. Sale
+ * value is full width (it can run to twelve digits); YOU GET is at most six
+ * digits, so its line's right half carries the copies being sold, or, once
+ * the 999,999 limit bites, the red reason the two amounts differ. */
 static void draw_sell_totals(int y)
 {
     char line[40];
-    const uint64_t loss = s_sell_gross - s_sell_credit;
     put_text("SALE VALUE", SELL_X0, y, C_GREY);
     snprintf(line, sizeof line, "%" PRIu64, s_sell_gross);
     put_text_r(line, SELL_X1, y, s_sell_gross ? C_GOLD : C_GREY);
 
-    put_text("CREDITED", SELL_X0, y + 13, C_GREY);
+    put_text("YOU GET", SELL_X0, y + 13, C_GREY);
     snprintf(line, sizeof line, "%u", s_sell_credit);
     put_text_r(line, 146, y + 13, C_WHITE);
-    snprintf(line, sizeof line, "%" PRIu64, loss);
-    if (!loss) {
-        put_text("CAP LOSS", 154, y + 13, C_GREY);
-        put_text_r(line, SELL_X1, y + 13, C_GREY);
-    } else if (154 + text_width("CAP LOSS") + 6 + text_width(line) <= SELL_X1) {
-        put_text("CAP LOSS", 154, y + 13, C_RED);
-        put_text_r(line, SELL_X1, y + 13, C_RED);
+    if (s_sell_gross > s_sell_credit) {
+        put_text_r("MAX IS 999999", SELL_X1, y + 13, C_RED);
     } else {
-        snprintf(line, sizeof line, "%" PRIu64 " LOST", loss);
-        put_text_r(line, SELL_X1, y + 13, C_RED);
+        snprintf(line, sizeof line, "SELLING %u", s_sell_copies);
+        put_text_r(line, SELL_X1, y + 13, C_GREY);
     }
 
-    put_text("AFTER SALE", SELL_X0, y + 26, C_GREY);
+    put_text("YOU WILL HAVE", SELL_X0, y + 26, C_GREY);
     snprintf(line, sizeof line, "%u", s_sell_after);
     put_text_r(line, SELL_X1, y + 26, C_GOLD);
 }
@@ -1507,13 +1502,21 @@ static void draw_sell_editor(void)
         fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
                  SELL_X1 - SELL_X0);
         put_text(fitted, SELL_X0, sy, C_GOLD);
-        snprintf(line, sizeof line, "No.%03u  DECK %u  KEEP %u  ",
+        /* A stock price needs no label; an edited one says so in the same
+         * blue the PRICE column uses for it. Spacing tightens as needed so
+         * KEEP 255 plus the label still fits the line. */
+        snprintf(line, sizeof line, "No.%03u  DECK %u  KEEP %u",
                  (unsigned)e->id, (unsigned)e->deck, (unsigned)e->retained);
+        const char *tag = e->overridden ? "  CUSTOM PRICE" : "";
+        if (e->overridden &&
+            text_width(line) + text_width(tag) > SELL_X1 - SELL_X0)
+            snprintf(line, sizeof line, "No.%03u DECK %u KEEP %u",
+                     (unsigned)e->id, (unsigned)e->deck, (unsigned)e->retained);
+        if (e->overridden &&
+            text_width(line) + text_width(tag) > SELL_X1 - SELL_X0)
+            tag = "  CUSTOM";
         const int x = put_text(line, SELL_X0, sy + 13, C_WHITE);
-        put_text(e->overridden ? "OVERRIDE" : "DERIVED", x, sy + 13,
-                 e->overridden ? C_BLUE : C_GREY);
-        put_text("L/R 1 L1/R1 10  SQUARE MAX  START ALL", SELL_X0 - 2,
-                 sy + 26, C_GREY);
+        put_text(tag, x, sy + 13, C_BLUE);
     }
     draw_hint(&psx_spr_shop_tbtn, "VIEW",   30,  SELL_HINT_Y);
     draw_hint(&psx_spr_shop_xbtn, "REVIEW", 118, SELL_HINT_Y);
@@ -1569,9 +1572,9 @@ static void draw_sell_confirm(void)
     if (s_msg[0])
         draw_sell_message(ny);
     else if (!s_sell_gross)
-        put_text_c("SELECTED CARDS HAVE NO SALE VALUE.", SELL_XC, ny, C_RED);
+        put_text_c("THESE CARDS ARE WORTH NOTHING.", SELL_XC, ny, C_RED);
     else if (s_sell_gross > s_sell_credit)
-        put_text_c("STARCHIPS ABOVE 999999 ARE LOST.", SELL_XC, ny, C_RED);
+        put_text_c("STARCHIPS STOP AT 999999.", SELL_XC, ny, C_RED);
     else
         put_text_c("YOUR DECK IS NOT CHANGED.", SELL_XC, ny, C_GREY);
     const int w = psx_spr_shop_xbtn.w + 2 + text_width("SELL NOW") + 20 +
@@ -1983,7 +1986,7 @@ void psx_card_shop_tick(void) {
                  * the whole session, so BACK on the confirmation threw the
                  * player's selection away. */
                 s_sell_mode = 1;
-                snprintf(s_msg, sizeof s_msg, "NOTHING SOLD. QUANTITIES KEPT.");
+                snprintf(s_msg, sizeof s_msg, "NOTHING SOLD. CHOICES KEPT.");
                 s_msg_tone = 1;
                 sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
             }

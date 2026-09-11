@@ -129,27 +129,33 @@ deck is never changed.
 
 Layout (2026-09-11), all on the 304x230 panel at guest (8,5). The header box
 carries the title and the star readout of the CURRENT starchips. The body
-starts with three totals lines: `SALE VALUE` (gross, full width, up to twelve
-digits), `CREDITED` beside `CAP LOSS` (red once nonzero; a loss too wide for
-its half prints as `N LOST`), then `AFTER SALE`. Under a rule, the table
-header reads `CARD n OF m` / `TRUNK` / `SELL` / `PRICE` with column ticks in
-the gutters, followed by five rows around the cursor (names cut with `...`
-at 113px; six-digit prices are 54px in this font and end at x=290; a derived
-price is gold, an override is blue, a zero price is grey; the cursor row has a
-gold bar, a gold name, and a gold outline round its SELL cell). A two-pixel
-scrollbar on the right appears once the trunk has more than five cards. The
-strip below spells out the selected card: the full name (only "Graveyard and
-the Hand of Invitation" is wider than the 276px line and is cut), then
-`No.NNN  DECK d  KEEP k  DERIVED|OVERRIDE`, then the key line `L/R 1 L1/R1 10
-SQUARE MAX  START ALL`, and the VIEW / REVIEW / CANCEL buttons. Any pending
-message (`SELECT AT LEAST ONE CARD`, `INVENTORY OR PRICES CHANGED - REVIEW
-AGAIN`, the GO BACK note) replaces that strip, word-wrapped and centred on up
-to three lines, red for a refusal and grey for a note, until the next press.
+starts with three totals lines in plain words: `SALE VALUE` (gross, full
+width, up to twelve digits), `YOU GET` (the credited amount) with the right
+half of its line reading `SELLING n` copies, or the red `MAX IS 999999` once
+the limit makes YOU GET smaller than the sale value, then `YOU WILL HAVE`
+(the balance after the sale). Under a rule, the table header reads `CARD n
+OF m` (`n OF m` once that would touch the TRUNK tick) / `TRUNK` / `SELL` /
+`PRICE` with column ticks in the gutters, followed by six rows around the
+cursor (names cut with `...` at 113px; six-digit prices are 54px in this
+font and end at x=290; a stock-derived price is gold, a card.ini override is
+blue, a zero price is grey; the cursor row has a gold bar, a gold name, and a
+gold outline round its SELL cell). A two-pixel scrollbar on the right appears
+once the trunk has more than six cards. The two-line strip below spells out
+the selected card: the full name (only "Graveyard and the Hand of Invitation"
+is wider than the 276px line and is cut), then `No.NNN  DECK d  KEEP k`, with
+a blue `CUSTOM PRICE` appended only when the price is an override (the
+spacing tightens, then the tag shortens to `CUSTOM`, so KEEP 255 still fits).
+There is no key-prompt line any more: the bindings are unchanged, but the
+panel shows only the VIEW / REVIEW / CANCEL buttons. Any pending message
+(`SELECT AT LEAST ONE CARD`, `INVENTORY OR PRICES CHANGED - REVIEW AGAIN`,
+the GO BACK note `NOTHING SOLD. CHOICES KEPT.`) replaces that strip,
+word-wrapped and centred on its two lines, red for a refusal and grey for a
+note, until the next press.
 The confirmation screen keeps the same totals under a red `Confirm Sale`
 title, then a dark-red band `SELL n COPIES OF m CARDS?` / `THIS CANNOT BE
 UNDONE.`, a `CARD / SELL / VALUE` list of only the selected cards (four rows
 plus `AND n MORE CARDS`), one status line (`YOUR DECK IS NOT CHANGED.`,
-`SELECTED CARDS HAVE NO SALE VALUE.` or `STARCHIPS ABOVE 999999 ARE LOST.`),
+`THESE CARDS ARE WORTH NOTHING.` or `STARCHIPS STOP AT 999999.`),
 and only the SELL NOW / GO BACK buttons. An empty trunk shows `YOUR TRUNK IS
 EMPTY.` / `THERE IS NOTHING TO SELL.` / `CARDS IN YOUR DECK ARE NEVER SOLD.`
 with a BACK button. A completed sale returns to the pack panel with `SOLD n
