@@ -60,6 +60,7 @@ typedef struct {
     int  level;                           /* 0..12 */
     int  attribute;                       /* 0..7 */
     int  price;                           /* 0..999999 */
+    int  sell_price;                      /* 0..999999; -1 = derive from effective price */
     char password[9];                     /* 8 digits, or "" */
     int  has_art, has_thumb, has_title;   /* which PNGs exist */
 
@@ -278,6 +279,13 @@ const char *psx_card_packs_display_name(int id);
 /* Effective password-screen starchip price: a loaded card.ini override when
  * present, otherwise the disc value. Returns -1 before the card DB is ready. */
 int psx_card_packs_price(int id);
+/* Deterministic stock-compatible sale value for an effective password cost. */
+int psx_card_packs_derive_sell_price(int purchase_price);
+/* Effective shop sell price. An explicit card.ini `sell_price` wins;
+ * otherwise floor(effective password cost / 3) is used, except the stock
+ * sentinel purchase cost 999999 is capped to 1000. `overridden`, when non-NULL,
+ * says which source was selected. Returns -1 before card data is ready. */
+int psx_card_packs_sell_price(int id, int *overridden);
 /* The two string arenas in the free tail of the game's name blob. The blob's
  * last stock string ends at 0x801D8C66 and 0x801D916F..0x801DA000 is zero in
  * the SLUS and in every state sampled (psx_card_extend.c); 0x801DA000 is NOT

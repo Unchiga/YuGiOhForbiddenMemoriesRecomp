@@ -64,9 +64,9 @@
 
 #define CANVAS_W 31
 #define CANVAS_H 5
-#define ORIGIN_X 288
-#define ORIGIN_Y_LIBRARY 183
-#define ORIGIN_Y_ANIMATED 203
+#define ORIGIN_X 280
+#define ORIGIN_Y_LIBRARY 185
+#define ORIGIN_Y_ANIMATED 205
 #define COL_VALUE 0xFFFFFFFFu
 
 static uint32_t s_px[CANVAS_W * CANVAS_H];

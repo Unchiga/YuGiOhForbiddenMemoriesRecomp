@@ -168,7 +168,9 @@ static void handle_netplay_privacy(int id, const char *json)
 
 static void handle_fm_editor(int id, const char *json)
 {
-    char page_name[32], path[1024], state[1024];
+    char page_name[32], path[1024], state[4096];
+    if (json_get_int(json, "reset_profile", 0))
+        psx_fm_editor_profile_reset();
     int page = json_get_int(json, "page", -1);
     if (json_get_str(json, "page_name", page_name, sizeof page_name)) {
         if (!strcmp(page_name, "cards")) page = PSX_FM_PAGE_CARDS;
@@ -1414,8 +1416,8 @@ static void handle_card_shop(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
-/* card_shop_sell op=preview|confirm|cancel|state. Preview is the exact list
- * the panel shows and performs no guest write; only confirm mutates. */
+/* card_shop_sell op=preview|set|all|clear|review|confirm|cancel|state. Preview
+ * and selection are non-mutating; only the second-step confirm writes. */
 static void handle_card_shop_sell(int id, const char *json)
 {
     char op[16] = "state", msg[96] = "";
@@ -1423,6 +1425,15 @@ static void handle_card_shop_sell(int id, const char *json)
     int ok = 1;
     if (!strcmp(op, "preview")) {
         ok = psx_card_shop_sell_preview(msg, sizeof msg);
+    } else if (!strcmp(op, "set")) {
+        ok = psx_card_shop_sell_set_quantity(
+            json_get_int(json, "card", -1),
+            json_get_int(json, "quantity", -1), msg, sizeof msg);
+    } else if (!strcmp(op, "all") || !strcmp(op, "clear")) {
+        ok = psx_card_shop_sell_select_all(!strcmp(op, "all"), msg,
+                                           sizeof msg);
+    } else if (!strcmp(op, "review")) {
+        ok = psx_card_shop_sell_review(msg, sizeof msg);
     } else if (!strcmp(op, "confirm")) {
         if (reject_stock_netplay_mutation(id)) return;
         ok = psx_card_shop_sell_confirm(msg, sizeof msg);
@@ -1430,7 +1441,7 @@ static void handle_card_shop_sell(int id, const char *json)
         psx_card_shop_sell_cancel();
         snprintf(msg, sizeof msg, "CANCELLED");
     } else if (strcmp(op, "state")) {
-        send_err(id, "op is preview, confirm, cancel or state");
+        send_err(id, "op is preview, set, all, clear, review, confirm, cancel or state");
         return;
     }
     char *buf = (char *)malloc(120000u);

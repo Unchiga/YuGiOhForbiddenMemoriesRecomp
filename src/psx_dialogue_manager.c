@@ -691,7 +691,8 @@ static void tick(void)
     const unsigned gen = psx_dialogue_generation() + (psx_dialogue_ready() ? 0x10000u : 0u);
     if (gen != s_seen_gen) { s_seen_gen = gen; rebuild_order(); }
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; if (s_search[0]) s_dirty = 1; }
     }
     if (s_msg[0] && SDL_GetTicks() >= s_msg_until) { s_msg[0] = 0; s_dirty = 1; }

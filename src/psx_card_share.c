@@ -359,6 +359,14 @@ static int ini_description_bytes(int id, const unsigned char *data,
                         if (err) snprintf(err, errcap, "password must be exactly eight decimal digits");
                         return -1;
                     }
+                } else if (!strcmp(q, "sell_price")) {
+                    char *end = NULL;
+                    const long value = strtol(eq, &end, 10);
+                    if (end == eq || *end || value < 0 || value > 999999) {
+                        if (err) snprintf(err, errcap,
+                                          "sell_price must be an integer from 0 to 999999");
+                        return -1;
+                    }
                 } else if (!strcmp(q, "field_targets") ||
                            !strcmp(q, "terrain_targets") ||
                            !strcmp(q, "field_allowlist")) {

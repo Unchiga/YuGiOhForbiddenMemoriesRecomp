@@ -314,12 +314,53 @@ def main():
         assert scrolled["borders"] > 0, scrolled
         composed_shot("08-scrolled-complete")
 
+        # Every frame must use the stock object's exact pixel scroll, not a
+        # selected-row approximation. Validate each independently visible
+        # completed cell while walking every row up and down.
+        def expected_border_state(state):
+            visible_borders = []
+            for cell in present_cells:
+                grid_row, grid_col = divmod(cell, 5)
+                y = 40 + grid_row * 52 - state["scroll_y"]
+                if y < 188 and y + 49 > 40:
+                    visible_borders.append(
+                        (19 + (grid_col * 225 + 2) // 4, y))
+            return visible_borders
+
+        scroll_walk = []
+        for direction, count in (("up", row), ("down", row)):
+            for step in range(count):
+                press(direction, 4, 0.12)
+                state = q("free_duel_completion")
+                visible_borders = expected_border_state(state)
+                assert state["borders"] == len(visible_borders), \
+                    (state, visible_borders)
+                if visible_borders:
+                    assert state["last_border"] == list(visible_borders[-1]), \
+                        (state, visible_borders)
+                expected_mask = sum(1 << cell for cell in present_cells
+                                    if (19 + ((cell % 5) * 225 + 2) // 4,
+                                        40 + (cell // 5) * 52 - state["scroll_y"])
+                                    in visible_borders)
+                assert int(state["border_mask"], 16) == expected_mask, \
+                    (state, hex(expected_mask))
+                scroll_walk.append({
+                    "direction": direction, "step": step + 1,
+                    "state": state, "expected_borders": visible_borders,
+                })
+        returned = q("free_duel_completion")
+        assert returned["cursor"] == [column, row], returned
+        assert returned["scroll_y"] == scrolled["scroll_y"], (returned, scrolled)
+        composed_shot("08b-scroll-round-trip")
+
         # The whole feature is one persisted MODS switch: Off removes both
         # the selected ratio and every portrait frame, then On rebuilds the
         # current screen without requiring a re-entry. A .ygomods bundle owns
         # the same key through the menu's single settings serializer.
         disabled = q("free_duel_completion", enabled=0)
-        assert disabled["enabled"] == 0 and not disabled["visible"], disabled
+        assert (disabled["enabled"] == 0 and not disabled["visible"] and
+                disabled["borders"] == 0 and
+                int(disabled["border_mask"], 16) == 0), disabled
         off_image = composed_shot("09-toggle-off-stock-grid")
         assert ImageChops.difference(second_complete.convert("RGB"),
                                      off_image.convert("RGB")).getbbox(), \
@@ -369,6 +410,7 @@ def main():
             "complete": complete,
             "animated": animated,
             "scrolled": scrolled,
+            "scroll_walk": scroll_walk,
             "disabled": disabled,
             "reenabled": reenabled,
             "settings_path": str(settings_path),

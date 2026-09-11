@@ -122,7 +122,7 @@ static int  s_sel = 1;
 static int  s_sb_drag, s_sb_grab;
 
 /* --- editor ---------------------------------------------------------------- */
-enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR, F_NAME_COLOR,
+enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_SELL_PRICE, F_PASSWORD, F_COLOR, F_NAME_COLOR,
        F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_FIELD_TARGETS, F_TRAP_MAX,
        F_RULE_FIRST,                                      /* the effects list: RULE_MAX rows of RP_N boxes */
        F_RULE_END = F_RULE_FIRST + 16 * 5,
@@ -331,7 +331,7 @@ static int param_kind(int f)
 static const char *field_label(int f)
 {
     static const char *const FIELD_LABEL[F_RULE_FIRST] = {
-        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame", "Name color",
+        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Sell price", "Password", "Frame", "Name color",
         "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Field creatures", "Trap ATK max"
     };
     if (f < F_RULE_FIRST) return FIELD_LABEL[f];
@@ -1130,7 +1130,7 @@ static void load_editor(void)
         memset(&s_edit, 0, sizeof s_edit);
         s_edit.id = s_sel;
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.type =
-            s_edit.level = s_edit.attribute = s_edit.price = -1;
+            s_edit.level = s_edit.attribute = s_edit.price = s_edit.sell_price = -1;
         psx_card_packs_effects_reset(&s_edit);
     }
     s_stock_ok = psx_card_packs_stock(s_sel, &s_stock);
@@ -1172,6 +1172,7 @@ static int field_is_set(int f)
     case F_LEVEL: return s_edit.level >= 0;
     case F_ATTR: return s_edit.attribute >= 0;
     case F_PRICE: return s_edit.price >= 0;
+    case F_SELL_PRICE: return s_edit.sell_price >= 0;
     case F_PASSWORD: return s_edit.password[0] != 0;
     case F_COLOR: return s_edit.color >= 0;
     case F_NAME_COLOR: return s_edit.name_color >= 0;
@@ -1205,6 +1206,7 @@ static void field_clear(int f)
     case F_LEVEL: s_edit.level = -1; break;
     case F_ATTR: s_edit.attribute = -1; break;
     case F_PRICE: s_edit.price = -1; break;
+    case F_SELL_PRICE: s_edit.sell_price = -1; break;
     case F_PASSWORD: s_edit.password[0] = 0; break;
     case F_COLOR: s_edit.color = -1; break;
     case F_NAME_COLOR: s_edit.name_color = -1; break;
@@ -1245,6 +1247,13 @@ static void field_text(int f, int stock, char *out, size_t cap)
     case F_LEVEL: snprintf(out, cap, "%d", set ? s_edit.level : s_stock.level); break;
     case F_ATTR: snprintf(out, cap, "%s", psx_card_packs_attribute_name(set ? s_edit.attribute : s_stock.attribute)); break;
     case F_PRICE: snprintf(out, cap, "%d", set ? s_edit.price : s_stock.price); break;
+    case F_SELL_PRICE: {
+        const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+        int derived = psx_card_packs_derive_sell_price(purchase);
+        if (derived < 0) derived = 0;
+        snprintf(out, cap, "%d", set ? s_edit.sell_price : derived);
+        break;
+    }
     case F_PASSWORD: snprintf(out, cap, "%s", set ? s_edit.password : (s_stock.password[0] ? s_stock.password : "none")); break;
     case F_COLOR: snprintf(out, cap, "%s", psx_card_packs_color_name(set ? s_edit.color : (stock ? s_stock.color : psx_card_colors_slot(s_sel)))); break;
     case F_NAME_COLOR: snprintf(out, cap, "%s", psx_card_packs_name_color_name(set ? s_edit.name_color : PSX_CARD_NAME_COLOR_WHITE)); break;
@@ -1600,6 +1609,7 @@ static void focus_commit(void)
     case F_DEF: if (v < 0 || v > 5110) { say("Defense is 0 to 5110"); return; } s_edit.defense = v / 10 * 10; break;
     case F_LEVEL: if (v < 0 || v > 12) { say("Level is 0 to 12"); return; } s_edit.level = v; break;
     case F_PRICE: if (v < 0 || v > 999999) { say("Price is 0 to 999999"); return; } s_edit.price = v; break;
+    case F_SELL_PRICE: if (v < 0 || v > 999999) { say("Sell price is 0 to 999999"); return; } s_edit.sell_price = v; break;
     case F_PASSWORD: {
         int ok = strlen(s_buf) == 8;
         for (int i = 0; ok && i < 8; i++) if (s_buf[i] < '0' || s_buf[i] > '9') ok = 0;
@@ -2131,11 +2141,23 @@ static void draw_editor(void)
             psx_ui_round_rect(&s_cv, c->x, c->y, c->w, c->h, c->h * 0.5f, COL_BTN); draw_cross(c, COL_TEXT);
             if (f != F_DESC && !is_rulef(f)) {
                 char st[PSX_CARD_PACK_DESC_MAX + 8]; field_text(f, 1, st, sizeof st);
-                char s2[PSX_CARD_PACK_DESC_MAX + 16]; snprintf(s2, sizeof s2, "stock: %s", st);
+                char s2[PSX_CARD_PACK_DESC_MAX + 32];
+                if (f == F_SELL_PRICE) {
+                    const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+                    int derived = psx_card_packs_derive_sell_price(purchase);
+                    if (derived < 0) derived = 0;
+                    snprintf(s2, sizeof s2, "override; derived: %d", derived);
+                } else
+                    snprintf(s2, sizeof s2, "stock: %s", st);
                 const int sx = c->x + c->w + px(8.0f);
                 const int lim = right;
                 if (lim - sx > px(30.0f)) psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs), s2, COL_DIM, fs, lim - sx);
             }
+        } else if (f == F_SELL_PRICE) {
+            const int sx = v->x + v->w + px(8.0f);
+            psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs),
+                             "derived: floor(Price / 3)", COL_DIM, fs,
+                             right - sx);
         }
     }
     if (L->fx_note_y) {
@@ -2934,7 +2956,8 @@ static void tick(void)
         if (!ensure_canvas(w, h)) { psx_card_manager_close(); return; }
     }
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; s_dirty = 1; }
     }
     if (s_pick_err[0]) {
@@ -3005,12 +3028,12 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         "\"open\":%d,\"card\":%d,\"edited\":%d,\"changed\":%d,\"focus\":%d,\"buf\":\"%s\","
         "\"search\":\"%s\",\"rows\":%d,\"scroll\":%d,\"w\":%d,\"h\":%d,\"unit\":%.2f,\"msg\":\"%s\","
         "\"name\":\"%s\",\"desc\":\"%s\",\"atk\":\"%s\",\"def\":\"%s\",\"star1\":\"%s\",\"star2\":\"%s\",\"type\":\"%s\","
-        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"password\":\"%s\","
+        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"sell_price\":\"%s\",\"sell_price_source\":\"%s\",\"password\":\"%s\","
         "\"color\":\"%s\",\"name_color\":\"%s\",\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"field_targets\":\"%.200s\",\"trap_max\":\"%s\","
         "\"art\":%d,\"thumb\":%d,\"title\":%d,\"presents\":%u,\"modal\":%d,\"field_picker\":{\"open\":%d,\"selected\":%d,\"matches\":%d,\"scroll\":%d,\"filter\":\"%s\"},\"geom\":{",
         s_win != NULL, s_sel, s_has_pack, s_changed, s_focus, s_buf, s_search, s_order_n, s_scroll,
         s_w, s_h, s_u, s_msg, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
-        t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20], t[21], t[22],
+        field_is_set(F_SELL_PRICE) ? "override" : "derived", t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20], t[21], t[22], t[23],
         s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal,
         s_target_open, s_target_selected_n, s_target_n, s_target_scroll, s_target_search);
     {

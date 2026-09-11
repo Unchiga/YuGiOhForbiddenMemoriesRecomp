@@ -26,11 +26,21 @@ static SDL_Renderer *s_editor_ren;
 static SDL_Texture *s_editor_tabs;
 static uint32_t *s_editor_tab_px;
 static int s_editor_tab_w;
+static int s_editor_tab_page = -1;
 static int s_editor_page = -1;
 static int s_editor_switching;
 static unsigned s_editor_fit_count;
 static int s_editor_last_fit;
 static uint32_t s_editor_fit_due;
+static char s_editor_renderer[64];
+
+typedef struct {
+    uint64_t ticks, events, presents;
+    uint64_t present_us, present_max_us;
+    uint64_t tab_rebuilds, tab_uploads, failures;
+} EditorPerf;
+static EditorPerf s_editor_perf[PSX_FM_PAGE_COUNT];
+static uint64_t s_editor_switches;
 
 static const char *const s_page_names[PSX_FM_PAGE_COUNT] = {
     "Cards", "Drop Tables", "Fusions", "Dialogue", "CPU"
@@ -134,6 +144,7 @@ SDL_Window *psx_fm_editor_acquire(int page, int content_w, int content_h)
         s_editor_switching = 1;
         page_close(old);
         s_editor_switching = 0;
+        s_editor_switches++;
     }
     if (!s_editor_win) {
         s_editor_win = SDL_CreateWindow(
@@ -171,6 +182,7 @@ void psx_fm_editor_release(int page)
     s_editor_page = -1;
     s_editor_ren = NULL;
     s_editor_tabs = NULL; /* the page renderer owned and destroyed it */
+    s_editor_tab_page = -1;
     if (!s_editor_switching && s_editor_win) {
         SDL_DestroyWindow(s_editor_win);
         s_editor_win = NULL;
@@ -208,6 +220,7 @@ int psx_fm_editor_filter_event(int page, const SDL_Event *event,
 {
     if (!event || !adjusted || page != s_editor_page || !s_editor_win)
         return 0;
+    s_editor_perf[page].events++;
     *adjusted = *event;
     const Uint32 id = SDL_GetWindowID(s_editor_win);
     if (event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP) {
@@ -243,6 +256,12 @@ int psx_fm_editor_filter_event(int page, const SDL_Event *event,
         }
     }
     return 0;
+}
+
+void psx_fm_editor_profile_reset(void)
+{
+    memset(s_editor_perf, 0, sizeof s_editor_perf);
+    s_editor_switches = 0;
 }
 
 int psx_fm_editor_state_json(char *out, unsigned cap)
@@ -287,7 +306,7 @@ int psx_fm_editor_state_json(char *out, unsigned cap)
               x + w + left + right <= usable.x + usable.w &&
               y + h + top + bottom <= usable.y + usable.h;
     }
-    const int n = snprintf(out, cap,
+    int n = snprintf(out, cap,
         "\"open\":%d,\"page\":%d,\"page_name\":\"%s\",\"tabs\":5,"
         "\"window_id\":%u,\"window\":[%d,%d],\"position\":[%d,%d],"
         "\"pixels\":[%d,%d],\"borders_reported\":[%d,%d,%d,%d],"
@@ -312,6 +331,28 @@ int psx_fm_editor_state_json(char *out, unsigned cap)
         (flags & SDL_WINDOW_MINIMIZED) != 0,
         (flags & SDL_WINDOW_RESIZABLE) != 0,
         s_editor_fit_count, s_editor_last_fit);
+    if (n < 0 || n >= (int)cap) return 0;
+    n += snprintf(out + n, cap - (unsigned)n,
+                  ",\"renderer\":\"%s\",\"switches\":%llu,\"perf\":[",
+                  s_editor_renderer, (unsigned long long)s_editor_switches);
+    for (int p = 0; p < PSX_FM_PAGE_COUNT && n < (int)cap; p++) {
+        const EditorPerf *v = &s_editor_perf[p];
+        n += snprintf(out + n, cap - (unsigned)n,
+            "%s{\"page\":\"%s\",\"ticks\":%llu,\"events\":%llu,"
+            "\"presents\":%llu,\"present_us\":%llu,"
+            "\"present_max_us\":%llu,\"tab_rebuilds\":%llu,"
+            "\"tab_uploads\":%llu,\"failures\":%llu}",
+            p ? "," : "", s_page_names[p],
+            (unsigned long long)v->ticks, (unsigned long long)v->events,
+            (unsigned long long)v->presents,
+            (unsigned long long)v->present_us,
+            (unsigned long long)v->present_max_us,
+            (unsigned long long)v->tab_rebuilds,
+            (unsigned long long)v->tab_uploads,
+            (unsigned long long)v->failures);
+    }
+    if (n < (int)cap)
+        n += snprintf(out + n, cap - (unsigned)n, "]");
     return n > 0 && n < (int)cap;
 }
 
@@ -425,6 +466,8 @@ static void editor_row_activate(void)
 static void editor_policy(void)
 {
     static int last = -1;
+    if (s_editor_page >= 0 && s_editor_page < PSX_FM_PAGE_COUNT)
+        s_editor_perf[s_editor_page].ticks++;
     if (s_editor_win && s_editor_fit_due &&
         (int32_t)(SDL_GetTicks() - s_editor_fit_due) >= 0) {
         s_editor_fit_due = 0;
@@ -511,6 +554,9 @@ SDL_Renderer *psx_tool_renderer_create(SDL_Window *win, const char *title, int p
         if (win == s_editor_win) {
             s_editor_ren = ren;
             s_editor_tabs = NULL;
+            s_editor_tab_page = -1;
+            snprintf(s_editor_renderer, sizeof s_editor_renderer, "%s",
+                     SDL_GetRendererName(ren));
         }
         int w = 0, h = 0;
         SDL_GetRendererOutputSize(ren, &w, &h);
@@ -529,6 +575,7 @@ SDL_Renderer *psx_tool_renderer_create(SDL_Window *win, const char *title, int p
 
 static int editor_tabs_prepare(SDL_Renderer *ren, int w)
 {
+    int rebuilt = 0;
     if (ren != s_editor_ren || w <= 0) return 0;
     if (w != s_editor_tab_w || !s_editor_tab_px) {
         free(s_editor_tab_px);
@@ -537,13 +584,21 @@ static int editor_tabs_prepare(SDL_Renderer *ren, int w)
         if (!s_editor_tab_px) { s_editor_tab_w = 0; return 0; }
         s_editor_tab_w = w;
         s_editor_tabs = NULL;
+        s_editor_tab_page = -1;
+        rebuilt = 1;
     }
     if (!s_editor_tabs) {
         s_editor_tabs = SDL_CreateTexture(
             ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
             w, PSX_FM_EDITOR_TAB_H);
         if (!s_editor_tabs) return 0;
+        rebuilt = 1;
     }
+    /* Tabs are immutable until either the page, renderer, or width changes.
+     * Rebuilding the font layout and uploading the same pixels on every page
+     * repaint needlessly blocks the emulation/audio thread. */
+    if (!rebuilt && s_editor_tab_page == s_editor_page) return 1;
+    if (s_editor_page >= 0) s_editor_perf[s_editor_page].tab_rebuilds++;
     memset(s_editor_tab_px, 0,
            (size_t)w * PSX_FM_EDITOR_TAB_H * sizeof(uint32_t));
     PsxUiCanvas c = { s_editor_tab_px, w, PSX_FM_EDITOR_TAB_H, 0, 0, 0, 0 };
@@ -567,10 +622,17 @@ static int editor_tabs_prepare(SDL_Renderer *ren, int w)
         }
     }
 #if defined(PSX_SDL3)
-    return SDL_UpdateTexture(s_editor_tabs, NULL, s_editor_tab_px, w * 4) ? 1 : 0;
+    const int ok = SDL_UpdateTexture(s_editor_tabs, NULL, s_editor_tab_px,
+                                     w * 4) ? 1 : 0;
 #else
-    return SDL_UpdateTexture(s_editor_tabs, NULL, s_editor_tab_px, w * 4) == 0;
+    const int ok = SDL_UpdateTexture(s_editor_tabs, NULL, s_editor_tab_px,
+                                     w * 4) == 0;
 #endif
+    if (ok) {
+        s_editor_tab_page = s_editor_page;
+        if (s_editor_page >= 0) s_editor_perf[s_editor_page].tab_uploads++;
+    }
+    return ok;
 }
 
 int psx_tool_present(SDL_Renderer *ren, SDL_Texture *tex, const void *px, int w, int h, const char *title)
@@ -578,6 +640,8 @@ int psx_tool_present(SDL_Renderer *ren, SDL_Texture *tex, const void *px, int w,
     static char noted[8][48]; static int nnoted;
     int ok = 1;
     const char *step = "";
+    const uint64_t started = ren == s_editor_ren
+                                 ? SDL_GetPerformanceCounter() : 0;
 #if defined(PSX_SDL3)
     if (!SDL_UpdateTexture(tex, NULL, px, w * 4)) { ok = 0; step = "UpdateTexture"; }
     else if (!SDL_RenderClear(ren)) { ok = 0; step = "RenderClear"; }
@@ -609,6 +673,16 @@ int psx_tool_present(SDL_Renderer *ren, SDL_Texture *tex, const void *px, int w,
 #else
         SDL_RenderPresent(ren);
 #endif
+    }
+    if (ren == s_editor_ren && s_editor_page >= 0) {
+        EditorPerf *p = &s_editor_perf[s_editor_page];
+        const uint64_t freq = SDL_GetPerformanceFrequency();
+        const uint64_t elapsed = SDL_GetPerformanceCounter() - started;
+        const uint64_t us = freq ? elapsed * 1000000u / freq : 0;
+        p->presents++;
+        p->present_us += us;
+        if (us > p->present_max_us) p->present_max_us = us;
+        if (!ok) p->failures++;
     }
     if (!ok) { psx_tool_log("%s: %s failed (%dx%d): %s", title, step, w, h, SDL_GetError()); return 0; }
     /* the first successful present of each window, once */

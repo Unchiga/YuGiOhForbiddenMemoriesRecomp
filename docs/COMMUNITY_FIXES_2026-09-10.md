@@ -48,12 +48,16 @@ The owner retains normal details. This is a present-only overlay; guest RAM,
 VRAM, rollback state, and hashes are not changed.
 
 Current-binary policy evidence is
-`/tmp/ygofm-final-netplay-20260911-policy-root2/stock-policy.json` (SHA-256
-`b5a5be9b7c9efcdc8bb79c7d39e9a7dfe09dc34d143d1100d8f7c9713f0ba0d0`).
+`/tmp/ygofm-netplay-sell-final-20260911/stock-policy.json` (SHA-256
+`de9c0dc7accd00ee74165ba5642120eaf0eae63ba00685db0843ce0c26513de9`).
+It binds final debug binary SHA-256 `5ed5fa5805fa2b3eb91f76689585ba994d2debcaa78b172f261e58e143cbfc4a`;
+the Sell confirmation probe was rejected on both peers during stock netplay.
 Both peers exited 0 with requested/effective speed 1. Mutation probes were
 rejected, except that a 4x request was accepted only as a clamp back to 1x.
 Offline Smart/zero-drop/starchip/CPU/package fixtures stayed loaded but
-inactive, with no persistent fixture hash change.
+inactive, with no persistent fixture hash change. The owned PIDs were
+3270986/3271034 on verified debug ports 54401/54402 and UDP ports
+54403/54404.
 
 Face-down evidence for both owners is in each current `privacy-results.json`:
 
@@ -255,6 +259,61 @@ it binds debug executable SHA-256
 `419cb795feee79d2574f5715565198852c0f3d8774826c8d892eaab661e6c454`,
 and the owned process exited 0 through `quit_graceful`.
 
+The navigation/audio follow-up instrumented each page with cumulative tick,
+SDL-event, present, present-time/max, tab-layout, tab-upload and failure
+counters, alongside the runtime's guest work, renderer presents, SPU
+production and underruns. The main cause was host work on the emulation thread:
+the shared tab strip was laid out and uploaded on every otherwise necessary
+page present, inactive editor pages continued blinking their carets, and the
+CPU page repainted every 500 ms even when the 39 records had not changed.
+Tabs are now cached by renderer/width/page, caret animation stops when the
+editor lacks input focus, and the CPU poll dirties the page only when a hash of
+the live records changes. Existing generation guards continue to prevent list,
+preview, file and texture rebuilds when their inputs are unchanged.
+
+At 2x after the change, idle per-page samples recorded Cards 10 presents in
+420 ticks, Drop Tables 8/425, Fusions 1/433, Dialogue 1/433 and CPU 8/409.
+Every page performed exactly one tab rebuild/upload and reported zero renderer
+failures. Controlled Cards and CPU navigation ran at about 120 fps on OpenGL
+with zero underruns during those intervals. The forced OpenGL tool renderer
+also sustained requested/effective 1x, 2x, 3x and 4x at 60, 120, 180 and
+239.7 fps without speed easing; short boundary samples still saw isolated
+device underrun bursts (754 at closed 2x, 434 at closed 3x, and 839 at open
+4x), so the result is not presented as universally underrun-free.
+
+The software main renderer remains the honest limitation on this i7-13700K /
+RTX 4090 host: it holds 1x, but the measured 2x-4x samples reached only about
+98-121 fps while SPU production fell below 44.1 kHz and audio underruns
+continued, whether the editor was closed or open. No added latency, silent
+speed reduction, or fallback easing was introduced. The editor still defaults
+to its broadly compatible software renderer; `PSX_TOOL_RENDERER=opengl` is a
+tested diagnostic/optional path, not a new default.
+
+Machine-readable results are
+`/tmp/ygofm-editor-after-P2CAoY/software-after-2x.json` (SHA-256
+`b604c6a95f5124a4fb0761ef9a544f50ebc3b0ba314e5289c72cb9629bc04bcc`),
+`software-speed-sweep.json` (`898901e37b5cb854d23d814b99a888dee592815b6b4b501930a45aaa51c35e52`),
+`/tmp/ygofm-editor-gl-CZ6mDa/opengl-after-2x.json`
+(`a25d589dfcc68c25a6255cabac13fc578b1663548adcd9e22e9d062f3465bbd6`)
+and `opengl-speed-sweep.json`
+(`1b3c9931efcda6d50921113e3db68d5a4ca0fb2ef3e4c40f6183ff0da4716bd5`).
+Both owned processes used copied slot-0/card fixtures, explicit portable data
+directories and verified ports, and exited cleanly.
+
+The final all-page harness rerun is
+`/tmp/ygofm-editor-final3-20260911/profile/results.json` (SHA-256
+`3c911b8a146a65adf1cc88c352b89fe5758ecbacfc0fe4ed81003a92672d1694`).
+It binds debug executable SHA-256 `5ed5fa5805fa2b3eb91f76689585ba994d2debcaa78b172f261e58e143cbfc4a`,
+one editor window ID, nonempty captures for every page, and at most one tab
+upload per steady-state page sample. At requested 2x, closed, Cards and CPU
+held 119.99 fps with zero underruns and Drop Tables held 119.50 fps with zero
+underruns. The same sequential run caught transient host/audio shortfalls on
+Fusions (111.50 fps, 5,092 underruns) and Dialogue (106.00 fps, 10,361
+underruns), despite only one 1.8/1.6 ms editor present in each interval. That
+distinction is recorded rather than masking the remaining runtime/device
+variability. The owned process on port 4395 exited 0 through `quit_graceful`;
+the copied state hash is `989d1d280887fe8c683fda50999bcc50f7a21f8f62c9720d00d0d4b71499e560`.
+
 ### Free Duel collection progress
 
 `MODS > Free Duel progress` controls the entire addition: both the selected
@@ -280,6 +339,22 @@ Deck/empty cells show no ratio, scrolling follows real D-pad navigation, and
 stock netplay hides the complete overlay because local inventory and authoring
 state are intentionally unavailable there.
 
+The fraction is now eight guest pixels farther right beside the FREE DUEL
+title. Empty/unavailable cells and Build Deck clear the prior CPU name,
+fraction and completion state immediately; returning to an opponent restores
+its current backend-derived fraction on that accepted cursor move.
+
+The supplied slot-0 state exposed that the old overlay used byte
+`0x8009B32E`, which is the last valid duelist rather than the live cursor, and
+reconstructed a three-row window from that stale selection. The stock grid
+instead publishes pending cursor column/row at `0x8009B36C/D` and its exact
+pixel scroll tween at signed halfword `0x8009B148`. The overlay now uses
+those values, draws each completed global cell at
+`40 + global_row * 52 - scroll_y`, and clips to the stock grid viewport.
+Thus a border travels with its portrait during a tween, disappears when the
+portrait leaves the viewport, and returns at its proper coordinate. A debug
+bitmask records every independently visible completed cell.
+
 The completion cache follows the Drop Table backend's generation counter. In
 the final isolated live regression, Duel Master K changed from stock `12/157`
 at generation 2 to `0/1` at generation 3 immediately after importing three
@@ -303,6 +378,24 @@ Master K at scroll row 5; the copied-save state showed `12/157` with no frame,
 then a scratch-only inventory fill produced `157/157`, a frame aligned at guest
 `[244,144]`, and distinct animation frames 2 and 3. PID 3052468 shut down
 gracefully; no personal card or monitor configuration was used.
+
+The focused supplied-state rerun is
+`/tmp/ygofm-fd-scroll-baseline-PVNbW8/fixed-sequence.json` (SHA-256
+`c141bf3b11705e804bf19650c2c5623c6fe40fda628faef0c4ccb520db2968f1`).
+Its copied state SHA-256 is
+`989d1d280887fe8c683fda50999bcc50f7a21f8f62c9720d00d0d4b71499e560`.
+Simon starts complete at `[75,40]`; Right to the blank cell immediately
+reports selected -1, Left restores Simon, row 3 changes scroll to 52 and
+removes Simon's border, row 7 reaches scroll 260 with Duel Master K at
+`[244,144]`, and every upward step reverses correctly. The source state and
+normal memory-card directory were never mounted by the game.
+
+The generalized software regression then traversed every row upward and
+downward, checking each visible-cell bitmask and final guest coordinate at
+every settled scroll, plus drop edit/clear, ownership changes, toggle,
+animation and package restoration. It exited 0 through `quit_graceful`;
+evidence is `/tmp/ygofm-free-duel-final3-20260911/results.json` (SHA-256
+`acd8bfed5d01457c25e8c6f30b343e11130613f2546bac696ab77ef2ab276049`).
 
 ### CPU rename propagation
 
@@ -336,7 +429,12 @@ The live hook snapshots the pre-stock 32-bit total at results entry, then
 replaces only a matched award with `min(before + amount, 999999)`. Accepted
 amounts are 0 through 999999; parsing rejects unsupported values before state
 changes. A present-only compact star-times-number row covers the stock star
-loop and fits every six-digit value without clipping other results. Both
+loop and fits every six-digit value without clipping other results. The whole
+100x16 guest overlay is now at `[152,184]`, exactly 16 pixels right of its
+former origin with unchanged Y, and every background pixel is opaque black so
+the stock one-to-five-star row cannot bleed through. Values 99,999, 100,000
+and 999,999 fit the same six-digit-safe canvas; award arithmetic still caps
+the saved total at 999,999. Both
 mutation and presentation are disabled in stock netplay while the offline
 rules remain saved.
 
@@ -441,6 +539,12 @@ absent during the incoming flip and from the first Circle exit frame. Library
 uses the lifetime of its description object for the same open/close behavior.
 It is registered below the netplay privacy cover and is disabled for a stock
 netplay session.
+
+The placement follow-up moves only that shared footer: eight guest pixels left
+and two down. Animated deck/chest/duel/shop views now use origin `[280,205]`;
+Library uses `[280,185]`. Its 31x5 white canvas, eight-digit/leading-zero
+renderer, seven-line clearance, settled-front gate, and first-frame exit
+hiding are otherwise unchanged.
 
 The software present path now composites the same guest-overlay registry as
 OpenGL and Vulkan, through the actual picture/letterbox rectangle and below
@@ -569,52 +673,49 @@ production edit backend; it never writes an edited table directly. Both
 software-rendered owned processes used fresh verified ports and exited 0 via
 `quit_graceful`.
 
-### Sell Extra Cards
+### Sell
 
-The optional Card Shop now exposes `Triangle: Sell Extras`. Its preview lists
-every affected card, the number sold, the number retained, the effective
-per-card password-screen value, gross value, actual credit, final starchips,
-and any value lost to the 999,999 cap. Up/Down browses the complete list,
-Triangle opens the selected card's ordinary full-card view, Circle cancels
-without mutation, and Cross performs the confirmed batch. A fresh preview is
-required if deck, trunk, starchips, or a listed price changed while it was open.
+The optional Card Shop now exposes `Triangle: Sell`. It lists every card with
+a nonzero trunk count, even when the player has fewer than three total copies.
+Up/Down browses; Left/Right changes one; L1/R1 changes ten; Square toggles the
+selected maximum; Start selects or clears the complete trunk; and Triangle
+uses the ordinary full-card viewer. Each row names trunk count, active-deck
+count, quantity selected, trunk quantity retained, and per-card sell price.
+The header shows gross sale value and StarChips before and after the sale,
+including value lost at the 999,999 cap.
 
-Forbidden Memories removes deck copies from the trunk, so the shared inventory
-backend counts the 40 live deck slots plus all 722 trunk bytes. For each card,
-the sale retains `min(3, deck + trunk)` total copies and removes only surplus
-trunk copies; it never edits or reconstructs the active deck. If the deck
-already contains three copies, all trunk copies are extra. Sale value is the
-current Cards-page/password price (including a live card.ini override), and a
-zero-value extra is still removed after being shown as zero. Gross arithmetic
-is 64-bit; credited and stored starchips are capped at 999,999 with the lost
-amount stated before confirmation. The player must use the game's normal Save
-flow afterward. The feature has no persistent setting and every mutation path
-is rejected during stock netplay.
+Circle is always non-mutating. The first Cross enters an explicit confirmation
+screen and a second Cross is required to apply. Confirmation rechecks all 722
+trunk bytes, all 40 deck slots, StarChips, and every snapshotted sell price.
+Any stale value cancels the transaction and requires a fresh review. The
+shared commit validates every target before its first write, updates live and
+save-mirror storage together, and never removes or reconstructs a deck card.
+Selection/review state is harmless during netplay; every selling mutation is
+rejected while the saved offline Card Shop setting remains intact.
 
-Fresh portable software-rendered tests used isolated card images under
-`/tmp/ygofm-sell-extras-ui-lRVRCb/`,
-`/tmp/ygofm-sell-extras-restart-gYdOgb/`, and
-`/tmp/ygofm-sell-extras-shipping-ui-C1iu9x/`. They cover cancellation, stale
-preview rejection, a zero-price override, deck/trunk splits of 0/3 through
-3/255, cap saturation, no extras, card viewing, the actual Card Shop controls,
-the two game Save confirmations, and restart. The restarted save retained the
-original 40 deck slots, all 722 cards had exactly three total copies, the shop
-showed 999,999 starchips, and a new preview reported no extras. An all-722-card
-stress confirmation sold 181,984 trunk copies from 722 card types with gross
-value 30,816,957,390, capped safely, preserved the deck, and again left exactly
-three total copies of every card.
+Sell price is a single additive `sell_price = 0..999999` field in
+`card.ini`. When absent, the backend uses deterministic floor division of
+the effective integer password purchase price by three. The purchase sentinel
+999,999 is explicitly capped to a 1,000 sell price. The Cards page reports
+`derived` versus `override`, and Restore stock deletes the override and
+returns to the derived stock-compatible value. Hot reload, direct card shares,
+full `.ygomods`, and the shop all consume this same backend. Old card files
+need no new key; invalid known values are rejected during archive preflight.
+Zero is a valid explicit price. Gross uses 64-bit checked arithmetic and
+credited/stored StarChips saturate at 999,999.
 
-The repeatable final-binary suite is
-`/tmp/ygofm-sell-extras-provenance-v7-20260911/results.json` (SHA-256
-`537ec7d7a57016a05cf563adfa83642f72ec443aac1a7bc093aae78e91ca568d`).
-All 52 assertions pass, including raw live/save-mirror arrays, the complete
-722-card overflow case, zero-value removal, stale inventory and hot-reloaded
-price rejection, Circle cancellation, Triangle preview, Cross confirmation,
-native Save/Overwrite, copied-card restart, and visible no-extras reopening.
-The Card Shop setting is enabled only in the two fresh portable profiles; the
-authorized source card is hashed before and after and remains unchanged. Both
-tracked software-rendered processes used separate verified ports and exited 0
-through `quit_graceful`; the suite retains the native route and panel captures.
+The final isolated software run is
+`/tmp/ygofm-sell-final3-20260911/results.json` (SHA-256
+`3effc78f9f09daf62da78fee064396bf9ea2670c2184a1072c23970fd767160b`).
+All 77 checks pass, including
+one/partial/255 quantities, Cancel, mandatory review, stale inventory and
+hot-reloaded price rejection, zero-value removal, cap saturation, all 722
+cards and 184,110 trunk copies, an intentionally greater-than-32-bit gross,
+sell-price-only export, clear/import, malformed/future rejection, `.ygomods`,
+Cards-page Restore, native Save/Overwrite, and a separate-process restart.
+Both owned processes (PIDs 3266261/3266780, ports 53775/34987) used copied
+cards and fresh portable directories, exited 0 through `quit_graceful`, and
+the source memory-card hash remained unchanged.
 
 ### Card descriptions
 
@@ -649,9 +750,9 @@ eight-line Library image is
   (`psxrecomp-game`),
   `b22d50841a8b47f26a930c09a56b4c1328056a8b7ae61794be09b4046b08ab4d`
   (`psxrecomp-bios`),
-  `419cb795feee79d2574f5715565198852c0f3d8774826c8d892eaab661e6c454`
+  `5ed5fa5805fa2b3eb91f76689585ba994d2debcaa78b172f261e58e143cbfc4a`
   (debug game), and
-  `9f64808f656cf8992542d25eda058e2d631cf02e109919087addc3b3ab624f1c`
+  `82933155ff497b56b6d2546e6c2fbaaec64a781921775c90ed62f3ecd02b5f9a`
   (release game).
 - `build-dbg/menu_preview --selftest`: PASS.
 - Description boundary/live suite: PASS.
@@ -677,7 +778,8 @@ eight-line Library image is
   as a speed pass (`/tmp/ygofm-final-audio-20260911-final/results.json`).
 - Netplay normal, rollback 35/15, and seeded 5 percent loss: PASS on debug
   binary `da61649a...`, the last build containing guest mutation/serialization
-  changes. The later binary differs only in FM Editor native-window geometry.
+  changes. The final binary's stock-policy rerun above separately covers the
+  later editor, Sell, and display-only overlay changes.
   Coverage includes both face-down owners, result/trade continuation, graceful
   carry-back and zero simulator overflow. The old fixed 256-packet
   delay queue did overflow in the first 35/15 attempt; recomp-net commit
@@ -687,7 +789,7 @@ eight-line Library image is
 - `Play.sh` resolves `build-dbg` normally and `build` with `-rel`; both files
   were rebuilt at this checkpoint.
 
-The complete psxrecomp CTest run has 56/62 enabled tests passing and three
+The final complete psxrecomp CTest rerun has 56/62 enabled tests passing and three
 performance tests disabled. Six failures also reproduce from an archive of
 the unmodified starting psxrecomp commit: dirty-text continuation source-shape,
 reachable-discovery `/tmp/test.exe` fixture, AOT candidate-capacity expectation,
@@ -695,7 +797,9 @@ hybrid-input source-shape, launcher pad-mode source-shape, and launcher Vulkan
 source-shape. They are baseline test debt, not claimed passes. The independent
 static overlay compilation suite passes 10/10. Only the existing third-party
 `stb_image.h` GCC string-overflow diagnostic appears in title compilation; no
-new title-source warning was introduced.
+new title-source warning was introduced. The final CTest log is
+`/tmp/ygofm-recompiler-ctest-20260911.log` (SHA-256
+`b1572b7bc7f5c9e554667cd386b453fe6ee9cea57060c6ce86add597f8b019fa`).
 
 ## Known unverified platform behavior
 

@@ -115,20 +115,24 @@ then an EXCHANGE / QUIT menu. down 6 + cross 12 quits without buying.
 
 CARD SHOP: from CAMPAIGN on the loaded-save menu, Cross enters the shopkeeper
 room. Dismiss `Hello there!`, select CARD SHOP, and dismiss `What are you
-looking for?` to open Buy Card Packs. Triangle opens Sell Extra Cards. The
-preview is read-only: Up/Down browses, Triangle views the selected card, Circle
-cancels, and Cross confirms the batch. It keeps up to three copies total across
-the 40 deck slots and trunk, never changes the deck, uses the effective
-Cards/password price, and shows gross value, credited value, final starchips,
-and cap loss. After a sale, close the panel, move from CARD SHOP to SAVE, and
+looking for?` to open Buy Card Packs. Triangle opens Sell. The quantity editor
+is read-only: Up/Down browses, Left/Right changes one, L1/R1 changes ten,
+Square toggles the selected card's maximum, Start toggles the complete trunk,
+Triangle views the selected card, and Circle cancels. Cross opens a separate
+confirmation screen; only a second Cross commits. Every trunk copy can be
+selected, regardless of deck count, and the active deck is never changed. The
+screen shows trunk, deck, sell, retained, per-card sell price, gross value,
+credited value, before/after starchips, and cap loss. After a sale, close the
+panel, move from CARD SHOP to SAVE, and
 confirm both SAVE? and OVERWRITE?; mounting/loading changes the memory-card
 mtime and is not proof that a save occurred. Restart with a new explicit
 portable `--memcard-dir` containing a copy of that saved card.
 
 For deterministic checks, debug command `card_shop_sell` takes `op` equal to
-`preview`, `state`, `confirm`, or `cancel`. Preview returns all entries and
-does not write. Confirm rechecks the snapshotted deck, trunk, starchips and
-listed prices, returning `INVENTORY OR PRICES CHANGED - REVIEW AGAIN` if any
+`preview`, `set` (`card`, `quantity`), `all`, `clear`, `review`, `state`,
+`confirm`, or `cancel`. Preview and selection do not write. Confirm requires
+the review state and rechecks the snapshotted deck, trunk, starchips and listed
+sell prices, returning `INVENTORY OR PRICES CHANGED - REVIEW AGAIN` if any
 changed. Confirm is rejected during stock netplay. The inventory addresses are
 live deck `0x801D0200` (40
 u16 card IDs), live trunk `0x801D0250` (722 bytes), and live starchips
@@ -142,6 +146,15 @@ EMPTY tile under Build Deck, then three duelists; row 2 five duelists. DOWN
 from Build Deck lands on the empty tile (no label, cross does nothing); RIGHT
 twice (6 frames each) reaches the first duelist of row 1. cross 14 -> deck
 view (mode 0xC3), circle 12 starts the duel, the hand is dealt ~15 s later.
+
+`{"cmd":"free_duel_completion"}` reports pending cursor `[column,row]`,
+the stock grid's exact signed `scroll_y`, selected opponent/fraction and a
+`border_mask` of completed visible cells. Build Deck and unavailable cells
+must report `selected:-1` immediately. At a settled scroll, a global cell at
+row `r`, column `c` is framed at guest
+`[19 + round(c*56.25), 40 + r*52 - scroll_y]` while it intersects the
+40-through-187 grid viewport. `tools/free_duel_completion_regression.py`
+walks every row in both directions and checks the mask/placement.
 
 To control the hand, write the 40-card deck at 0x801D0200 (u16 little-endian
 ids) WHILE ON THE GRID, before cross: `{"cmd":"write_mem","addr":"801D0200",
@@ -195,10 +208,10 @@ g['btn'][i]            # button centres: 0 Save, 1 Restore stock, 2 Open folder,
                        # modal: modal_ok / modal_cancel), 13 Dev Card Effects
 g['value'][f]          # field rects [x,y,w,h]: 0 name, 1 description, 2 atk, 3 def,
                        # 4 star1, 5 star2, 6 type, 7 level, 8 attribute, 9 price,
-                       # 10 password, 11 frame, 12 name color, 13 effect,
-                       # 14 amount, 15 target, 16 terrain, 17 ritual,
-                       # 18 equip bonus, 19 equips, 20 boosts,
-                       # 21 field creatures, 22 trap ATK max
+                       # 10 sell price, 11 password, 12 frame, 13 name color,
+                       # 14 effect, 15 amount, 16 target, 17 terrain, 18 ritual,
+                       # 19 equip bonus, 20 equips, 21 boosts,
+                       # 22 field creatures, 23 trap ATK max
 g['modal_ok'], g['modal_cancel']                 # the confirm dialog buttons
 dbg.q({'cmd':'card_manager_set','card':1})       # select a card
 dbg.q({'cmd':'card_manager_set','search':'elf'})
@@ -213,6 +226,11 @@ dbg.q({'cmd':'card_manager_shot','path':'/tmp/cm.ppm'})
 Editing a text field: click its value rect, ctrl+a, type, return, then click
 Save (btn 0). The state json's `msg` is the status line; `edited` says whether
 the selected card has a pack; `name`, `desc`, `atk` ... are the editor's values.
+Sell price is additive: an absent `sell_price` derives
+`floor(effective password Price / 3)`; effective Price 999,999 is the one
+exception and derives 1,000. The Cards page labels the value `derived` or
+`override`, and Restore stock removes the override. Valid explicit values
+are 0 through 999,999.
 
 Packs without the window: `{"cmd":"card_packs"}` lists loaded packs and the
 live directory, `{"cmd":"card_packs_reload"}` re-reads them (add `"card":id`
@@ -221,11 +239,17 @@ second (known cards) or ten (new folders).
 
 Share files without the dialog: `{"cmd":"card_share","op":"export"|"import"|"inspect","path":...}`.
 
+FM Editor performance counters are returned by `{"cmd":"fm_editor"}` in
+`perf`: ticks, SDL events, presents, present time/max, tab rebuilds/uploads,
+and failures for every page. Use `{"cmd":"fm_editor","reset_profile":1}`
+before a measured interval. `tools/fm_editor_desktop_regression.py` records a
+closed interval and each open page at a requested 1x-4x speed.
+
 Card-view password presentation: `{"cmd":"card_password_view"}` reports the
 shared detail-view detector, selected card/effective password, incoming/outgoing
 visibility gate, guest origin/size, and the final renderer placement. Deck,
-chest, and duel detail views use origin `[288,203]`; the shorter Library view
-uses `[288,183]`. The canvas is `[31,5]`: eight compact white digits aligned to
+chest, and duel detail views use origin `[280,205]`; the shorter Library view
+uses `[280,185]`. The canvas is `[31,5]`: eight compact white digits aligned to
 the description panel's lower-right, below a full seven-line description.
 `active:1,visible:0` is expected while an animated card front is flipping in;
 `visible` becomes 1 only at flip state `0xA0` and returns to 0 on Circle's very

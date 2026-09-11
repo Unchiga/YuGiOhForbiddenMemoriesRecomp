@@ -42,8 +42,9 @@
 
 #define MODE_ADDR       0x8009B26Cu
 #define FREE_DUEL_MODE  0xC6u
-#define SELECTED_ADDR   0x8009B32Eu
-#define SELECTED_BIAS   41
+#define CURSOR_COL_ADDR 0x8009B36Cu
+#define CURSOR_ROW_ADDR 0x8009B36Du
+#define SCROLL_Y_ADDR   0x8009B148u
 #define AVAIL_ADDR      0x80169030u
 
 #define SCREEN_W 320
@@ -60,7 +61,7 @@
 #define BORDER_Y0 40
 #define BORDER_DY 52
 
-#define TEXT_RIGHT 289
+#define TEXT_RIGHT 297
 #define TEXT_Y 17
 
 static uint32_t s_canvas[SCREEN_W * SCREEN_H];
@@ -74,13 +75,16 @@ static int s_counts_ready;
 static int s_screen;
 static int s_visible;
 static int s_selected = -1;
+static int s_cursor_col = -1, s_cursor_row = -1;
 static int s_top_row;
+static int s_scroll_y;
 static int s_frame;
 static int s_anim_clock;
 static int s_present_hold;
 static int s_dirty = 1;
 static int s_completed_total;
 static int s_border_count;
+static uint64_t s_border_mask;
 static int s_last_border_x = -1, s_last_border_y = -1;
 static int s_placement[10];
 static unsigned s_edit_gen;
@@ -93,14 +97,6 @@ static int border_x(int col)
 {
     /* The real horizontal pitch is 56.25 pixels. */
     return BORDER_X0 + (col * 225 + 2) / 4;
-}
-
-static int clamp_top(int row)
-{
-    int top = row - (VIEW_ROWS - 1);
-    if (top < 0) top = 0;
-    if (top > GRID_ROWS - VIEW_ROWS) top = GRID_ROWS - VIEW_ROWS;
-    return top;
 }
 
 static void seed_tier(int duelist, int tier, uint16_t *weights)
@@ -221,7 +217,10 @@ static void blit_border(int x, int y)
     for (int row = 0; row < BORDER_H; row++)
         for (int col = 0; col < BORDER_W; col++) {
             const uint32_t p = s_border[row * BORDER_W + col];
-            if (p >> 24) put_pixel(x + col, y + row, p);
+            const int py = y + row;
+            /* Match the stock grid's clipping window while it scrolls. */
+            if ((p >> 24) && py >= BORDER_Y0 && py < 188)
+                put_pixel(x + col, py, p);
         }
 }
 
@@ -238,6 +237,7 @@ static void redraw(void)
 {
     memset(s_canvas, 0, sizeof s_canvas);
     s_border_count = 0;
+    s_border_mask = 0;
     s_last_border_x = s_last_border_y = -1;
     if (!s_visible || !s_counts_ready) { s_dirty = 0; return; }
 
@@ -250,15 +250,17 @@ static void redraw(void)
     }
 
     psx_free_duel_completion_art_frame(s_frame, s_border);
-    for (int vr = 0; vr < VIEW_ROWS; vr++) {
-        const int global_row = s_top_row + vr;
+    for (int global_row = 0; global_row < GRID_ROWS; global_row++) {
+        const int y = BORDER_Y0 + global_row * BORDER_DY - s_scroll_y;
+        if (y >= 188 || y + BORDER_H <= BORDER_Y0) continue;
         for (int col = 0; col < GRID_COLS; col++) {
             const int cell = global_row * GRID_COLS + col;
             const int duelist = cell - 1;
             if (duelist < 0 || duelist >= PSX_DROP_DB_DUELISTS ||
                 !s_complete[duelist] || !cell_present(cell)) continue;
-            const int x = border_x(col), y = BORDER_Y0 + vr * BORDER_DY;
+            const int x = border_x(col);
             blit_border(x, y);
+            s_border_mask |= UINT64_C(1) << cell;
             s_last_border_x = x;
             s_last_border_y = y;
             s_border_count++;
@@ -273,19 +275,36 @@ static void tick(void)
     const int netplay = psx_ygo_netplay_session();
     const int screen = psx_mod_game_started() && !netplay &&
         psx_mod_read_byte(MODE_ADDR) == FREE_DUEL_MODE;
-    const int raw = screen ? (int)psx_mod_read_byte(SELECTED_ADDR) : 0;
-    const int cell = raw >= SELECTED_BIAS - 1 &&
-                     raw < SELECTED_BIAS + PSX_DROP_DB_DUELISTS
-                         ? raw - (SELECTED_BIAS - 1) : 0;
-    const int selected = raw >= SELECTED_BIAS &&
-                         raw < SELECTED_BIAS + PSX_DROP_DB_DUELISTS &&
-                         cell_present(cell) ? raw - SELECTED_BIAS : -1;
-    const int selected_row = cell / GRID_COLS;
+    /* 0x8009B32E is the last VALID highlighted duelist. The stock overlay
+     * intentionally leaves it unchanged while the cursor traverses an empty
+     * cell, so it cannot drive either the fraction or the scroll window.
+     * B36C/D are the pending cursor coordinates and change as soon as input is
+     * accepted (B366/7 lag until the eight-frame cursor tween completes).
+     * B148 is the stock object's exact pixel scroll, including the tween. */
+    const int cursor_col = screen
+        ? (int)(int8_t)psx_mod_read_byte(CURSOR_COL_ADDR) : -1;
+    const int cursor_row = screen
+        ? (int)(int8_t)psx_mod_read_byte(CURSOR_ROW_ADDR) : -1;
+    const int cursor_valid = cursor_col >= 0 && cursor_col < GRID_COLS &&
+                             cursor_row >= 0 && cursor_row < GRID_ROWS;
+    const int cell = cursor_valid ? cursor_row * GRID_COLS + cursor_col : -1;
+    const int selected = cursor_valid && cell_present(cell) ? cell - 1 : -1;
+    int next_scroll = screen
+        ? (int)(int16_t)(psx_mod_read_byte(SCROLL_Y_ADDR) |
+              ((uint16_t)psx_mod_read_byte(SCROLL_Y_ADDR + 1u) << 8)) : 0;
+    if (next_scroll < 0) next_scroll = 0;
+    if (next_scroll > (GRID_ROWS - VIEW_ROWS) * BORDER_DY)
+        next_scroll = (GRID_ROWS - VIEW_ROWS) * BORDER_DY;
+    const int next_top = next_scroll / BORDER_DY;
+
+    s_cursor_col = cursor_col;
+    s_cursor_row = cursor_row;
 
     if (screen != s_screen) {
         s_screen = screen;
         s_visible = s_enabled && screen;
-        s_top_row = screen ? clamp_top(selected_row) : 0;
+        s_top_row = screen ? next_top : 0;
+        s_scroll_y = screen ? next_scroll : 0;
         if (!screen) s_selected = -1;
         s_counts_ready = 0;
         s_dirty = 1;
@@ -298,11 +317,9 @@ static void tick(void)
         s_dirty = 1;
         s_present_hold = 3;
     }
-    if (selected_row < s_top_row) {
-        s_top_row = selected_row;
-        s_dirty = 1;
-    } else if (selected_row >= s_top_row + VIEW_ROWS) {
-        s_top_row = selected_row - VIEW_ROWS + 1;
+    if (next_scroll != s_scroll_y) {
+        s_scroll_y = next_scroll;
+        s_top_row = next_top;
         s_dirty = 1;
     }
 
@@ -392,14 +409,18 @@ int psx_free_duel_completion_state_json(char *out, unsigned cap)
         "\"enabled\":%d,\"screen\":%d,\"visible\":%d,\"netplay\":%d,"
         "\"selected\":%d,\"name\":\"%s\",\"owned\":%d,"
         "\"obtainable\":%d,\"complete\":%d,\"empty_is_complete\":false,"
-        "\"completed_opponents\":%d,\"top_row\":%d,\"frame\":%d,"
-        "\"borders\":%d,\"last_border\":[%d,%d],"
+        "\"completed_opponents\":%d,\"cursor\":[%d,%d],"
+        "\"top_row\":%d,\"scroll_y\":%d,\"frame\":%d,"
+        "\"borders\":%d,\"border_mask\":\"0x%010llX\",\"last_border\":[%d,%d],"
         "\"inventory_ready\":%d,\"drop_missing\":%d,"
         "\"edit_gen\":%u,\"cpu_gen\":%u,"
         "\"placement\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
         s_enabled, s_screen, s_enabled && s_visible && !psx_ygo_netplay_session(),
         psx_ygo_netplay_session(), s_selected, name, owned, obtainable,
-        complete, s_completed_total, s_top_row, s_frame, s_border_count,
+        complete, s_completed_total, s_cursor_col, s_cursor_row,
+        s_top_row, s_scroll_y, s_frame, s_border_count,
+        (unsigned long long)((s_enabled && s_visible &&
+                              !psx_ygo_netplay_session()) ? s_border_mask : 0),
         s_last_border_x, s_last_border_y, s_inventory_ready, s_missing_on,
         s_edit_gen, s_cpu_gen,
         s_placement[0], s_placement[1], s_placement[2], s_placement[3],

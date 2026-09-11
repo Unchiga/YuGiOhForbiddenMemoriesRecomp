@@ -19,6 +19,8 @@ def main():
     for name in ('exe', 'disc', 'seed', 'menu-state', 'menu-reference', 'scratch'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--port', type=int, default=4386)
+    parser.add_argument('--slot', type=int, choices=range(10), default=7,
+                        help='savestate slot number encoded by the supplied file')
     parser.add_argument('--seconds', type=float, default=30)
     parser.add_argument('--speeds', type=int, nargs='+', choices=range(1, 5), default=[1, 2, 3, 4, 1])
     parser.add_argument('--borderless', action='store_true')
@@ -46,6 +48,7 @@ def main():
     env.pop('APPIMAGE', None)
     env.pop('APPDIR', None)
     env['PSX_RUNTIME_PERF_DIAG'] = '1'
+    env['PSX_PORTABLE'] = '1'
     results = []
     owned = False
     with (root / 'runtime.log').open('w') as log, (root / 'commands.jsonl').open('w') as commands:
@@ -75,7 +78,7 @@ def main():
                 time.sleep(.3)
             assert owned, 'Title did not initialize'
             time.sleep(3)
-            q('savestate', op='load', slot=7)
+            q('savestate', op='load', slot=args.slot)
             q('game_speed', mult=1)
             time.sleep(5)
             assert game_route.screen_matches(str(args.menu_reference), 'loaded-menu')[0]

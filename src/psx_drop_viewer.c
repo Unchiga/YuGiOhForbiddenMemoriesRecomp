@@ -2986,7 +2986,8 @@ static void tick(void)
     /* The search caret blinks at the usual 2 Hz-ish; only the phase flip
      * redraws. */
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; s_dirty = 1; }
     }
     /* The card table appears part way through boot, the mod row can move at

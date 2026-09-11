@@ -53,7 +53,7 @@
 #define RANK_LP          0x14u
 #define CHIPS_ADDR       0x801D07E0u
 
-#define ORIGIN_X 136
+#define ORIGIN_X 152
 #define ORIGIN_Y 184
 #define CANVAS_W 100
 #define CANVAS_H 16
@@ -100,9 +100,9 @@ static void blit(const PsxSprite *sprite, int dx, int dy)
 
 static void redraw(void)
 {
-    /* Opaque enough to hide every stock star, transparent enough to retain
-     * the summary art as context. */
-    for (int i = 0; i < CANVAS_W * CANVAS_H; i++) s_canvas[i] = 0xD0000000u;
+    /* Fully cover the stock one-to-five-star row. A translucent replacement
+     * let that old row show through the authored amount. */
+    for (int i = 0; i < CANVAS_W * CANVAS_H; i++) s_canvas[i] = 0xFF000000u;
     blit(&psx_spr_shop_star, 0, 0);
     /* A compact white x between the starchip and the amount. */
     for (int i = 0; i < 5; i++) {
@@ -332,6 +332,7 @@ int psx_starchip_rewards_state_json(char *out, unsigned cap)
         "\"decided\":%d,\"matched\":%d,\"rule\":%d,"
         "\"mode\":%d,\"opponent\":%d,\"opponent_name\":\"%s\",\"outcome\":%d,\"rank\":%d,"
         "\"amount\":%u,\"before\":%u,\"after\":%u,\"cap_loss\":%u,"
+        "\"origin\":[%d,%d],\"size\":[%d,%d],\"background_alpha\":255,"
         "\"page\":%d,\"visible\":%d,\"applies\":%u,"
         "\"stock_fallbacks\":%u,\"placement\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
         psx_drop_edits_starchip_count(), s_results_active, s_result_calls,
@@ -339,7 +340,7 @@ int psx_starchip_rewards_state_json(char *out, unsigned cap)
         opponent_name,
         s_outcome, s_rank,
         (unsigned)s_amount, (unsigned)s_before, (unsigned)s_after,
-        (unsigned)s_lost_to_cap, page,
+        (unsigned)s_lost_to_cap, ORIGIN_X, ORIGIN_Y, CANVAS_W, CANVAS_H, page,
         s_matched && s_results_active && page == 0, s_applies,
         s_stock_fallbacks,
         s_placement[0], s_placement[1], s_placement[2], s_placement[3],

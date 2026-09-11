@@ -77,6 +77,24 @@ def assert_contained(state, expected_display):
         raise AssertionError(f"outer rect is not contained in usable rect: {state!r}")
 
 
+def runtime_sample(port, seconds):
+    audio0 = query(port, {"cmd": "audio_stats"})
+    frame0 = query(port, {"cmd": "frame"})["frame"]
+    started = time.monotonic()
+    time.sleep(seconds)
+    elapsed = time.monotonic() - started
+    frame1 = query(port, {"cmd": "frame"})["frame"]
+    audio1 = query(port, {"cmd": "audio_stats"})
+    return {
+        "seconds": elapsed,
+        "fps": (frame1 - frame0) / elapsed,
+        "frames": frame1 - frame0,
+        "audio_frames": audio1["taps"][0]["frames"] - audio0["taps"][0]["frames"],
+        "underruns": audio1["out"]["underruns"] - audio0["out"]["underruns"],
+        "overflow_drops": audio1["out"]["overflow_drops"] - audio0["out"]["overflow_drops"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
@@ -96,16 +114,46 @@ def main():
                         help="physical mode represented by this run, e.g. 1920x1080")
     parser.add_argument("--desktop-scale", type=float,
                         help="desktop scale represented by this run, e.g. 2.0")
+    parser.add_argument("--profile-seconds", type=float, default=2.0)
+    parser.add_argument("--speed", type=int, choices=range(1, 5), default=2)
+    parser.add_argument("--load-slot", type=int, choices=range(10),
+                        help="after full boot, load this copied scratch savestate")
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            query(args.port, {"cmd": "ping"})
+            break
+        except (ConnectionError, OSError):
+            time.sleep(0.25)
+    else:
+        raise RuntimeError("debug server did not become ready")
+    if args.load_slot is not None:
+        query(args.port, {"cmd": "game_speed", "mult": 8})
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            if query(args.port, {"cmd": "frame"})["frame"] > 8400:
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("game did not reach the initialized title era")
+        query(args.port, {"cmd": "savestate", "op": "load",
+                          "slot": args.load_slot})
+        time.sleep(4.0)
+    query(args.port, {"cmd": "game_speed", "mult": args.speed})
+    query(args.port, {"cmd": "fm_editor", "open": 0, "reset_profile": 1})
+    closed_sample = runtime_sample(args.port, args.profile_seconds)
     query(args.port, {"cmd": "fm_editor", "open": 1, "page_name": "cards"})
     initial = wait_for_editor(args.port)
     assert_contained(initial, args.expected_display)
     window_id = initial["window_id"]
 
     pages = {}
+    page_samples = {}
     for index, page in enumerate(PAGES):
+        query(args.port, {"cmd": "fm_editor", "reset_profile": 1})
         canvas = args.output / f"canvas-{page}.ppm"
         state = query(
             args.port,
@@ -123,6 +171,12 @@ def main():
                 args.output / f"native-{page}.png", args.kwin_script_object
             )
         pages[page] = state
+        # Page construction (notably first-time CPU portraits) is a separate
+        # cold-switch cost. Let it settle before measuring steady-state game
+        # and audio cadence; its editor counters remain recorded above.
+        time.sleep(1.0)
+        page_samples[page] = runtime_sample(args.port, args.profile_seconds)
+        page_samples[page]["editor"] = query(args.port, {"cmd": "fm_editor"})
 
     oversize = query(
         args.port,
@@ -143,19 +197,33 @@ def main():
         native_capture(args.output / "oversize-fitted.png", args.kwin_script_object)
 
     result = {
-        "schema": 1,
+        "schema": 2,
         "port": args.port,
         "expected_display": args.expected_display,
         "video_driver": os.environ.get("SDL_VIDEODRIVER", "auto"),
         "initial": initial,
         "pages": pages,
         "oversize_fitted": oversize,
+        "profile": {
+            "requested_speed": args.speed,
+            "closed": closed_sample,
+            "pages": page_samples,
+        },
         "checks": {
             "one_window_across_tabs": True,
             "all_pages_fit_usable_desktop": True,
             "oversize_request_refitted": True,
             "canvas_captures_nonempty": True,
             "native_captures_nonempty": bool(args.native),
+            "profile_counters_present": all(
+                sample["editor"].get("renderer") and sample["editor"].get("perf")
+                for sample in page_samples.values()
+            ),
+            "tab_uploads_not_per_present": all(
+                next(row for row in sample["editor"]["perf"] if row["page"].lower().replace(" ", "_") ==
+                     ("drop_tables" if page == "drops" else page))["tab_uploads"] <= 1
+                for page, sample in page_samples.items()
+            ),
         },
     }
     if args.executable:

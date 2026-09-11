@@ -1279,7 +1279,8 @@ static void tick(void)
         finish_pick(kind, path);
     }
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; s_dirty = 1; }
     }
     {   /* the edits, the card names and the save's records all move underneath */
@@ -1289,7 +1290,21 @@ static void tick(void)
     }
     if (s_msg[0] && SDL_GetTicks() >= s_msg_until) { s_msg[0] = 0; s_dirty = 1; }
     static uint32_t last_record_poll;
-    if (SDL_GetTicks() - last_record_poll > 500u) { last_record_poll = SDL_GetTicks(); s_dirty = 1; }
+    static uint64_t last_record_hash;
+    if (SDL_GetTicks() - last_record_poll > 500u) {
+        uint64_t hash = 1469598103934665603ull;
+        last_record_poll = SDL_GetTicks();
+        for (int d = 0; d < NDUEL; d++) {
+            int wins = 0, losses = 0;
+            const int have = psx_cpu_record(d, &wins, &losses);
+            hash ^= (uint64_t)(unsigned)(have ? wins + 1 : 0); hash *= 1099511628211ull;
+            hash ^= (uint64_t)(unsigned)(have ? losses + 1 : 0); hash *= 1099511628211ull;
+        }
+        if (hash != last_record_hash) {
+            last_record_hash = hash;
+            s_dirty = 1;
+        }
+    }
     if (!s_dirty) return;
     draw();
     s_dirty = 0;

@@ -33,11 +33,14 @@ int  psx_card_shop_state_json(char *out, unsigned cap);
  * whether that name matched the config at all. */
 int  psx_card_shop_card_json(char *out, unsigned cap, const char *name);
 
-/* SELL EXTRAS flow used by the panel and live regression command. Preview is
- * non-mutating and snapshots deck/trunk/prices; confirm refuses stale state,
- * netplay, or a missing save. Cancel discards the snapshot. */
+/* SELL flow used by the panel and live regression command. Preview is
+ * non-mutating and snapshots deck/trunk/prices; quantities are trunk-only;
+ * confirm refuses stale state, netplay, or a missing save. */
 int  psx_card_shop_sell_preview(char *msg, unsigned cap);
+int  psx_card_shop_sell_review(char *msg, unsigned cap);
 int  psx_card_shop_sell_confirm(char *msg, unsigned cap);
+int  psx_card_shop_sell_set_quantity(int card, int quantity, char *msg, unsigned cap);
+int  psx_card_shop_sell_select_all(int selected, char *msg, unsigned cap);
 void psx_card_shop_sell_cancel(void);
 int  psx_card_shop_sell_state_json(char *out, unsigned cap);
 

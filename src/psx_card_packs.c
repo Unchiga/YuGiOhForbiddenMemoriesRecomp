@@ -650,6 +650,10 @@ int psx_card_packs_validate(const PsxCardPack *candidate, char *err, unsigned er
         if (err) snprintf(err, errcap, "Card id is invalid");
         return 0;
     }
+    if (candidate->sell_price < -1 || candidate->sell_price > 999999) {
+        if (err) snprintf(err, errcap, "Sell price is 0 to 999999");
+        return 0;
+    }
     if (candidate->description[0] &&
         !psx_card_packs_validate_description(candidate->description, err, errcap)) return 0;
     if (candidate->field_targets_set) {
@@ -1125,7 +1129,7 @@ static void cfg_reset(PsxCardPack *c, int id)
 {
     memset(c, 0, sizeof *c);
     c->id = id;
-    c->attack = c->defense = c->star1 = c->star2 = c->type = c->level = c->attribute = c->price = -1;
+    c->attack = c->defense = c->star1 = c->star2 = c->type = c->level = c->attribute = c->price = c->sell_price = -1;
     psx_card_packs_effects_reset(c);
 }
 
@@ -1373,6 +1377,11 @@ static int read_ini(int id, PsxCardPack *c)
             c->attribute = parse_enum(val, ATTR_NAMES, 8, 0, 0, 7);
         } else if (!strcmp(key, "price") || !strcmp(key, "cost")) {
             const int v = atoi(val); if (v >= 0 && v <= 999999) c->price = v;
+        } else if (!strcmp(key, "sell_price")) {
+            char *end = NULL;
+            const long v = strtol(val, &end, 10);
+            if (end != val && !*end && v >= 0 && v <= 999999)
+                c->sell_price = (int)v;
         } else if (!strcmp(key, "password")) {
             int ok = strlen(val) == 8;
             for (int i = 0; ok && i < 8; i++) if (val[i] < '0' || val[i] > '9') ok = 0;
@@ -1838,6 +1847,28 @@ int psx_card_packs_price(int id)
     return value <= 999999u ? (int)value : -1;
 }
 
+int psx_card_packs_derive_sell_price(int purchase)
+{
+    if (purchase < 0 || purchase > 999999) return -1;
+    /* Password costs are exact integers. Floor division is deterministic,
+     * cannot overflow, and never produces a negative value. The game's
+     * 999999 "not realistically purchasable" sentinel gets a useful but
+     * bounded sale value instead of 333333. */
+    return purchase == 999999 ? 1000 : purchase / 3;
+}
+
+int psx_card_packs_sell_price(int id, int *overridden)
+{
+    if (overridden) *overridden = 0;
+    if (id < 1 || id > CARD_COUNT || !psx_card_db_ready()) return -1;
+    Pack *pk = s_packs[id];
+    if (pk && pk->present && pk->cfg.sell_price >= 0) {
+        if (overridden) *overridden = 1;
+        return pk->cfg.sell_price;
+    }
+    return psx_card_packs_derive_sell_price(psx_card_packs_price(id));
+}
+
 int psx_card_packs_stock(int id, PsxCardStock *out)
 {
     if (id < 1 || id > CARD_COUNT || !out || !psx_card_db_ready()) return 0;
@@ -1898,6 +1929,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->level >= 0)     fprintf(f, "level = %d\n", c->level);
     if (c->attribute >= 0) fprintf(f, "attribute = %s\n", psx_card_packs_attribute_name(c->attribute));
     if (c->price >= 0)     fprintf(f, "price = %d\n", c->price);
+    if (c->sell_price >= 0) fprintf(f, "sell_price = %d\n", c->sell_price);
     if (c->password[0])    fprintf(f, "password = %s\n", c->password);
     if (c->effect >= 0)    fprintf(f, "effect = %s\n", psx_card_packs_effect_name(c->effect));
     if (c->amount >= 0 || (c->effect == PSX_CARD_FX_WEAKEN && c->amount != -1)) fprintf(f, "amount = %d\n", c->amount);

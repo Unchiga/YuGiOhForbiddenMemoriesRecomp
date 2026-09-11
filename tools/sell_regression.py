@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repeatable live regression for Card Shop -> Sell Extra Cards.
+"""Repeatable live regression for Card Shop -> Sell.
 
 This is intentionally an end-to-end test, not a model of the implementation.
 It starts the current debug executable with a copied, explicitly authorized FM
@@ -27,6 +27,7 @@ import sys
 import time
 import traceback
 from typing import Any
+import zipfile
 
 from PIL import Image, ImageChops, ImageStat
 
@@ -106,8 +107,8 @@ class Evidence:
     def __init__(self, path: Path, provenance: dict[str, Any]):
         self.path = path
         self.data: dict[str, Any] = {
-            "feature": "sell-extra-cards",
-            "schema": 1,
+            "feature": "sell",
+            "schema": 2,
             "status": "running",
             "provenance": provenance,
             "checks": [],
@@ -336,6 +337,13 @@ def entry_map(state: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return {int(entry["id"]): entry for entry in state["entries"]}
 
 
+def rewrite_zip(source: Path, target: Path, replacements: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zout:
+        names = set(zin.namelist()) | set(replacements)
+        for name in sorted(names):
+            zout.writestr(name, replacements.get(name, zin.read(name)))
+
+
 def route_loaded_menu(runner: Runner) -> float:
     runner.query("game_speed", mult=8)
     reference = Image.open(ROOT / "tools" / "refs" / "title_80x60.png").convert("L")
@@ -376,16 +384,16 @@ def route_loaded_menu(runner: Runner) -> float:
 
 
 def controlled_fixture() -> tuple[list[int], bytes, dict[int, dict[str, int]]]:
-    # The seven rows deliberately cover deck/trunk splits around total=3,
-    # maximum trunk count, and the scratch zero-price card 5.
+    # Every nonzero trunk row must be available regardless of deck count.
+    # Quantities cover one-card, partial, zero-value and maximum-count sales.
     rows = {
-        4: {"deck": 0, "trunk": 3, "sell": 0, "keep": 3},
-        5: {"deck": 0, "trunk": 4, "sell": 1, "keep": 3},
-        104: {"deck": 1, "trunk": 2, "sell": 0, "keep": 3},
-        114: {"deck": 1, "trunk": 3, "sell": 1, "keep": 3},
-        195: {"deck": 2, "trunk": 1, "sell": 0, "keep": 3},
-        232: {"deck": 2, "trunk": 2, "sell": 1, "keep": 3},
-        229: {"deck": 3, "trunk": 255, "sell": 255, "keep": 3},
+        4: {"deck": 0, "trunk": 3, "sell": 1},
+        5: {"deck": 0, "trunk": 4, "sell": 2},
+        104: {"deck": 1, "trunk": 2, "sell": 0},
+        114: {"deck": 1, "trunk": 3, "sell": 3},
+        195: {"deck": 2, "trunk": 1, "sell": 1},
+        232: {"deck": 2, "trunk": 2, "sell": 2},
+        229: {"deck": 3, "trunk": 255, "sell": 255},
     }
     deck = deterministic_deck({card: row["deck"] for card, row in rows.items()})
     trunk = bytearray(CARD_COUNT)
@@ -403,20 +411,39 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     preview = sale_state(runner, "preview")
     after_preview = inventory(runner)
     entries = entry_map(preview)
-    expected_sold = {card for card, row in rows.items() if row["sell"]}
     evidence.check("preview is read-only", before["live_and_mirror_sha256"] == after_preview["live_and_mirror_sha256"])
-    evidence.check("preview lists only cards above three total copies",
-                   set(entries) == expected_sold, sorted(entries))
+    evidence.check("preview lists every card currently in the trunk",
+                   set(entries) == set(rows), sorted(entries))
     for card, row in rows.items():
-        if row["sell"]:
-            entry = entries[card]
-            evidence.check(f"card {card} split/sell/keep",
-                           (entry["deck"], entry["trunk"], entry["sell"], entry["keep"])
-                           == (row["deck"], row["trunk"], row["sell"], row["keep"]), entry)
-    evidence.check("zero-value extra is previewed", entries[5]["value"] == 0, entries[5])
+        entry = entries[card]
+        evidence.check(f"card {card} begins unselected and retained",
+                       (entry["deck"], entry["trunk"], entry["sell"], entry["retained"])
+                       == (row["deck"], row["trunk"], 0, row["trunk"]), entry)
+    evidence.check("zero-value card is previewed", entries[5]["sell_price"] == 0, entries[5])
+    evidence.check("999999 password sentinel derives to 1000 or less",
+                   all(e["sell_price"] <= 1000 for e in entries.values()
+                       if e["price_source"] == "derived" and e["sell_price"] == 1000), entries)
     evidence.check("preview arithmetic is internally exact",
                    preview["gross"] == sum(e["subtotal"] for e in entries.values())
-                   and all(e["subtotal"] == e["sell"] * e["value"] for e in entries.values()), preview)
+                   and all(e["subtotal"] == e["sell"] * e["sell_price"] for e in entries.values()), preview)
+
+    # Quantity edits remain preview-only and validate both ends of the range.
+    for card, row in rows.items():
+        runner.query("card_shop_sell", op="set", card=card, quantity=row["sell"])
+    selected = sale_state(runner, "state")
+    selected_entries = entry_map(selected)
+    evidence.check("quantity editing is read-only",
+                   before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"])
+    evidence.check("partial, single and maximum quantities are exact",
+                   all(selected_entries[c]["sell"] == row["sell"] and
+                       selected_entries[c]["retained"] == row["trunk"] - row["sell"]
+                       for c, row in rows.items()), selected_entries)
+    bad_low = runner.query("card_shop_sell", expect_ok=False, op="set", card=4, quantity=-1)
+    bad_high = runner.query("card_shop_sell", expect_ok=False, op="set", card=4, quantity=4)
+    evidence.check("out-of-range quantities are rejected without mutation",
+                   not bad_low.get("ok") and not bad_high.get("ok") and
+                   before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"],
+                   {"low": bad_low, "high": bad_high})
 
     cancelled = sale_state(runner, "cancel")
     after_cancel = inventory(runner)
@@ -426,6 +453,8 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     # A change anywhere in the inventory invalidates the whole preview, even if
     # it is a card that is not itself being sold.
     sale_state(runner, "preview")
+    runner.query("card_shop_sell", op="set", card=4, quantity=1)
+    sale_state(runner, "review")
     stale = bytearray(trunk)
     stale[721] = 1
     runner.write(LIVE_BASE + TRUNK_OFFSET, bytes(stale))
@@ -447,11 +476,13 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     price_trunk[price_card - 1] = 4
     install_inventory(runner, price_deck, bytes(price_trunk), 321)
     price_preview = sale_state(runner, "preview")
-    old_price = entry_map(price_preview)[price_card]["value"]
+    old_price = entry_map(price_preview)[price_card]["sell_price"]
+    runner.query("card_shop_sell", op="set", card=price_card, quantity=1)
+    sale_state(runner, "review")
     new_price = old_price - 1 if old_price == 999_999 else old_price + 1
     override = player / "cards" / str(price_card) / "card.ini"
     override.parent.mkdir(parents=True, exist_ok=True)
-    override.write_text(f"price = {new_price}\n")
+    override.write_text(f"sell_price = {new_price}\n")
     runner.query("card_packs_reload", card=price_card)
     price_before = inventory(runner)
     price_reply = sale_state(runner, "confirm", expect_ok=False)
@@ -465,53 +496,81 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     override.parent.rmdir()
     runner.query("card_packs_reload", card=price_card)
 
-    # Successful controlled commit, including removal of a zero-value extra.
+    # Confirmation is deliberately a second step. Successful commit includes
+    # a zero-value card and never reconstructs or edits the active deck.
     install_inventory(runner, deck, trunk, 100)
     confirmed_preview = sale_state(runner, "preview")
-    confirmed_entries = entry_map(confirmed_preview)
+    no_review = sale_state(runner, "confirm", expect_ok=False)
+    evidence.check("confirm without review is rejected", not no_review.get("ok"), no_review)
+    for card, row in rows.items():
+        runner.query("card_shop_sell", op="set", card=card, quantity=row["sell"])
+    confirmed_selected = sale_state(runner, "state")
+    confirmed_entries = entry_map(confirmed_selected)
+    reviewed = sale_state(runner, "review")
+    evidence.check("review stage is explicit and read-only",
+                   reviewed["active"] == 2 and
+                   before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"], reviewed)
     confirmed = sale_state(runner, "confirm")
     after_confirm = inventory(runner)
     expected_trunk = bytearray(trunk)
     for card, row in rows.items():
-        expected_trunk[card - 1] = min(row["trunk"], max(0, 3 - row["deck"]))
-    expected_after = min(STARCHIP_CAP, 100 + confirmed_preview["gross"])
+        expected_trunk[card - 1] = row["trunk"] - row["sell"]
+    expected_after = min(STARCHIP_CAP, 100 + confirmed_selected["gross"])
     evidence.check("confirm reports sale", "SOLD" in confirmed.get("msg", "").upper(), confirmed)
     evidence.check("confirm never changes the active deck", after_confirm["deck"] == deck)
     evidence.check("confirm writes exact retained trunk", after_confirm["trunk"] == list(expected_trunk))
     evidence.check("confirm writes cap-safe starchips", after_confirm["chips"] == expected_after,
                    {"actual": after_confirm["chips"], "expected": expected_after})
     evidence.check("confirm keeps live and mirror identical", after_confirm["live_mirror_equal"])
-    evidence.check("zero-value extras are actually removed", after_confirm["trunk"][4] == 3)
+    evidence.check("zero-value selected cards are actually removed", after_confirm["trunk"][4] == 2)
+
+    # Empty means no trunk copies at all; having deck copies cannot create a
+    # sale row. This is also the regression for never selling active-deck cards.
+    empty_trunk = bytes(CARD_COUNT)
+    install_inventory(runner, deck, empty_trunk, after_confirm["chips"])
     empty = sale_state(runner, "preview")
-    no_extra_before = inventory(runner)
+    empty_before = inventory(runner)
     empty_confirm = sale_state(runner, "confirm", expect_ok=False)
-    no_extra_after = inventory(runner)
-    evidence.check("no-extras preview is an empty valid preview",
+    empty_after = inventory(runner)
+    evidence.check("empty-trunk preview is an empty valid preview",
                    empty.get("ok") and empty["types"] == 0 and empty["copies"] == 0, empty)
-    evidence.check("no-extras confirm refuses and is read-only",
+    evidence.check("empty-trunk confirm refuses and is read-only",
                    not empty_confirm.get("ok")
-                   and no_extra_before["live_and_mirror_sha256"] == no_extra_after["live_and_mirror_sha256"],
+                   and empty_before["live_and_mirror_sha256"] == empty_after["live_and_mirror_sha256"],
                    empty_confirm)
 
-    # Cap boundary uses the same sale but only credits the remaining nine.
+    # Cap boundary uses all quantities but only credits the remaining nine.
     install_inventory(runner, deck, trunk, STARCHIP_CAP - 9)
     cap_preview = sale_state(runner, "preview")
+    sale_state(runner, "all")
+    cap_preview = sale_state(runner, "state")
     evidence.check("cap preview credits only available room",
                    cap_preview["credit"] == 9 and cap_preview["after"] == STARCHIP_CAP,
                    cap_preview)
+    sale_state(runner, "review")
     sale_state(runner, "confirm")
     cap_after = inventory(runner)
     evidence.check("cap confirm cannot overflow", cap_after["chips"] == STARCHIP_CAP)
 
-    # Every card has a maximum trunk.  The 40 unique deck cards retain two
-    # trunk copies and sell 253; the other 682 retain three and sell 252.
+    # Every card has a maximum trunk. Bulk-select sells every trunk byte while
+    # the 40 active deck card IDs and their multiplicities remain untouched.
+    # Eighteen maximum legal explicit prices make the >32-bit accumulator case
+    # deterministic instead of depending on the stock price distribution.
+    wide_cards = list(range(600, 618))
+    for card in wide_cards:
+        path = player / "cards" / str(card)
+        path.mkdir(parents=True, exist_ok=True)
+        path.joinpath("card.ini").write_text("sell_price = 999999\n", encoding="utf-8")
+    runner.query("card_packs_reload")
     all_deck = list(range(1, DECK_SLOTS + 1))
     all_trunk = bytes([255]) * CARD_COUNT
     install_inventory(runner, all_deck, all_trunk, 0)
     all_before = inventory(runner)
     all_preview = sale_state(runner, "preview")
+    sale_state(runner, "all")
+    all_preview = sale_state(runner, "state")
     all_entries = entry_map(all_preview)
-    expected_copies = DECK_SLOTS * 253 + (CARD_COUNT - DECK_SLOTS) * 252
+    expected_copies = CARD_COUNT * 255
     evidence.check("all-722 preview contains every card", all_preview["types"] == CARD_COUNT,
                    all_preview["types"])
     evidence.check("all-722 copy count is exact", all_preview["copies"] == expected_copies,
@@ -522,14 +581,18 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
                    sum(entry["subtotal"] for entry in all_entries.values()) == all_preview["gross"])
     evidence.check("all-722 preview is read-only",
                    all_before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"])
+    sale_state(runner, "review")
     sale_state(runner, "confirm")
     all_after = inventory(runner)
-    expected_all_trunk = [2] * DECK_SLOTS + [3] * (CARD_COUNT - DECK_SLOTS)
+    expected_all_trunk = [0] * CARD_COUNT
     evidence.check("all-722 commit preserves deck", all_after["deck"] == all_deck)
-    evidence.check("all-722 commit leaves three total of every card",
+    evidence.check("all-722 commit empties only the trunk",
                    all_after["trunk"] == expected_all_trunk)
     evidence.check("all-722 commit mirrors every byte", all_after["live_mirror_equal"])
     evidence.check("all-722 commit caps starchips", all_after["chips"] == STARCHIP_CAP)
+    for card in wide_cards:
+        shutil.rmtree(player / "cards" / str(card))
+    runner.query("card_packs_reload")
 
     evidence.data["cases"]["controlled"] = {
         "fixture": {str(card): row for card, row in rows.items()},
@@ -537,7 +600,7 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
         "preview": preview,
         "entries": confirmed_entries,
         "after_confirm": after_confirm,
-        "no_extras": empty,
+        "empty_trunk": empty,
     }
     evidence.data["cases"]["stale_inventory"] = stale_reply
     evidence.data["cases"]["stale_price"] = {
@@ -548,6 +611,163 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
         "before": all_before,
         "preview": all_preview,
         "after": all_after,
+    }
+    evidence.flush()
+
+
+def exercise_sell_price_data(runner: Runner, evidence: Evidence, player: Path) -> None:
+    """Qualify the single card.ini field through reload and both containers."""
+    card = 24
+    deck = deterministic_deck({card: 0})
+    trunk = bytearray(CARD_COUNT)
+    trunk[card - 1] = 1
+    card_dir = player / "cards" / str(card)
+    ini = card_dir / "card.ini"
+    card_dir.mkdir(parents=True, exist_ok=True)
+
+    def quoted_entry() -> dict[str, Any]:
+        install_inventory(runner, deck, bytes(trunk), 0)
+        return entry_map(sale_state(runner, "preview"))[card]
+
+    ini.write_text("price = 10\n", encoding="utf-8")
+    runner.query("card_packs_reload", card=card)
+    old_file = quoted_entry()
+    evidence.check("old card file without sell_price derives floor division",
+                   old_file["sell_price"] == 3 and old_file["price_source"] == "derived", old_file)
+
+    ini.write_text("price = 999999\n", encoding="utf-8")
+    runner.query("card_packs_reload", card=card)
+    sentinel = quoted_entry()
+    evidence.check("999999 purchase sentinel derives the capped 1000 sale value",
+                   sentinel["sell_price"] == 1000 and sentinel["price_source"] == "derived", sentinel)
+
+    # A sell-price-only pack must count as edited and survive export.
+    ini.write_text("sell_price = 17\n", encoding="utf-8")
+    runner.query("card_packs_reload", card=card)
+    overridden = quoted_entry()
+    evidence.check("sell-price-only hot reload uses explicit override",
+                   overridden["sell_price"] == 17 and overridden["price_source"] == "override", overridden)
+
+    cards_archive = evidence.path.parent / "sell-price.ygocards"
+    runner.query("card_share", op="export", path=str(cards_archive))
+    with zipfile.ZipFile(cards_archive) as archive:
+        exported_ini = archive.read(f"cards/{card}/card.ini").decode("utf-8")
+    evidence.check("sell-price-only edit is present in card export",
+                   "sell_price = 17" in exported_ini,
+                   {"archive": str(cards_archive), "card_ini": exported_ini})
+
+    package = evidence.path.parent / "sell-price.ygomods"
+    runner.query("mod_package", export=str(package))
+    with zipfile.ZipFile(package) as archive:
+        package_ini = archive.read(f"cards/{card}/card.ini").decode("utf-8")
+    evidence.check("sell-price-only edit is present in ygomods package",
+                   "sell_price = 17" in package_ini, str(package))
+
+    # Import rejection is preflight-transactional: malformed and future files
+    # must not replace the currently loaded override.
+    malformed = evidence.path.parent / "malformed-sell-price.ygocards"
+    rewrite_zip(cards_archive, malformed,
+                {f"cards/{card}/card.ini": b"sell_price = -1\n"})
+    malformed_reply = runner.query("card_share", expect_ok=False,
+                                   op="import", path=str(malformed))
+    evidence.check("malformed sell_price import is rejected transactionally",
+                   not malformed_reply.get("ok") and quoted_entry()["sell_price"] == 17,
+                   malformed_reply)
+
+    with zipfile.ZipFile(cards_archive) as archive:
+        manifest = archive.read("manifest.ini").decode("utf-8")
+    future_manifest = []
+    for line in manifest.splitlines():
+        future_manifest.append("version = 999" if line.startswith("version") else line)
+    future = evidence.path.parent / "future-sell-price.ygocards"
+    rewrite_zip(cards_archive, future,
+                {"manifest.ini": ("\n".join(future_manifest) + "\n").encode("utf-8")})
+    future_reply = runner.query("card_share", expect_ok=False,
+                                op="import", path=str(future))
+    evidence.check("future card format is rejected without changing the override",
+                   not future_reply.get("ok") and quoted_entry()["sell_price"] == 17,
+                   future_reply)
+
+    malformed_package = evidence.path.parent / "malformed-sell-price.ygomods"
+    rewrite_zip(package, malformed_package,
+                {f"cards/{card}/card.ini": b"sell_price = wrapped\n"})
+    malformed_package_reply = runner.query(
+        "mod_package", expect_ok=False, **{"import": str(malformed_package)})
+    evidence.check("malformed ygomods sell_price is rejected transactionally",
+                   not malformed_package_reply.get("ok") and
+                   quoted_entry()["sell_price"] == 17, malformed_package_reply)
+
+    with zipfile.ZipFile(package) as archive:
+        package_manifest = archive.read("manifest.ini").decode("utf-8")
+    future_package_manifest = []
+    for line in package_manifest.splitlines():
+        future_package_manifest.append(
+            "version = 999" if line.startswith("version") else line)
+    future_package = evidence.path.parent / "future-sell-price.ygomods"
+    rewrite_zip(package, future_package,
+                {"manifest.ini":
+                 ("\n".join(future_package_manifest) + "\n").encode("utf-8")})
+    future_package_reply = runner.query(
+        "mod_package", expect_ok=False, **{"import": str(future_package)})
+    evidence.check("future ygomods format is rejected without changing override",
+                   not future_package_reply.get("ok") and
+                   quoted_entry()["sell_price"] == 17, future_package_reply)
+
+    # Clear then import both supported containers. Each round trip must restore
+    # the same explicit source, not merely the same numeric derived value.
+    shutil.rmtree(card_dir)
+    runner.query("card_packs_reload", card=card)
+    stock = quoted_entry()
+    evidence.check("stock restore removes override and returns to derived stock value",
+                   stock["price_source"] == "derived", stock)
+    runner.query("card_share", op="import", path=str(cards_archive))
+    imported = quoted_entry()
+    evidence.check("card export clear/import restores explicit sell price",
+                   imported["sell_price"] == 17 and imported["price_source"] == "override", imported)
+
+    shutil.rmtree(card_dir)
+    runner.query("card_packs_reload", card=card)
+    runner.query("mod_package", **{"import": str(package)})
+    package_imported = quoted_entry()
+    evidence.check("ygomods clear/import restores explicit sell price",
+                   package_imported["sell_price"] == 17 and
+                   package_imported["price_source"] == "override", package_imported)
+
+    # Exercise the author-facing Cards page and its real Restore button.
+    runner.query("card_manager_set", open=1)
+    deadline = time.monotonic() + 10
+    manager: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        manager = runner.query("card_manager_set", card=card)
+        if manager.get("open") and manager.get("card") == card:
+            break
+        time.sleep(0.1)
+    evidence.check("Cards page exposes explicit sell price source",
+                   manager.get("sell_price") == "17" and
+                   manager.get("sell_price_source") == "override", manager)
+    manager_shot = evidence.path.parent / "screenshots" / "sell-price-card-manager.ppm"
+    runner.query("card_manager_shot", path=str(manager_shot))
+    restore_x, restore_y = manager["geom"]["btn"][1]
+    runner.query("card_manager_click", x=restore_x, y=restore_y, button=1)
+    time.sleep(0.5)
+    restored = quoted_entry()
+    evidence.check("Cards page Restore removes sell price override",
+                   restored["price_source"] == "derived" and not card_dir.exists(), restored)
+
+    # Leave an explicit edit for the separate-process restart check.
+    card_dir.mkdir(parents=True, exist_ok=True)
+    ini.write_text("sell_price = 17\n", encoding="utf-8")
+    runner.query("card_packs_reload", card=card)
+    runner.query("card_manager_set", open=0)
+    evidence.data["cases"]["sell_price_data"] = {
+        "old_file": old_file, "sentinel": sentinel, "override": overridden,
+        "malformed": malformed_reply, "future": future_reply,
+        "malformed_package": malformed_package_reply,
+        "future_package": future_package_reply,
+        "stock": stock, "card_import": imported, "package_import": package_imported,
+        "card_archive": {"path": str(cards_archive), "sha256": sha256_file(cards_archive)},
+        "package": {"path": str(package), "sha256": sha256_file(package)},
+        "manager_screenshot": {"path": str(manager_shot), "sha256": sha256_file(manager_shot)},
     }
     evidence.flush()
 
@@ -563,12 +783,14 @@ def exercise_actual_shop_and_save(runner: Runner, evidence: Evidence,
                                   card_path: Path) -> dict[str, Any]:
     expected_deck, _trunk, before_chips = set_actual_shop_fixture(runner)
     expected_preview = sale_state(runner, "preview")
+    sale_state(runner, "all")
+    expected_preview = sale_state(runner, "state")
     sale_state(runner, "cancel")
     before = inventory(runner)
 
     # Loaded menu begins on CAMPAIGN.  Campaign opens the shopkeeper menu;
     # CARD SHOP is its next row.  The greeting and shop question are native
-    # modal text and each require Cross before Triangle opens Sell Extras.
+    # modal text and each require Cross before Triangle opens Sell.
     runner.press("cross", 20, 6.0)
     runner.composed_shot("shop-route-01-campaign")
     runner.press("cross", 20, 3.0)
@@ -583,7 +805,7 @@ def exercise_actual_shop_and_save(runner: Runner, evidence: Evidence,
     evidence.check("actual Card Shop is open", bool(shop_state.get("open")), shop_state)
     runner.press("triangle", 12, 1.5)
     ui_preview = sale_state(runner, "state")
-    evidence.check("Triangle opens the real Sell Extras preview",
+    evidence.check("Triangle opens the real Sell quantity editor",
                    ui_preview["active"] and ui_preview["types"] == expected_preview["types"], ui_preview)
     preview_shot = runner.composed_shot("shop-preview")
 
@@ -594,6 +816,14 @@ def exercise_actual_shop_and_save(runner: Runner, evidence: Evidence,
     evidence.check("shop Circle is byte-exact",
                    before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"])
     runner.press("triangle", 12, 1.0)
+    runner.press("start", 12, 1.0)       # practical all-trunk selection
+    runner.press("cross", 12, 1.5)
+    confirmation = sale_state(runner, "state")
+    evidence.check("shop Cross enters confirmation before applying",
+                   confirmation["active"] == 2 and
+                   before["live_and_mirror_sha256"] == inventory(runner)["live_and_mirror_sha256"],
+                   confirmation)
+    confirm_shot = runner.composed_shot("shop-confirm")
     runner.press("cross", 12, 1.5)
     after = inventory(runner)
     evidence.check("shop Cross preserves deck", after["deck"] == expected_deck)
@@ -622,7 +852,7 @@ def exercise_actual_shop_and_save(runner: Runner, evidence: Evidence,
         "before": before,
         "expected_preview": expected_preview,
         "after": after,
-        "screenshots": [preview_shot, sold_shot, save_shot],
+        "screenshots": [preview_shot, confirm_shot, sold_shot, save_shot],
         "memory_card_sha256_before": prior_card_hash,
         "memory_card_sha256_after": saved_hash,
     }
@@ -637,12 +867,25 @@ def exercise_restart(runner: Runner, evidence: Evidence,
     evidence.check("restart reloads sold trunk byte-exact", restarted["trunk"] == after["trunk"])
     evidence.check("restart reloads sold starchips", restarted["chips"] == after["chips"])
     evidence.check("restart inventory live/mirror exact", restarted["live_mirror_equal"])
-    no_extras = sale_state(runner, "preview")
-    evidence.check("restart Sell Extras has nothing left to sell",
-                   no_extras["types"] == 0 and no_extras["copies"] == 0, no_extras)
+    runner.query("card_manager_set", open=1)
+    deadline = time.monotonic() + 10
+    manager: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        manager = runner.query("card_manager_set", card=24)
+        if manager.get("open") and manager.get("card") == 24:
+            break
+        time.sleep(0.1)
+    evidence.check("sell-price-only edit survives process restart",
+                   manager.get("sell_price") == "17" and
+                   manager.get("sell_price_source") == "override", manager)
+    runner.query("card_manager_set", open=0)
+    time.sleep(0.25)
+    empty = sale_state(runner, "preview")
+    evidence.check("restart Sell has an empty trunk",
+                   empty["types"] == 0 and empty["copies"] == 0, empty)
     sale_state(runner, "cancel")
 
-    # Re-enter the actual shop to record the visible no-extras outcome.
+    # Re-enter the actual shop to record the visible empty-trunk outcome.
     runner.press("cross", 20, 6.0)
     runner.composed_shot("restart-shop-route-01-campaign")
     runner.press("cross", 20, 3.0)
@@ -655,14 +898,14 @@ def exercise_restart(runner: Runner, evidence: Evidence,
     runner.composed_shot("restart-shop-route-05-pack-panel")
     runner.press("triangle", 12, 1.5)
     visible = sale_state(runner, "state")
-    evidence.check("restart shop no-extras preview is visible",
+    evidence.check("restart shop empty-trunk preview is visible",
                    visible["active"] and visible["types"] == 0, visible)
-    shot = runner.composed_shot("restart-no-extras")
+    shot = runner.composed_shot("restart-empty-trunk")
     runner.press("circle", 12, 0.5)
     return {
         "title_mean_difference": title_difference,
         "inventory": restarted,
-        "preview": no_extras,
+        "preview": empty,
         "visible_state": visible,
         "screenshot": shot,
     }
@@ -705,10 +948,10 @@ def main() -> int:
     shutil.copy2(source_card, player / "card1.mcd")
     (player / "menu_settings.ini").write_text("card_shop=1\n", encoding="utf-8")
 
-    # This isolated override proves extras with no sale value are still removed.
+    # This isolated override proves selected cards with no sale value are still removed.
     zero_override = player / "cards" / "5" / "card.ini"
     zero_override.parent.mkdir(parents=True)
-    zero_override.write_text("price = 0\n")
+    zero_override.write_text("sell_price = 0\n")
 
     evidence = Evidence(output / "results.json", {
         "repository": str(ROOT),
@@ -733,6 +976,7 @@ def main() -> int:
         title_difference = route_loaded_menu(first)
         evidence.data["cases"]["route"] = {"title_mean_difference": title_difference}
         exercise_backend(first, evidence, player)
+        exercise_sell_price_data(first, evidence, player)
         if args.api_only:
             evidence.data["limitations"].append(
                 "--api-only requested: real Card Shop controller UI, SAVE, and restart were not run."
@@ -750,6 +994,8 @@ def main() -> int:
 
             restart_player.mkdir()
             shutil.copy2(player / "card1.mcd", restart_player / "card1.mcd")
+            if player.joinpath("cards").is_dir():
+                shutil.copytree(player / "cards", restart_player / "cards")
             (restart_player / "menu_settings.ini").write_text(
                 "card_shop=1\n", encoding="utf-8")
             restart = Runner(exe, disc, restart_player, evidence, "restart", shots)

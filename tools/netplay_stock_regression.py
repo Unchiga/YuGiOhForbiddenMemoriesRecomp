@@ -89,7 +89,7 @@ def main():
                                               "path": str(Path(np.ROOT) / "blocked.txt")}),
                 "monster_effect": peer.q({"cmd": "monster_effects", "fx": 1,
                                           "card": 1, "side": 0}),
-                "sell_extra": peer.q({"cmd": "card_shop_sell", "op": "confirm"}),
+                "sell": peer.q({"cmd": "card_shop_sell", "op": "confirm"}),
                 "dialogue_clear": peer.q({"cmd": "dialogue_clear"}),
                 "cpu_edit": peer.q({"cmd": "cpu_data", "duelist": 2,
                                     "name": "NETPLAY LEAK"}),
@@ -135,7 +135,7 @@ def main():
                 "starchip_rewards": starchips, "card_drops": drop_mode,
                 "free_duel_completion": completion,
                 "card_password_view": password_view,
-                "sell_extra": sell_state,
+                "sell": sell_state,
                 "blocked": probes,
             }
     finally:
