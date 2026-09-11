@@ -21,6 +21,7 @@
 #include "psx_drop_edits.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -45,6 +46,10 @@
 typedef struct { uint16_t card; uint16_t w[3]; } Edit;
 static Edit     g_edit[NDUEL][MAX_EDITS];
 static int      g_n[NDUEL];
+/* Exact replacement bands let Clear expose a truthful empty authoring canvas
+ * without ever feeding card 0 to the guest's reward path. */
+static uint16_t g_replace[NDUEL][3][NCARDS];
+static uint8_t  g_replace_mask[NDUEL];
 /* The scripted first-win card per duelist, and whether it repeats. Same file,
  * same Save, same Import / Export as the weights above. */
 static uint16_t g_reward[NDUEL];
@@ -54,6 +59,18 @@ static int      g_dirty;
 static unsigned g_gen = 1;
 static char     g_ini_path[1024] = "";
 static char     g_status[96] = "not loaded";
+
+#define DROP_EDIT_FORMAT 2
+
+static void reset_data(void)
+{
+    memset(g_edit, 0, sizeof g_edit);
+    memset(g_n, 0, sizeof g_n);
+    memset(g_reward, 0, sizeof g_reward);
+    memset(g_reward_every, 0, sizeof g_reward_every);
+    memset(g_replace, 0, sizeof g_replace);
+    memset(g_replace_mask, 0, sizeof g_replace_mask);
+}
 
 static void ini_path(char *out, size_t cap)
 {
@@ -71,20 +88,121 @@ static char *trim(char *s)
     return s;
 }
 
-static int read_ini(const char *path)
+static int parse_replacement(char *value, uint16_t out[NCARDS],
+                             char *err, unsigned errcap)
+{
+    memset(out, 0, NCARDS * sizeof(*out));
+    char *p = trim(value);
+    uint32_t total = 0;
+    int entries = 0;
+    if (!*p || !strcmp(p, "none")) {
+        if (err && errcap) snprintf(err, errcap,
+            "an empty band is pending only; add a card before importing");
+        return 0;
+    }
+    while (*p) {
+        char *end = NULL;
+        const long card = strtol(p, &end, 10);
+        if (end == p || card < 1 || card > NCARDS || *end != ':') {
+            if (err && errcap) snprintf(err, errcap,
+                "replacement entries must be card:weight pairs");
+            return 0;
+        }
+        p = end + 1;
+        const long weight = strtol(p, &end, 10);
+        if (end == p || weight < 1 || weight > PSX_DROP_DB_TOTAL || out[card - 1]) {
+            if (err && errcap) snprintf(err, errcap,
+                "replacement IDs must be unique and weights 1 to 2048");
+            return 0;
+        }
+        out[card - 1] = (uint16_t)weight;
+        total += (uint32_t)weight;
+        entries++;
+        p = end;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        if (*p != ',') {
+            if (err && errcap) snprintf(err, errcap,
+                "replacement entries must be comma-separated");
+            return 0;
+        }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) {
+            if (err && errcap) snprintf(err, errcap,
+                "replacement lists cannot end with a comma");
+            return 0;
+        }
+    }
+    if (!entries || total != PSX_DROP_DB_TOTAL) {
+        if (err && errcap) snprintf(err, errcap,
+            "a replacement band must total exactly 2048 (got %u)", total);
+        return 0;
+    }
+    return 1;
+}
+
+static int validate_loaded_edits(char *err, unsigned errcap)
+{
+    static uint16_t w[NCARDS], cards[MAX_EDITS], weights[MAX_EDITS];
+    for (int d = 0; d < NDUEL; d++) {
+        if (!g_n[d]) continue;
+        for (int t = 0; t < 3; t++) {
+            if (g_replace_mask[d] & (1u << t)) continue;
+            memset(w, 0, sizeof w);
+            const PsxDropDbDuelist *db = &PSX_DROP_DB[d];
+            for (int i = 0; i < db->count[t]; i++)
+                w[db->tier[t][i].card - 1] = db->tier[t][i].weight;
+            for (int i = 0; i < g_n[d]; i++) {
+                cards[i] = g_edit[d][i].card;
+                weights[i] = g_edit[d][i].w[t];
+            }
+            const int rc = psx_drop_pins_rescale(w, cards, weights, g_n[d]);
+            if (rc == 1) continue;
+            if (err && errcap) snprintf(err, errcap,
+                "%s %s cannot form a valid 2048-weight table",
+                PSX_DROP_DB[d].name, PSX_DROP_TIER_NAMES[t]);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int read_ini(const char *path, char *err, unsigned errcap)
 {
     FILE *f = psx_fopen_utf8(path, "r");
     if (!f) return -1;
-    for (int d = 0; d < NDUEL; d++) {
-        g_n[d] = 0;
-        g_reward[d] = 0;
-        g_reward_every[d] = 0;
-    }
-    char line[256];
-    int cur = -1, entries = 0;
+    reset_data();
+    char line[16384];
+    int cur = -1, entries = 0, format = 1, line_no = 0;
     while (fgets(line, sizeof(line), f)) {
+        line_no++;
+        if (!strchr(line, '\n') && !feof(f)) {
+            if (err && errcap) snprintf(err, errcap, "line %d is too long", line_no);
+            fclose(f);
+            return -2;
+        }
         char *s = trim(line);
         if (!*s || *s == ';' || *s == '#') continue;
+        if (cur < 0 && !strncmp(s, "format", 6) &&
+            (s[6] == ' ' || s[6] == '\t' || s[6] == '=')) {
+            int parsed = 0;
+            char trailing = 0;
+            if (sscanf(s, "format = %d %c", &parsed, &trailing) != 1) {
+                if (err && errcap) snprintf(err, errcap,
+                    "malformed format declaration on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            format = parsed;
+            if (format < 1 || format > DROP_EDIT_FORMAT) {
+                if (err && errcap) snprintf(err, errcap,
+                    "unsupported drop-table format %d", format);
+                fclose(f);
+                return -2;
+            }
+            continue;
+        }
         if (*s == '[') {
             char *e = strchr(s, ']');
             if (!e) continue;
@@ -95,6 +213,28 @@ static int read_ini(const char *path)
             continue;
         }
         if (cur < 0) continue;
+        {
+            static const char *const key[3] = {
+                "pow_table", "bcd_table", "tec_table"
+            };
+            int handled = 0;
+            for (int t = 0; t < 3; t++) {
+                const size_t kn = strlen(key[t]);
+                if (strncmp(s, key[t], kn) ||
+                    (s[kn] != ' ' && s[kn] != '\t' && s[kn] != '=')) continue;
+                char *eq = strchr(s + kn, '=');
+                if (!eq || !parse_replacement(eq + 1, g_replace[cur][t], err, errcap)) {
+                    if (err && errcap && !err[0]) snprintf(err, errcap,
+                        "invalid %s on line %d", key[t], line_no);
+                    fclose(f);
+                    return -2;
+                }
+                g_replace_mask[cur] |= (uint8_t)(1u << t);
+                handled = 1;
+                break;
+            }
+            if (handled) continue;
+        }
         {   /* the section's scripted reward, if it has one */
             int rc = 0;
             char when[16];
@@ -110,15 +250,43 @@ static int read_ini(const char *path)
         int card = 0, w0 = 0, w1 = 0, w2 = 0;
         /* Fewer than four numbers is a malformed line, not a partial edit —
          * an entry is always the full vector (see the header comment). */
-        if (sscanf(s, "%d = %d , %d , %d", &card, &w0, &w1, &w2) != 4) continue;
-        if (card < 1 || card > NCARDS || g_n[cur] >= MAX_EDITS) continue;
-        if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-        Edit *e = &g_edit[cur][g_n[cur]++];
+        if (sscanf(s, "%d = %d , %d , %d", &card, &w0, &w1, &w2) != 4) {
+            /* Keep unknown additive keys forward-tolerant, but never turn a
+             * visibly numeric, malformed weight row into a successful no-op. */
+            if (s[0] >= '0' && s[0] <= '9') {
+                if (err && errcap) snprintf(err, errcap,
+                    "malformed weight entry on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            continue;
+        }
+        if (card < 1 || card > NCARDS || w0 < 0 || w1 < 0 || w2 < 0 ||
+            w0 > PSX_DROP_DB_TOTAL || w1 > PSX_DROP_DB_TOTAL ||
+            w2 > PSX_DROP_DB_TOTAL) {
+            if (err && errcap) snprintf(err, errcap,
+                "invalid weight entry on line %d", line_no);
+            fclose(f);
+            return -2;
+        }
+        Edit *e = NULL;
+        for (int i = 0; i < g_n[cur]; i++)
+            if (g_edit[cur][i].card == card) { e = &g_edit[cur][i]; break; }
+        if (!e) {
+            if (g_n[cur] >= MAX_EDITS) {
+                if (err && errcap) snprintf(err, errcap,
+                    "too many entries on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            e = &g_edit[cur][g_n[cur]++];
+            entries++;
+        }
         e->card = (uint16_t)card;
         e->w[0] = (uint16_t)w0; e->w[1] = (uint16_t)w1; e->w[2] = (uint16_t)w2;
-        entries++;
     }
     fclose(f);
+    if (!validate_loaded_edits(err, errcap)) return -2;
     return entries;
 }
 
@@ -127,8 +295,10 @@ void psx_drop_edits_ensure_loaded(void)
     if (g_loaded) return;
     g_loaded = 1;
     ini_path(g_ini_path, sizeof(g_ini_path));
-    const int n = read_ini(g_ini_path);
-    if (n < 0)      snprintf(g_status, sizeof(g_status), "no ini (no edits)");
+    char why[160] = "";
+    const int n = read_ini(g_ini_path, why, sizeof why);
+    if (n == -1)     snprintf(g_status, sizeof(g_status), "no ini (no edits)");
+    else if (n < 0) { reset_data(); snprintf(g_status, sizeof(g_status), "invalid ini: %.72s", why); }
     else            snprintf(g_status, sizeof(g_status), "%d entries from ini", n);
     g_dirty = 0;
     g_gen++;
@@ -138,7 +308,7 @@ int psx_drop_edits_any(void)
 {
     psx_drop_edits_ensure_loaded();
     for (int d = 0; d < NDUEL; d++)
-        if (g_n[d]) return 1;
+        if (g_n[d] || g_replace_mask[d]) return 1;
     return 0;
 }
 
@@ -146,18 +316,30 @@ int psx_drop_edits_has_export_content(void)
 {
     psx_drop_edits_ensure_loaded();
     for (int d = 0; d < NDUEL; d++)
-        if (g_n[d] || g_reward[d]) return 1;
+        if (g_n[d] || g_reward[d] || g_replace_mask[d]) return 1;
     return 0;
 }
 
 int psx_drop_edits_count(int duelist)
 {
     psx_drop_edits_ensure_loaded();
-    return (duelist >= 0 && duelist < NDUEL) ? g_n[duelist] : 0;
+    if (duelist < 0 || duelist >= NDUEL) return 0;
+    int n = g_n[duelist];
+    for (int t = 0; t < 3; t++) n += !!(g_replace_mask[duelist] & (1u << t));
+    return n;
 }
 
-int      psx_drop_edits_dirty(void)      { return g_dirty; }
-unsigned psx_drop_edits_generation(void) { return g_gen; }
+int psx_drop_edits_dirty(void)
+{
+    psx_drop_edits_ensure_loaded();
+    return g_dirty;
+}
+
+unsigned psx_drop_edits_generation(void)
+{
+    psx_drop_edits_ensure_loaded();
+    return g_gen;
+}
 
 static Edit *find(int duelist, int card)
 {
@@ -212,21 +394,85 @@ int psx_drop_edits_clear(int duelist)
     psx_drop_edits_ensure_loaded();
     int removed = 0;
     if (duelist < 0) {
-        for (int d = 0; d < NDUEL; d++) { removed += g_n[d]; g_n[d] = 0; }
+        for (int d = 0; d < NDUEL; d++) {
+            removed += g_n[d] + (g_replace_mask[d] != 0);
+            g_n[d] = 0;
+            g_replace_mask[d] = 0;
+        }
     } else if (duelist < NDUEL) {
-        removed = g_n[duelist];
+        removed = g_n[duelist] + (g_replace_mask[duelist] != 0);
         g_n[duelist] = 0;
+        g_replace_mask[duelist] = 0;
     }
     if (removed) { g_dirty = 1; g_gen++; }
     return removed;
 }
 
+int psx_drop_edits_replace_band(int duelist, int tier,
+                                const uint16_t weights[NCARDS])
+{
+    psx_drop_edits_ensure_loaded();
+    if (duelist < 0 || duelist >= NDUEL || tier < 0 || tier >= 3 || !weights)
+        return 0;
+    uint32_t total = 0;
+    for (int i = 0; i < NCARDS; i++) total += weights[i];
+    if (total != 0 && total != PSX_DROP_DB_TOTAL) return 0;
+    memcpy(g_replace[duelist][tier], weights,
+           sizeof g_replace[duelist][tier]);
+    g_replace_mask[duelist] |= (uint8_t)(1u << tier);
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_replacement(int duelist, int tier)
+{
+    psx_drop_edits_ensure_loaded();
+    return duelist >= 0 && duelist < NDUEL && tier >= 0 && tier < 3 &&
+           (g_replace_mask[duelist] & (1u << tier));
+}
+
+int psx_drop_edits_band_empty(int duelist, int tier)
+{
+    if (!psx_drop_edits_replacement(duelist, tier)) return 0;
+    for (int i = 0; i < NCARDS; i++)
+        if (g_replace[duelist][tier][i]) return 0;
+    return 1;
+}
+
+int psx_drop_edits_empty_count(void)
+{
+    psx_drop_edits_ensure_loaded();
+    int n = 0;
+    for (int d = 0; d < NDUEL; d++)
+        for (int t = 0; t < 3; t++) n += psx_drop_edits_band_empty(d, t);
+    return n;
+}
+
+int psx_drop_edits_validate(char *err, unsigned errcap)
+{
+    psx_drop_edits_ensure_loaded();
+    for (int d = 0; d < NDUEL; d++) {
+        for (int t = 0; t < 3; t++) {
+            if (!psx_drop_edits_band_empty(d, t)) continue;
+            if (err && errcap) snprintf(err, errcap,
+                "%s %s is empty; add a card, Randomize, or restore defaults before Save/export",
+                PSX_DROP_DB[d].name, PSX_DROP_TIER_NAMES[t]);
+            return 0;
+        }
+    }
+    if (err && errcap) err[0] = 0;
+    return 1;
+}
+
 static int write_to(const char *path)
 {
+    if (!psx_drop_edits_validate(NULL, 0)) return 0;
     FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return 0;
     fprintf(f,
 "; Yu-Gi-Oh! Forbidden Memories - Recompiled : drop table edits\n"
+"format = 2\n"
 ";\n"
 "; Written by the Drop Table Manager (VIEW > DROP TABLE MANAGER); hand-editing\n"
 "; works too. One section per duelist, one line per edited card:\n"
@@ -238,6 +484,11 @@ static int write_to(const char *path)
 "; whatever they claim is taken from the duelist's other drops in proportion,\n"
 "; and every band still totals 2048 exactly.\n"
 ";\n"
+"; Clear-and-rebuilt bands use an exact sparse list instead:\n"
+";     pow_table = card:weight, card:weight   (or bcd_table / tec_table)\n"
+"; Exact lists must be nonempty, use unique card IDs, and total exactly 2048.\n"
+"; An editor-cleared empty band is pending only and cannot be saved/exported.\n"
+";\n"
 "; These edits apply on top of MODS > DROP MISSING CARDS when that row is on.\n"
 "; Delete a line (or the file) to fall back to the table underneath.\n"
 ";\n"
@@ -248,7 +499,7 @@ static int write_to(const char *path)
 ";     when = every     optional; without it, only the FIRST win gives it\n"
 "\n");
     for (int d = 0; d < NDUEL; d++) {
-        if (!g_n[d] && !g_reward[d]) continue;
+        if (!g_n[d] && !g_reward[d] && !g_replace_mask[d]) continue;
         fprintf(f, "[%s]\n", PSX_DROP_DB[d].name);
         if (g_reward[d]) {
             fprintf(f, "card = %d\n", g_reward[d]);
@@ -259,6 +510,21 @@ static int write_to(const char *path)
             fprintf(f, "%-3d = %4d, %4d, %4d\n",
                     e->card, e->w[0], e->w[1], e->w[2]);
         }
+        for (int t = 0; t < 3; t++) {
+            if (!(g_replace_mask[d] & (1u << t))) continue;
+            static const char *const key[3] = {
+                "pow_table", "bcd_table", "tec_table"
+            };
+            fprintf(f, "%s = ", key[t]);
+            int first = 1;
+            for (int card = 1; card <= NCARDS; card++) {
+                const unsigned w = g_replace[d][t][card - 1];
+                if (!w) continue;
+                fprintf(f, "%s%d:%u", first ? "" : ", ", card, w);
+                first = 0;
+            }
+            fprintf(f, "\n");
+        }
         fprintf(f, "\n");
     }
     fclose(f);
@@ -268,6 +534,11 @@ static int write_to(const char *path)
 int psx_drop_edits_save(void)
 {
     psx_drop_edits_ensure_loaded();
+    char why[160];
+    if (!psx_drop_edits_validate(why, sizeof why)) {
+        snprintf(g_status, sizeof(g_status), "save refused: %.76s", why);
+        return 0;
+    }
     if (!write_to(g_ini_path)) {
         snprintf(g_status, sizeof(g_status), "save FAILED");
         return 0;
@@ -308,7 +579,10 @@ static const char *base_name(const char *path)
 static int entry_total(void)
 {
     int n = 0;
-    for (int d = 0; d < NDUEL; d++) n += g_n[d];
+    for (int d = 0; d < NDUEL; d++) {
+        n += g_n[d];
+        for (int t = 0; t < 3; t++) n += !!(g_replace_mask[d] & (1u << t));
+    }
     return n;
 }
 
@@ -317,6 +591,11 @@ int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
     psx_drop_edits_ensure_loaded();
     if (!path || !path[0]) {
         if (msg && cap) snprintf(msg, cap, "No file to export to");
+        return 0;
+    }
+    char why[192];
+    if (!psx_drop_edits_validate(why, sizeof why)) {
+        if (msg && cap) snprintf(msg, cap, "%s", why);
         return 0;
     }
     /* A dialog that came back without an extension still means an ini. */
@@ -352,7 +631,8 @@ int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
 {
     const int n = psx_drop_edits_load_file(path);
     if (n < 0) {
-        if (msg && cap) snprintf(msg, cap, "Could not read that file");
+        if (msg && cap) snprintf(msg, cap, "%s",
+            n == -1 ? "Could not read that file" : g_status);
         return 0;
     }
     /* An import STICKS. Every other manager's import already writes what it
@@ -389,10 +669,29 @@ int psx_drop_edits_load_file(const char *name_or_path)
         share_dir(dir, sizeof dir);
         snprintf(path, sizeof path, "%s/%s", dir, name_or_path);
     }
-    const int n = read_ini(path);
+    static Edit backup_edit[NDUEL][MAX_EDITS];
+    static int backup_n[NDUEL];
+    static uint16_t backup_reward[NDUEL];
+    static uint8_t backup_every[NDUEL], backup_mask[NDUEL];
+    static uint16_t backup_replace[NDUEL][3][NCARDS];
+    memcpy(backup_edit, g_edit, sizeof g_edit);
+    memcpy(backup_n, g_n, sizeof g_n);
+    memcpy(backup_reward, g_reward, sizeof g_reward);
+    memcpy(backup_every, g_reward_every, sizeof g_reward_every);
+    memcpy(backup_mask, g_replace_mask, sizeof g_replace_mask);
+    memcpy(backup_replace, g_replace, sizeof g_replace);
+    char why[160] = "";
+    const int n = read_ini(path, why, sizeof why);
     if (n < 0) {
-        snprintf(g_status, sizeof(g_status), "load FAILED");
-        return -1;
+        memcpy(g_edit, backup_edit, sizeof g_edit);
+        memcpy(g_n, backup_n, sizeof g_n);
+        memcpy(g_reward, backup_reward, sizeof g_reward);
+        memcpy(g_reward_every, backup_every, sizeof g_reward_every);
+        memcpy(g_replace_mask, backup_mask, sizeof g_replace_mask);
+        memcpy(g_replace, backup_replace, sizeof g_replace);
+        snprintf(g_status, sizeof(g_status), "load FAILED: %.76s",
+                 n == -1 ? "could not read file" : why);
+        return n;
     }
     g_dirty = 1;
     g_gen++;
@@ -532,6 +831,7 @@ int psx_drop_edits_randomize(uint32_t seed, char *msg, unsigned cap)
     for (int d = 0; d < NDUEL; d++) {
         memcpy(g_edit[d], built[d], sizeof(Edit) * (size_t)built_n[d]);
         g_n[d] = built_n[d];
+        g_replace_mask[d] = 0;
     }
     g_dirty = 1;
     g_gen++;
@@ -576,6 +876,14 @@ int psx_drop_edits_apply(int duelist, int tier, uint16_t *w)
     psx_drop_edits_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || tier < 0 || tier >= 3 || !w)
         return -1;
+    if (g_replace_mask[duelist] & (1u << tier)) {
+        uint32_t total = 0;
+        for (int i = 0; i < NCARDS; i++) total += g_replace[duelist][tier][i];
+        if (!total) return -5; /* pending empty: never reaches guest RAM */
+        if (total != PSX_DROP_DB_TOTAL) return -3;
+        memcpy(w, g_replace[duelist][tier], sizeof g_replace[duelist][tier]);
+        return 1;
+    }
     if (!g_n[duelist]) return -1;
     uint16_t cards[MAX_EDITS], weights[MAX_EDITS];
     int n = 0;
@@ -591,13 +899,17 @@ int psx_drop_edits_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 128u) return 0;
     psx_drop_edits_ensure_loaded();
-    int total = 0, duelists = 0;
+    int total = 0, duelists = 0, replacements = 0;
     for (int d = 0; d < NDUEL; d++) {
         total += g_n[d];
-        if (g_n[d]) duelists++;
+        if (g_n[d] || g_replace_mask[d]) duelists++;
+        for (int t = 0; t < 3; t++)
+            replacements += !!(g_replace_mask[d] & (1u << t));
     }
     return snprintf(out, cap,
-        "\"entries\":%d,\"duelists\":%d,\"dirty\":%d,\"gen\":%u,"
+        "\"entries\":%d,\"duelists\":%d,\"replacements\":%d,"
+        "\"empty_bands\":%d,\"dirty\":%d,\"gen\":%u,"
         "\"status\":\"%s\"",
-        total, duelists, g_dirty, g_gen, g_status);
+        total, duelists, replacements, psx_drop_edits_empty_count(),
+        g_dirty, g_gen, g_status);
 }

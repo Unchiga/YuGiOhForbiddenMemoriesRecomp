@@ -248,6 +248,13 @@ static int add_file(PsxZipWriter *z, const char *path, const char *name)
 int psx_mod_package_export(const char *path, char *msg, unsigned cap)
 {
     if (!path || !path[0]) { if (msg && cap) snprintf(msg, cap, "No file to export to"); return 0; }
+    if (psx_drop_edits_has_export_content()) {
+        char why[256];
+        if (!psx_drop_edits_validate(why, sizeof why)) {
+            if (msg && cap) snprintf(msg, cap, "%s", why);
+            return 0;
+        }
+    }
     char p[1200];
     snprintf(p, sizeof p, "%s", path);
     if (!strchr(base_name(p), '.')) { const size_t n = strlen(p); snprintf(p + n, sizeof p - n, ".%s", PSX_MOD_PACKAGE_EXT); }
@@ -274,6 +281,7 @@ int psx_mod_package_export(const char *path, char *msg, unsigned cap)
             const int wrote = psx_card_share_export(tmp, why, sizeof why);
             psx_card_share_own_set(0);
             if (wrote) ok = add_zip_entries(z, tmp, rename_cards, &parts) >= 0;
+            else ok = 0;
             (void)psx_remove_utf8(tmp);
         }
     }

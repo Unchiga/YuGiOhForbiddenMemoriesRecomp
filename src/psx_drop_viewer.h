@@ -68,6 +68,10 @@ int  psx_drop_viewer_randomize(unsigned seed, char *msg, unsigned cap);
  * only while armed. Clears weight edits for all 39x3 tables, keeps scripted
  * story rewards and every non-drop subsystem, and leaves the result unsaved. */
 int  psx_drop_viewer_restore_all(int confirm, char *msg, unsigned cap);
+/* Clear one or more bands (mask bits 0=POW, 1=BCD, 2=TEC) for a duelist.
+ * confirm=0 arms; confirm=1 executes only the same choice within 10 seconds. */
+int  psx_drop_viewer_clear_bands(int duelist, unsigned mask, int confirm,
+                                 char *msg, unsigned cap);
 
 /* Deliver mouse motion, clicks, a key press, or typed text — as real SDL
  * events carrying this window's id, so the debug server exercises the exact

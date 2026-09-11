@@ -1098,6 +1098,24 @@ static void handle_drop_viewer_set(int id, const char *json)
             return;
         }
     }
+    {   /* clear one band (0..2) or all three, with the same two-step rule */
+        const int band = json_get_int(json, "clear_band", -1);
+        const int all = json_get_int(json, "clear_all_bands", 0);
+        if (band >= 0 || all) {
+            const int d = json_get_int(json, "duelist", -1);
+            const unsigned mask = all ? 7u :
+                (band >= 0 && band < 3 ? 1u << band : 0u);
+            char msg[256];
+            const int ok = psx_drop_viewer_clear_bands(
+                d, mask, json_get_int(json, "confirm", 0) != 0,
+                msg, sizeof msg);
+            for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
+            send_fmt("{\"id\":%d,\"ok\":%s,\"armed\":%s,\"msg\":\"%s\"}",
+                     id, ok ? "true" : "false",
+                     json_get_int(json, "confirm", 0) ? "false" : "true", msg);
+            return;
+        }
+    }
     {   /* randomize, seeded, answers with its own message like the file pair */
         const int seed = json_get_int(json, "randomize", -1);
         if (seed >= 0) {

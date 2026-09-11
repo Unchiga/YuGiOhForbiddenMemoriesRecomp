@@ -220,7 +220,11 @@ static int eff_tier(int d, int t, uint16_t *w)
      * a failure to report. */
     if (psx_drop_missing_enabled())
         (void)psx_drop_missing_transform(d, t, w);
-    return psx_drop_edits_apply(d, t, w);
+    const int rc = psx_drop_edits_apply(d, t, w);
+    /* -5 is deliberately visible here but never written by the runtime: it
+     * is the Clear action's pending, unsaveable authoring state. */
+    if (rc == -5) memset(w, 0, NCARDS * sizeof(*w));
+    return rc;
 }
 
 static void build_effective(void)
@@ -283,12 +287,13 @@ static int  s_edit_len;
 
 /* One-line status ("Saved", "Edit refused: ..."), shown in the right pane's
  * header until its deadline passes. */
-static char     s_msg[120];
+static char     s_msg[256];
 static uint32_t s_msg_until;
 
 /* Right-click context menu: a handful of actions on whatever was under the
  * pointer. One level, no submenus — band choices are spelled out as items. */
-enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE, CM_STORY };
+enum { CM_NONE = 0, CM_ADD, CM_EDIT_WEIGHT, CM_MOVE_BAND, CM_REMOVE, CM_STORY,
+       CM_CLEAR_BAND, CM_DEFAULTS };
 #define CMENU_MAX 12
 static struct {
     char label[64];
@@ -569,7 +574,7 @@ static void layout_compute(void)
     int rx = s_w - px(8.0f);
     L->mod_x = rx - tw(fs, "Drop missing cards: off");
     rx = L->mod_x - px(14.0f);
-    int w = tw(fb, s_view == VIEW_DUELISTS ? "Defaults" : "All CPU") + px(18.0f);
+    int w = tw(fb, s_view == VIEW_DUELISTS ? "Clear" S_ELLIP : "All CPU") + px(18.0f);
     L->btn_third = (Rect){ rx - w, by, w, bh };  rx -= w + px(4.0f);
     w = tw(fb, "Randomize") + px(18.0f);
     L->btn_random = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
@@ -684,6 +689,9 @@ static int row_at(int p, int x, int y)
 
 static int randomize_armed(void);
 static int restore_armed(void);
+static int clear_armed(int duelist, unsigned mask);
+static int clear_bands(int duelist, unsigned mask, int confirm,
+                       char *msg, unsigned cap);
 
 static void say(const char *m)
 {
@@ -711,14 +719,57 @@ static void edit_end(void)
  * roll. */
 static int commit_vector(int d, int card, const uint16_t v[3])
 {
+    build_effective();
+    static uint16_t replacement[NTIER][NCARDS];
+    unsigned replace_changed = 0;
+    int ordinary_changed = 0;
+    for (int t = 0; t < NTIER; t++) {
+        if (!psx_drop_edits_replacement(d, t)) {
+            ordinary_changed |= v[t] != s_eff[d][t][card - 1];
+            continue;
+        }
+        if (v[t] == s_eff[d][t][card - 1]) continue;
+        memcpy(replacement[t], s_eff[d][t], sizeof replacement[t]);
+        uint32_t total = 0;
+        for (int c = 0; c < NCARDS; c++) total += replacement[t][c];
+        if (!total) {
+            if (!v[t]) continue;
+            /* The first card added to an empty table is necessarily its
+             * whole 100% pool. Later additions use the normal proportional
+             * rebalance below. */
+            replacement[t][card - 1] = PSX_DROP_DB_TOTAL;
+        } else if (!v[t]) {
+            replacement[t][card - 1] = 0;
+            uint32_t rest = 0;
+            for (int c = 0; c < NCARDS; c++) rest += replacement[t][c];
+            if (rest) {
+                const uint16_t pin_card = (uint16_t)card, pin_weight = 0;
+                memcpy(replacement[t], s_eff[d][t], sizeof replacement[t]);
+                if (psx_drop_pins_rescale(replacement[t], &pin_card,
+                                          &pin_weight, 1) != 1) {
+                    say("Edit refused: that replacement band cannot rebalance");
+                    return 0;
+                }
+            }
+        } else {
+            const uint16_t pin_card = (uint16_t)card, pin_weight = v[t];
+            if (psx_drop_pins_rescale(replacement[t], &pin_card,
+                                      &pin_weight, 1) != 1) {
+                say("Edit refused: that replacement band cannot rebalance");
+                return 0;
+            }
+        }
+        replace_changed |= 1u << t;
+    }
     uint16_t old[3];
     const int had = psx_drop_edits_get(d, card, old);
-    if (!psx_drop_edits_set(d, card, v)) {
+    if (ordinary_changed && !psx_drop_edits_set(d, card, v)) {
         say("Edit refused: the edit table is full");
         return 0;
     }
     static uint16_t tmp[NCARDS];
-    for (int t = 0; t < NTIER; t++) {
+    for (int t = 0; ordinary_changed && t < NTIER; t++) {
+        if (psx_drop_edits_replacement(d, t)) continue;
         const int rc = eff_tier(d, t, tmp);
         if (rc == 1 || rc == -1) continue;   /* transformed, or nothing to do */
         if (had) (void)psx_drop_edits_set(d, card, old);
@@ -726,6 +777,17 @@ static int commit_vector(int d, int card, const uint16_t v[3])
         say(rc == -4 ? "Edit refused: a band would exceed 1984"
                      : "Edit refused: that band cannot renormalize");
         return 0;
+    }
+    for (int t = 0; t < NTIER; t++) {
+        if (!(replace_changed & (1u << t))) continue;
+        if (!psx_drop_edits_replace_band(d, t, replacement[t])) {
+            if (ordinary_changed) {
+                if (had) (void)psx_drop_edits_set(d, card, old);
+                else     (void)psx_drop_edits_unset(d, card);
+            }
+            say("Edit refused: replacement band did not total 2048");
+            return 0;
+        }
     }
     invalidate();
     return 1;
@@ -797,9 +859,12 @@ static int add_card(int d, int card, int band)
         say("Already in that band. Edit its weight instead.");
         return 0;
     }
-    v[band] = ADD_WEIGHT;
+    v[band] = psx_drop_edits_band_empty(d, band)
+                  ? PSX_DROP_DB_TOTAL : ADD_WEIGHT;
     if (!commit_vector(d, card, v)) return 0;
-    say("Added at weight 20. Save to keep it.");
+    say(v[band] == PSX_DROP_DB_TOTAL
+            ? "First card fills the empty band at 2048 (100%). Save to keep it."
+            : "Added at weight 20. Save to keep it.");
     /* If the new row is on screen (BY DUELIST, that duelist), open its
      * number box so the starter weight can be typed over immediately. */
     if (s_view == VIEW_DUELISTS && d == s_sel_duelist)
@@ -881,6 +946,21 @@ static void cmenu_run(int i)
                             psx_cpu_display_name(a));
             say(m);
             invalidate();
+        }
+        break;
+    case CM_CLEAR_BAND: {
+        char m[256];
+        (void)clear_bands(a, (unsigned)b, clear_armed(a, (unsigned)b),
+                          m, sizeof m);
+        say(m);
+        break;
+    }
+    case CM_DEFAULTS:
+        if (psx_drop_edits_clear(a)) {
+            invalidate();
+            say("This duelist's weight edits were restored to defaults. Save to keep it.");
+        } else {
+            say("This duelist already uses the default tables");
         }
         break;
     default: break;
@@ -1018,12 +1098,12 @@ static void draw_bar(void)
      * view-dependent: Defaults scopes to the BY DUELIST selection, All CPU
      * pads the BY CARD droppers list out to the whole roster for
      * drag-and-drop. */
-    draw_button(&L->btn_save, "Save", psx_drop_edits_dirty(), s_hover_btn == 2);
+    draw_button(&L->btn_save, "Save", psx_drop_edits_dirty() && !psx_drop_edits_empty_count(), s_hover_btn == 2);
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
     draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
     draw_button(&L->btn_random, "Randomize", randomize_armed(), s_hover_btn == 6);
     draw_button(&L->btn_restore, "Restore all drops", restore_armed(), s_hover_btn == 7);
-    if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Defaults", 0, s_hover_btn == 5);
+    if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Clear" S_ELLIP, clear_armed(-1, 0), s_hover_btn == 5);
     else                         draw_button(&L->btn_third, "All CPU", s_all_cpu, s_hover_btn == 5);
 
     const int on = psx_drop_missing_enabled();
@@ -1128,7 +1208,8 @@ static void draw_drop_rows(int name_of_card)
         }
         /* An edited (duelist, card) carries a green dot in the gutter, so
          * the player can see which rows are theirs. */
-        if (psx_drop_edits_get(d->duelist, d->card, 0)) {
+        if (psx_drop_edits_get(d->duelist, d->card, 0) ||
+            psx_drop_edits_replacement(d->duelist, d->tier)) {
             const int dot = px(6.0f);
             psx_ui_round_rect(&s_cv, L->r_dot_x - dot / 2, y + (L->row_h - dot) / 2, dot, dot, dot * 0.5f, COL_EDITED);
         }
@@ -1151,9 +1232,15 @@ static void draw_drop_rows(int name_of_card)
     }
     if (!s_rows_n) {
         const Rect e = { L->r_name_x, R->y, L->r_chance_r - L->r_name_x, L->row_h };
-        text_in(&e, 0, psx_drop_missing_enabled()
-                           ? "Nothing here."
-                           : "No duelist drops this card. Try Mods > Drop missing cards.",
+        const char *empty = s_view == VIEW_DUELISTS &&
+                            (psx_drop_edits_band_empty(s_sel_duelist, 0) ||
+                             psx_drop_edits_band_empty(s_sel_duelist, 1) ||
+                             psx_drop_edits_band_empty(s_sel_duelist, 2))
+            ? "Cleared bands are empty and pending; add a card before Save/export."
+            : (s_view == VIEW_DUELISTS ? "This duelist has no drops in the visible table."
+               : psx_drop_missing_enabled() ? "Nothing here."
+               : "No duelist drops this card. Try Mods > Drop missing cards.");
+        text_in(&e, 0, empty,
                 COL_DIM, fr);
     }
 }
@@ -1243,6 +1330,12 @@ static void draw_duelists_view(void)
     int tn = snprintf(sel, sizeof sel, "%s", psx_cpu_display_name(s_sel_duelist));
     if (ec && tn < (int)sizeof sel)
         tn += snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %d edit%s", ec, ec == 1 ? "" : "s");
+    {
+        int empty_n = 0;
+        for (int t = 0; t < NTIER; t++) empty_n += psx_drop_edits_band_empty(s_sel_duelist, t);
+        if (empty_n && tn < (int)sizeof sel)
+            tn += snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %d empty", empty_n);
+    }
     if (sr && tn < (int)sizeof sel)
         snprintf(sel + tn, sizeof sel - tn, " " S_DASH " %s win: %.24s",
                  sr_every ? "every" : "first", psx_card_packs_display_name(sr));
@@ -1327,7 +1420,9 @@ static void draw_footer(void)
     const Layout *L = &s_L;
     const PsxUiFace *fs = face_small();
     const Rect f = { L->pane[0].x + px(4.0f), L->foot_y, s_w - 2 * L->pane[0].x - px(8.0f), L->foot_h };
-    if (psx_drop_edits_dirty())
+    if (psx_drop_edits_empty_count())
+        text_in(&f, 0, "Empty bands are pending only: add a card, Randomize, or restore defaults before Save/export. The running game still uses its last safe table.", COL_WARN, fs);
+    else if (psx_drop_edits_dirty())
         text_in(&f, 0, "Unsaved edits. Save writes drop_table_edits.ini in your player-data folder; the game rolls what you save.", COL_WARN, fs);
     else
         text_in(&f, 0, "Click a weight to type a new one, Enter keeps it. Click a rank to move it between bands. Drag a card from the list onto a duelist to add it. Right-click a row for more.", COL_DIM, fs);
@@ -1401,6 +1496,9 @@ static void SDLCALL pick_cb(void *userdata, const char *const *filelist, int fil
 #define RANDOMIZE_ARM_MS 10000u
 static uint32_t s_random_armed_ms;
 static uint32_t s_restore_armed_ms;
+static uint32_t s_clear_armed_ms;
+static int s_clear_armed_duelist = -1;
+static unsigned s_clear_armed_mask;
 
 static int randomize_armed(void)
 {
@@ -1410,6 +1508,62 @@ static int randomize_armed(void)
 static int restore_armed(void)
 {
     return s_restore_armed_ms != 0 && SDL_GetTicks() - s_restore_armed_ms <= RANDOMIZE_ARM_MS;
+}
+
+static int clear_armed(int duelist, unsigned mask)
+{
+    const int live = s_clear_armed_ms != 0 &&
+                     SDL_GetTicks() - s_clear_armed_ms <= RANDOMIZE_ARM_MS;
+    if (!live) return 0;
+    if (duelist < 0) return 1;
+    return s_clear_armed_duelist == duelist && s_clear_armed_mask == mask;
+}
+
+static int clear_bands(int duelist, unsigned mask, int confirm,
+                       char *msg, unsigned cap)
+{
+    if (duelist < 0 || duelist >= NDUEL || !(mask & 7u)) {
+        snprintf(msg, cap, "Choose a duelist and at least one rank band");
+        return 0;
+    }
+    mask &= 7u;
+    if (!confirm) {
+        s_clear_armed_ms = SDL_GetTicks();
+        if (!s_clear_armed_ms) s_clear_armed_ms = 1;
+        s_clear_armed_duelist = duelist;
+        s_clear_armed_mask = mask;
+        snprintf(msg, cap,
+            "Clear %s for %.40s? Choose the same Clear action again within 10 s. Empty bands cannot be saved or applied.",
+            mask == 7u ? "all three bands" : PSX_DROP_TIER_NAMES[mask & 1u ? 0 : mask & 2u ? 1 : 2],
+            psx_cpu_display_name(duelist));
+        return 1;
+    }
+    if (!clear_armed(duelist, mask)) {
+        snprintf(msg, cap, "Confirmation expired; choose that Clear action again");
+        return 0;
+    }
+    s_clear_armed_ms = 0;
+    static const uint16_t empty[NCARDS] = { 0 };
+    int n = 0;
+    for (int t = 0; t < NTIER; t++) {
+        if (!(mask & (1u << t))) continue;
+        if (psx_drop_edits_replace_band(duelist, t, empty)) n++;
+    }
+    invalidate();
+    snprintf(msg, cap,
+        "Cleared %d band%s for %.40s. Story rewards and other bands are unchanged; add a card before Save/export.",
+        n, n == 1 ? "" : "s", psx_cpu_display_name(duelist));
+    return n > 0;
+}
+
+int psx_drop_viewer_clear_bands(int duelist, unsigned mask, int confirm,
+                                char *msg, unsigned cap)
+{
+    char local[256];
+    if (!msg || !cap) { msg = local; cap = sizeof local; }
+    const int ok = clear_bands(duelist, mask, confirm, msg, cap);
+    if (s_win) say(msg);
+    return ok;
 }
 
 int psx_drop_viewer_restore_all(int confirm, char *msg, unsigned cap)
@@ -1496,6 +1650,39 @@ static void finish_pick(int kind, const char *path)
     say(msg);
 }
 
+static void do_save(void)
+{
+    char why[256];
+    if (!psx_drop_edits_validate(why, sizeof why)) {
+        say(why);
+        return;
+    }
+    say(psx_drop_edits_save() ? "Saved" : "Save failed");
+}
+
+static void open_clear_menu(void)
+{
+    cmenu_close();
+    s_cmenu_x = s_L.btn_third.x;
+    s_cmenu_y = s_L.btn_third.y + s_L.btn_third.h + px(2.0f);
+    s_cmenu_n = 0;
+    s_cmenu_hover = -1;
+    for (int t = 0; t < NTIER; t++) {
+        char label[64];
+        snprintf(label, sizeof label, "Clear %s band%s",
+                 PSX_DROP_TIER_NAMES[t],
+                 clear_armed(s_sel_duelist, 1u << t) ? " (confirm)" : "");
+        cmenu_add(label, CM_CLEAR_BAND, s_sel_duelist, 1u << t, 0);
+    }
+    cmenu_add(clear_armed(s_sel_duelist, 7u)
+                  ? "Clear all three bands (confirm)"
+                  : "Clear all three bands",
+              CM_CLEAR_BAND, s_sel_duelist, 7, 0);
+    cmenu_add("Restore this duelist to defaults", CM_DEFAULTS,
+              s_sel_duelist, 0, 0);
+    s_dirty = 1;
+}
+
 /* --- input --------------------------------------------------------------- */
 
 static void set_sort(int col)
@@ -1565,22 +1752,14 @@ static void click(int x, int y)
         switch (button_at(x, y)) {
         case 0: set_view(VIEW_CARDS); break;
         case 1: set_view(VIEW_DUELISTS); break;
-        case 2: say(psx_drop_edits_save() ? "Saved" : "Save failed"); break;
+        case 2: do_save(); break;
         case 3: do_import(); break;
         case 4: do_export(); break;
         case 6: do_randomize(); break;
         case 7: do_restore_all(); break;
         case 5:
             if (s_view == VIEW_DUELISTS) {
-                /* Return to default, scoped to the duelist on screen. The
-                 * default is whatever the layers underneath produce: stock,
-                 * plus the mod when its row is on. */
-                if (psx_drop_edits_clear(s_sel_duelist)) {
-                    invalidate();
-                    say("Edits cleared. Save to keep it.");
-                } else {
-                    say("No edits for this duelist");
-                }
+                open_clear_menu();
             } else {
                 s_all_cpu = !s_all_cpu;
                 s_scroll_right = 0;
@@ -2467,7 +2646,7 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
         "\"sel_card\":%d,\"sel_duelist\":%d,\"modded\":%d,\"ready\":%d,"
         "\"canvas\":[%d,%d],\"split_x\":%d,\"list_rows\":%d,\"unit\":%.3f,"
         "\"hover\":[%d,%d],\"hover_btn\":%d,\"edit_row\":%d,\"edit_buf\":\"%s\","
-        "\"edits_dirty\":%d,\"msg\":\"%s\",\"menu\":%d,\"menu_hover\":%d,"
+        "\"edits_dirty\":%d,\"empty_bands\":%d,\"clear_armed\":%d,\"msg\":\"%s\",\"menu\":%d,\"menu_hover\":%d,"
         "\"drag\":%d,\"drag_live\":%d,\"scroll\":[%d,%d],\"all_cpu\":%d,\"disc_portraits\":%d",
         s_win != NULL, s_view == VIEW_CARDS ? "cards" : "duelists",
         s_sort, s_desc, s_rsort, s_rdesc, s_dsort, s_ddesc,
@@ -2475,7 +2654,8 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
         s_sel_card, s_sel_duelist, s_eff_modded, psx_card_db_ready(),
         s_w, s_h, s_win ? L->pane[1].x : 0, s_win ? list_rows() : 0, s_u,
         s_hover_pane, s_hover_row, s_hover_btn, s_edit_row, s_edit_buf,
-        psx_drop_edits_dirty(), s_msg, s_cmenu_n, s_cmenu_hover,
+        psx_drop_edits_dirty(), psx_drop_edits_empty_count(), clear_armed(-1, 0),
+        s_msg, s_cmenu_n, s_cmenu_hover,
         s_drag_kind, s_drag_live, s_scroll, s_scroll_right, s_all_cpu, psx_duelist_portraits_ready());
     if (!s_win || n >= cap) return n < cap;
     /* Geometry, so a script can click what it sees without knowing the

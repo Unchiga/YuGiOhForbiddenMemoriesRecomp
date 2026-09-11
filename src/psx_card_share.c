@@ -176,6 +176,13 @@ static int zip_finish(Zip *z)
 int psx_card_share_export(const char *path, char *msg, unsigned cap)
 {
     char dir[1024]; cards_dir(dir, sizeof dir);
+    const int drops = psx_drop_edits_has_export_content();
+    if (drops && !psx_drop_edits_save()) {
+        char why[256];
+        (void)psx_drop_edits_validate(why, sizeof why);
+        if (msg && cap) snprintf(msg, cap, "%s", why[0] ? why : "Drop tables could not be saved");
+        return 0;
+    }
     Zip z; memset(&z, 0, sizeof z);
     z.f = psx_fopen_utf8(path, "wb");
     if (!z.f) { if (msg) snprintf(msg, cap, "Could not create %s", path); return 0; }
@@ -188,8 +195,6 @@ int psx_card_share_export(const char *path, char *msg, unsigned cap)
     /* manifest first: what the file is, which cards, whether drops ride along */
     int ids[CARD_COUNT], n = 0;
     for (int id = 1; id <= CARD_COUNT; id++) if (card_edited(id, dir)) ids[n++] = id;
-    int drops = 0;
-    if (psx_drop_edits_has_export_content()) { psx_drop_edits_save(); drops = 1; }
     {
         static char m[8192];
         unsigned k = (unsigned)snprintf(m, sizeof m,
@@ -450,6 +455,29 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
     if (!import_descriptions_fit(b, n, ents, k, &info, err, sizeof err)) {
         free(b); if (msg) snprintf(msg, cap, "Import rejected before changing files: %s", err); return 0;
     }
+    /* Validate the optional drop table before replacing even one card file.
+     * load_file is transactional on failure; a successful preflight becomes
+     * the imported live layer and is persisted in the loop below. */
+    int drops_preloaded = 0;
+    for (int i = 0; i < k; i++) {
+        if (strcmp(ents[i].name, "drop_table_edits.ini")) continue;
+        long sz; unsigned char *d = zip_extract(b, n, &ents[i], &sz);
+        char p[1200];
+        snprintf(p, sizeof p, "%s/drop_table_edits.import.ini",
+                 psx_mod_player_data_dir());
+        const int wrote = d && write_file(p, d, (size_t)sz);
+        free(d);
+        const int loaded = wrote ? psx_drop_edits_load_file(p) : -1;
+        remove(p);
+        if (loaded < 0) {
+            free(b);
+            if (msg) snprintf(msg, cap,
+                "Import rejected before changing files: drop table is invalid or uses a future format");
+            return 0;
+        }
+        drops_preloaded = 1;
+        break;
+    }
     char dir[1024]; cards_dir(dir, sizeof dir);
     MKDIR(dir);
     /* the file's cards replace the player's: clear those folders first */
@@ -470,14 +498,7 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
             if ((files % 100) == 0) starvation_watchdog_heartbeat();
             free(d);
         } else if (!strcmp(ents[i].name, "drop_table_edits.ini")) {
-            long sz; unsigned char *d = zip_extract(b, n, &ents[i], &sz);
-            if (!d) { bad++; continue; }
-            char p[1200]; snprintf(p, sizeof p, "%s/drop_table_edits.import.ini", psx_mod_player_data_dir());
-            if (write_file(p, d, (size_t)sz)) {
-                if (psx_drop_edits_load_file(p) >= 0) psx_drop_edits_save();
-                remove(p);
-            } else bad++;
-            free(d);
+            if (!drops_preloaded || !psx_drop_edits_save()) bad++;
         }
     }
     free(b);

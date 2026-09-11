@@ -22,6 +22,7 @@
 #define PSX_DROP_EDITS_H
 
 #include <stdint.h>
+#include "psx_drop_db.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,19 @@ int psx_drop_edits_set(int duelist, int card, const uint16_t w[3]);
 int psx_drop_edits_unset(int duelist, int card);
 int psx_drop_edits_clear(int duelist);
 
+/* Exact replacement bands are used by the manager's clear-and-rebuild flow.
+ * A zero table is a pending authoring state only: apply returns -5 and Save /
+ * export reject it. A nonempty replacement must total exactly 2048 and is
+ * persisted additively by format 2 files. */
+int psx_drop_edits_replace_band(int duelist, int tier,
+                                const uint16_t weights[PSX_DROP_DB_CARDS]);
+int psx_drop_edits_replacement(int duelist, int tier);
+int psx_drop_edits_band_empty(int duelist, int tier);
+int psx_drop_edits_empty_count(void);
+
+/* Explain whether the current layer can be saved/applied. */
+int psx_drop_edits_validate(char *err, unsigned errcap);
+
 /* Write the ini. Returns 1 on success. */
 int psx_drop_edits_save(void);
 
@@ -79,7 +93,7 @@ int psx_drop_edits_save(void);
  *
  * share_dir is where the dialogs start: <player-data>/drop_tables, created
  * on demand. load_file is the raw import a bare name resolves against that
- * folder; it returns the entry count, or -1 when the file cannot be read. */
+ * folder; it returns the entry count, -1 when unreadable, or -2 when invalid. */
 int  psx_drop_edits_export_file(const char *path, char *msg, unsigned cap);
 int  psx_drop_edits_import_file(const char *path, char *msg, unsigned cap);
 void psx_drop_edits_share_dir(char *out, unsigned cap);

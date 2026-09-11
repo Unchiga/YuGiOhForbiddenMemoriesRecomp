@@ -221,6 +221,47 @@ duelists while keeping each table valid; restore returned every weight to the
 disc-derived stock hash, expired confirmation did nothing, save/restart stayed
 stock, and story reward 37 plus unrelated CPU/fusion edits survived.
 
+### Clear and rebuild one drop table
+
+The Drop Tables page's `Clear...` menu clears the selected duelist's S/A POW,
+B/C/D, S/A TEC, or all three bands. It does not mean every duelist, and each
+choice requires selecting the identical action twice within ten seconds. The
+selected bands become a truthful empty authoring canvas while story rewards,
+other bands, and other duelists remain unchanged. The first added card receives
+the whole 2048 pool; later adds and weight edits rebalance the remaining cards
+proportionally. `Restore this duelist to defaults`, the existing global restore,
+or Randomize exits the empty/replacement state.
+
+An all-zero stock table was not safe to apply. The disc roll loop is bounded at
+722 entries and returns card ID 0 when none has weight, but its award/results
+callers assume IDs 1 through 722. Empty is therefore a pending editor state:
+Save, direct Drop Tables export, `.ygocards`, and `.ygomods` export all reject it
+with the duelist and band named. The running duel retains or reconstructs the
+last safe stock/mod table, never normalizes the editor back to stock, and hot
+import, clear, restore, and removal now reconcile the resident table without
+requiring a new duel.
+
+Saved rebuilt bands use additive drop-table `format = 2` keys such as
+`pow_table = 1:2028, 2:20`. IDs must be unique, weights positive, and the exact
+sparse list must total 2048. Old unversioned vector/reward files remain valid;
+future versions, empty exact lists, malformed numeric rows, duplicates, and
+wrong totals are rejected transactionally.
+
+Software UI, restart, invalid/old/direct round trips, and menu captures are in
+`/tmp/ygofm-clear-drop-live-zyg2yP/evidence/`. Package, randomize/restore, old
+full-fixture, and real-duel evidence is in
+`/tmp/ygofm-clear-drop-duel-nT1Vp9/evidence/`. In the live duel a rebuilt
+Duel Master K POW table was exactly `{1:1500, 2:548}` in guest RAM and awarded
+card 2; clearing that same band during a duel restored the safe 136-entry stock
+table, preserved story reward 92, and completed with a valid stock card rather
+than card 0 or a hang. The final direct `.ygocards` and malformed embedded-file
+preflight (with unchanged save/config hashes) are in
+`/tmp/ygofm-clear-drop-cardshare-Grh9IH/evidence/`. A final shipping-event-path
+test selected the toolbar menu twice and then rebuilt POW with card 1 at 2048;
+its export contained only the exact POW key and no redundant pins for the other
+bands. That state and software capture are under
+`/tmp/ygofm-clear-drop-final-WRiHso/evidence/`.
+
 ### Card descriptions
 
 Generated code, stock strings, and live Library rendering establish an eight

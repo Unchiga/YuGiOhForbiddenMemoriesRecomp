@@ -306,7 +306,24 @@ before replacing it. Evidence is under
 
 The Drop Table Manager's top bar is Save, Import, Export, Randomize and a
 view-dependent slot (`geom` rects `save`, `import`, `export`, `randomize`,
-`third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs).
+`third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs). In By
+Duelist the third button is `Clear...`: its menu clears POW, BCD, TEC, or all
+three for only the selected duelist, or restores that duelist to defaults.
+Choose the same Clear item twice within ten seconds. Debug automation uses
+`drop_viewer_set` with `duelist`, either `clear_band`:0..2 or
+`clear_all_bands`:1, and `confirm`:0 then 1. `drop_viewer_state` reports
+`empty_bands` and `clear_armed`.
+
+Empty bands are deliberately pending authoring state. They appear empty in the
+editor but are not written into guest RAM; Save and every export path refuse
+them until a card is added, Randomize is used, or defaults are restored. The
+first added card gets weight 2048. Saved rebuilt bands use drop-table
+`format = 2` exact sparse keys (`pow_table`, `bcd_table`, `tec_table`), while
+unversioned files retain the original vector semantics. Exact lists must have
+unique IDs, positive weights and total 2048. Evidence for the UI/restart and
+real-duel award paths is under `/tmp/ygofm-clear-drop-live-zyg2yP/evidence/`
+and `/tmp/ygofm-clear-drop-duel-nT1Vp9/evidence/`.
+
 Randomize is armed by one click and done by a second within ten seconds;
 `drop_viewer_set` with `randomize`:seed does it in one step, window open or
 closed, and answers `{ok, entries, msg}`. Seed 0 is a fixed seed, so a run
