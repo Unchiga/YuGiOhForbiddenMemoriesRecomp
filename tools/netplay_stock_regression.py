@@ -4,8 +4,9 @@
 The caller deliberately places non-stock settings/files in both peer roots.
 This launches the normal pair, proves the session is clamped to 1x, checks
 the three guest-mutating menus and editor paths are disabled, attacks debug
-backdoors, and verifies every persistent input file is byte-identical after a
-graceful two-peer shutdown.  Results are written as JSON under NETPAIR_DIR.
+backdoors (including current mod-authoring features), and verifies every
+persistent input file is byte-identical after a graceful two-peer shutdown.
+Results are written as JSON under NETPAIR_DIR.
 """
 
 import hashlib
@@ -34,8 +35,16 @@ def rejected(reply):
 def main():
     Path(np.ROOT).mkdir(parents=True, exist_ok=True)
     before = {np.NAMES[s]: hashes(np.inst(s).dir) for s in (0, 1)}
-    report = {"schema": 1, "before": before, "peers": {}}
-    np.start()
+    report = {
+        "schema": 2,
+        "binary_sha256": hashlib.sha256(Path(np.EXE).read_bytes()).hexdigest(),
+        "disc_sha256": hashlib.sha256(Path(np.DISC).read_bytes()).hexdigest(),
+        "ports": {"debug": np.DBG, "udp": np.UDP},
+        "before": before,
+        "peers": {},
+    }
+    procs = np.start()
+    report["owned_pids"] = [proc.pid for proc in procs]
     try:
         report["boot_frames"] = np.wait_boot()
         for slot in (0, 1):
@@ -46,7 +55,11 @@ def main():
             packs = peer.q({"cmd": "card_packs"})
             drops = peer.q({"cmd": "drop_edits"})
             story = peer.q({"cmd": "story_rewards"})
+            starchips = peer.q({"cmd": "starchip_rewards", "op": "state"})
             drop_mode = peer.q({"cmd": "card_drops_state"})
+            completion = peer.q({"cmd": "free_duel_completion"})
+            password_view = peer.q({"cmd": "card_password_view"})
+            sell_state = peer.q({"cmd": "card_shop_sell", "op": "state"})
             probes = {
                 "speed_4x": peer.q({"cmd": "game_speed", "mult": 4}),
                 "turbo": peer.q({"cmd": "turbo", "enabled": 1}),
@@ -60,12 +73,23 @@ def main():
                 "cpu_manager": peer.q({"cmd": "cpu_manager", "open": 1}),
                 "story_edit": peer.q({"cmd": "story_rewards", "duelist": 1,
                                       "card": 1, "every": 1}),
+                "starchip_edit": peer.q({"cmd": "starchip_rewards", "op": "set",
+                                          "index": 0, "amount": 777777}),
                 "drop_count": peer.q({"cmd": "card_drops_set", "drops": 99}),
+                "drop_zero": peer.q({"cmd": "card_drops_set", "drops": 0}),
                 "smart_drop": peer.q({"cmd": "card_drops_set", "smart": 0}),
+                "drop_clear": peer.q({"cmd": "drop_viewer_set", "clear_band": 0,
+                                       "confirm": 1}),
                 "fill_library": peer.q({"cmd": "fill_library", "on": 1}),
                 "card_set": peer.q({"cmd": "card_packs", "dev": 1}),
+                "card_reload": peer.q({"cmd": "card_packs_reload", "card": 1}),
+                "card_import": peer.q({"cmd": "card_share", "op": "import",
+                                        "path": str(Path(np.ROOT) / "blocked.ygocard")}),
+                "card_texts_import": peer.q({"cmd": "card_texts_import",
+                                              "path": str(Path(np.ROOT) / "blocked.txt")}),
                 "monster_effect": peer.q({"cmd": "monster_effects", "fx": 1,
                                           "card": 1, "side": 0}),
+                "sell_extra": peer.q({"cmd": "card_shop_sell", "op": "confirm"}),
                 "dialogue_clear": peer.q({"cmd": "dialogue_clear"}),
                 "cpu_edit": peer.q({"cmd": "cpu_data", "duelist": 2,
                                     "name": "NETPLAY LEAK"}),
@@ -91,24 +115,45 @@ def main():
                 raise AssertionError((slot, "custom card pack active", packs))
             if drops.get("entries", 0) < 1 or story.get("pairs", 0) < 1:
                 raise AssertionError((slot, "offline edit fixtures missing", drops, story))
+            if starchips.get("configured_rules", 0) < 1:
+                raise AssertionError((slot, "offline starchip fixture missing", starchips))
+            if starchips.get("active") or starchips.get("visible") or starchips.get("applies"):
+                raise AssertionError((slot, "starchip override active in netplay", starchips))
             smart = drop_mode.get("smart", {})
             if (smart.get("configured") != 1 or smart.get("effective") != 0 or
                     smart.get("row_enabled") != 0):
                 raise AssertionError((slot, "smart drop netplay policy", drop_mode))
+            if drop_mode.get("setting") != 1:
+                raise AssertionError((slot, "normal drop count not clamped to stock", drop_mode))
+            if completion.get("netplay") != 1 or completion.get("visible") != 0:
+                raise AssertionError((slot, "Free Duel completion visible in netplay", completion))
+            if password_view.get("visible") != 0:
+                raise AssertionError((slot, "password overlay visible in netplay", password_view))
             report["peers"][np.NAMES[slot]] = {
                 "speed": speed, "menus": menus, "card_packs": packs,
                 "drop_edits": drops, "story_rewards": story,
-                "card_drops": drop_mode,
+                "starchip_rewards": starchips, "card_drops": drop_mode,
+                "free_duel_completion": completion,
+                "card_password_view": password_view,
+                "sell_extra": sell_state,
                 "blocked": probes,
             }
     finally:
+        shutdown_errors = []
         for slot in (0, 1):
-            np.inst(slot).q({"cmd": "quit_graceful"})
+            try:
+                np.inst(slot).q({"cmd": "quit_graceful"})
+            except Exception as exc:
+                shutdown_errors.append(f"{np.NAMES[slot]}: {exc}")
         deadline = time.monotonic() + 15
         while np.pids() and time.monotonic() < deadline:
             time.sleep(0.5)
         if np.pids():
             raise RuntimeError(f"owned peers did not stop gracefully: {np.pids()}")
+        report["exit_codes"] = [proc.poll() for proc in procs]
+        if shutdown_errors:
+            raise RuntimeError("graceful shutdown request failed: " +
+                               "; ".join(shutdown_errors))
 
     after = {np.NAMES[s]: hashes(np.inst(s).dir) for s in (0, 1)}
     report["after"] = after

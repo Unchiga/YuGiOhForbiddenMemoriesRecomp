@@ -36,6 +36,7 @@
 #include "psx_card_packs.h"
 #include "psx_card_share.h"
 #include "psx_card_shop.h"
+#include "psx_card_drops.h"
 #include "psx_cpu_data.h"
 #include "psx_dialogue.h"
 #include "psx_drop_edits.h"
@@ -160,7 +161,7 @@ static int settings_text(char *out, unsigned cap)
     return rows;
 }
 
-static int settings_apply(const char *text)
+static int settings_apply(const char *text, int allow_legacy_smart)
 {
     int applied = 0;
     const int count = psx_video_menu_row_count();
@@ -179,6 +180,16 @@ static int settings_apply(const char *text)
         char *k = s, *ke = eq;
         while (ke > k && (ke[-1] == ' ' || ke[-1] == '\t')) *--ke = 0;
         const int v = atoi(eq + 1);
+        /* Migration for packages produced while Smart Drop briefly lived as
+         * a MODS-menu preference. New packages serialize it with the drop
+         * tables, but old ones must retain their intent. */
+        if (!strcmp(k, "smart_first_drop")) {
+            if (allow_legacy_smart) {
+                (void)psx_card_drops_smart_set(v != 0);
+                applied++;
+            }
+            continue;
+        }
         for (int h = 0; h < count; h++) {
             const char *key = NULL;
             if (!settings_row_wanted(h, &key) || strcmp(key, k)) continue;
@@ -404,6 +415,20 @@ static int open_package(const char *path, unsigned char **b, long *n, PsxZipEntr
     char err[160];
     *k = psx_zip_list(*b, *n, ents, ENTRY_MAX, err, sizeof err);
     if (*k < 0) { free(*b); if (msg && cap) snprintf(msg, cap, "%s", err); return 0; }
+    /* A central-directory listing is not enough: verify every compressed
+     * stream and CRC before any manager is allowed to change live state. */
+    for (int i = 0; i < *k; i++) {
+        if ((i % 32) == 0) beat("validating archive");
+        long entry_n = 0;
+        unsigned char *entry = psx_zip_extract(*b, *n, &ents[i], &entry_n);
+        if (!entry) {
+            free(*b);
+            if (msg && cap) snprintf(msg, cap,
+                "Damaged archive entry: %.63s", ents[i].name);
+            return 0;
+        }
+        free(entry);
+    }
     const PsxZipEntry *m = find_entry(ents, *k, "manifest.ini");
     long sz = 0; unsigned char *mt = m ? psx_zip_extract(*b, *n, m, &sz) : NULL;
     int good = mt && strstr((const char *)mt, PSX_MOD_PACKAGE_FORMAT) != NULL;
@@ -441,17 +466,18 @@ int psx_mod_package_inspect(const char *path, char *msg, unsigned cap)
     return 1;
 }
 
-int psx_mod_package_import(const char *path, char *msg, unsigned cap)
+static int package_import_apply(const char *path, char *msg, unsigned cap)
 {
     unsigned char *b; long n; static PsxZipEntry ents[ENTRY_MAX]; int k;
     if (!open_package(path, &b, &n, ents, &k, msg, cap)) return 0;
-    char tmp[1200], why[300], report[400];
+    char tmp[1200], why[300] = "operation failed", report[400];
     unsigned rn = 0;
     int parts = 0, failed = 0;
 #define NOTE(fmt, ...) do { if (rn < sizeof report) rn += (unsigned)snprintf(report + rn, sizeof report - rn, fmt, __VA_ARGS__); } while (0)
     report[0] = 0;
 
     /* cards + drop tables through the Card Manager's importer */
+    int embedded_smart = 0;
     {
         int c = 0;
         int any = 0;
@@ -462,7 +488,13 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
             psx_card_share_own_set(1);          /* into cards/, never the Dev set */
             const int good = repack(b, n, ents, k, name_is_cards, tmp, &c) && psx_card_share_import(tmp, why, sizeof why);
             psx_card_share_own_set(0);
-            if (good) { parts++; NOTE("%scards ok%s", parts > 1 ? "; " : "", psx_card_packs_is_dev() ? " (into your own set: Dev Card Effects is on, switch it off to see them)" : ""); }
+            if (good) {
+                parts++;
+                embedded_smart = find_entry(
+                    ents, k, "drop_table_edits.ini") != NULL &&
+                    psx_drop_edits_smart_drop_present();
+                NOTE("%scards ok%s", parts > 1 ? "; " : "", psx_card_packs_is_dev() ? " (into your own set: Dev Card Effects is on, switch it off to see them)" : "");
+            }
             else { failed++; NOTE("%scards: %.80s", parts + failed > 1 ? "; " : "", why); }
             (void)psx_remove_utf8(tmp);
         }
@@ -519,7 +551,7 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
     beat("settings");
     if ((e = find_entry(ents, k, "mod_settings.ini")) != NULL) {
         long sz = 0; unsigned char *d = psx_zip_extract(b, n, e, &sz);
-        if (d) { const int a = settings_apply((const char *)d); free(d); parts++; NOTE("%s%d setting%s", parts + failed > 1 ? "; " : "", a, a == 1 ? "" : "s"); }
+        if (d) { const int a = settings_apply((const char *)d, !embedded_smart); free(d); parts++; NOTE("%s%d setting%s", parts + failed > 1 ? "; " : "", a, a == 1 ? "" : "s"); }
         else { failed++; NOTE("%ssettings: damaged", parts + failed > 1 ? "; " : ""); }
     }
 #undef NOTE
@@ -529,6 +561,49 @@ int psx_mod_package_import(const char *path, char *msg, unsigned cap)
         else snprintf(msg, cap, "Imported %.60s: %s", base_name(path), report);
     }
     return failed == 0 && parts > 0;
+}
+
+int psx_mod_package_import(const char *path, char *msg, unsigned cap)
+{
+    /* Manager parsers are intentionally single-sourced, so cross-part
+     * validation still happens while applying. Snapshot the complete managed
+     * state first and restore it if any later manager rejects its part. */
+    static unsigned serial;
+    char rollback[1200], why[400] = "", original[400] = "";
+    char leaf[96];
+    snprintf(leaf, sizeof leaf, "rollback-%u-%u.ygomods",
+             (unsigned)SDL_GetTicks(), ++serial);
+    scratch_path(leaf, rollback, sizeof rollback);
+    beat("snapshot");
+    if (!psx_mod_package_export(rollback, why, sizeof why)) {
+        if (msg && cap) snprintf(msg, cap,
+            "Import refused: current edits could not be snapshotted (%.160s)",
+            why);
+        return 0;
+    }
+    if (package_import_apply(path, original, sizeof original)) {
+        (void)psx_remove_utf8(rollback);
+        if (msg && cap) snprintf(msg, cap, "%s", original);
+        return 1;
+    }
+
+    char reset_msg[300], restore_msg[400];
+    beat("rollback");
+    (void)psx_mod_package_reset_all(reset_msg, sizeof reset_msg);
+    const int restored = package_import_apply(
+        rollback, restore_msg, sizeof restore_msg);
+    if (restored) (void)psx_remove_utf8(rollback);
+    if (msg && cap) {
+        if (restored)
+            snprintf(msg, cap,
+                "Import failed and all prior edits were restored: %.180s",
+                original);
+        else
+            snprintf(msg, cap,
+                "Import failed (%.120s); recovery package retained at %.120s",
+                original, rollback);
+    }
+    return 0;
 }
 
 /* ---- everything back to stock ------------------------------------------ */
@@ -556,6 +631,8 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
         if (psx_drop_edits_count(d)) { psx_drop_edits_clear(d); drops++; }
         if (psx_drop_edits_reward(d, NULL)) { psx_drop_edits_reward_set(d, 0, 0); drops++; }
     }
+    if (psx_drop_edits_starchip_clear()) drops++;
+    if (psx_drop_edits_smart_drop_reset()) drops++;
     (void)psx_drop_edits_save();
     for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
         const int a = psx_cpu_deck_clear(d), b = psx_cpu_ai_clear(d);

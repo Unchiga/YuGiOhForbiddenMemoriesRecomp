@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live regression for guaranteed story-card ordering with 1..99 drops.
+"""Live regression for guaranteed story-card ordering with 0..99 drops.
 
 The fixture is the authorized slot-0 (UI slot 1) Teana duel state.  Each case
 copies only its .pst/.thumb pair into a new writable directory, launches one
@@ -30,8 +30,14 @@ REWARD = 37
 UNLOCKS = 0x801D06F4
 FREE_FLAGS = 0x8009B365
 PHASE = 0x8009B23A
+RNG_SEED = 0x800FE6F8
+ZERO_TEST_SEED = 0x13579BDF
 
 CASES = (
+    ("count-0-first", 0, 0, False, False, True),
+    ("count-0-every", 0, 1, False, True, True),
+    ("count-0-no-reward", 0, -1, False, False, False),
+    ("count-0-free-duel", 0, 1, True, False, False),
     ("count-1-first", 1, 0, False, False, True),
     ("count-2-every", 2, 1, False, True, True),
     ("count-16-first", 16, 0, False, False, True),
@@ -114,6 +120,10 @@ def stop(proc, port):
 
 def run_case(args, case):
     name, count, every, free_duel, beaten, expect_story = case
+    # Card Drops normally names the total award count. Zero is the deliberate
+    # exception: it means no normal-table award, while a guaranteed campaign
+    # reward remains a separate one-card outcome.
+    expected_total = count if count > 0 else int(expect_story)
     case_dir = args.output / name
     fixture_state = args.fixture / STATE
     fixture_thumb = args.fixture / THUMB
@@ -184,9 +194,23 @@ def run_case(args, case):
         time.sleep(5.0)
 
         before = ram(port, 0x801D024F + REWARD, 1)[0]
+        card_zero_before = ram(port, 0x801D024F, 1)[0]
+        trunk_before = ram(port, 0x801D0250, 722)
+        ring_before = ram(port, 0x801D07BC, 32)
+        suppressed_before = query(
+            port, {"cmd": "card_drops_state"})["suppression"][
+                "zero_suppressed_awards"]
         print(name, "before inputs", ram(port, PHASE, 8).hex(), flush=True)
         press_cross(port)
         print(name, "after first Cross", ram(port, PHASE, 8).hex(), flush=True)
+        seed_before = None
+        if count == 0:
+            # Use a recognizable seed immediately before the winning input.
+            # Battle resolution may consume it before the drop hook; the
+            # hook's own seed_before/seed_after fields below isolate the one
+            # stock carrier roll and prove that it did not retry.
+            write(port, RNG_SEED, ZERO_TEST_SEED.to_bytes(4, "little"))
+            seed_before = int.from_bytes(ram(port, RNG_SEED, 4), "little")
         press_cross(port)
         print(name, "after second Cross", ram(port, PHASE, 8).hex(), flush=True)
         wait_query(port, {"cmd": "read_ram", "addr": f"{PHASE:08X}", "len": 2},
@@ -194,19 +218,46 @@ def run_case(args, case):
                    (int.from_bytes(bytes.fromhex(r.get("hex") or r.get("data")), "little") & 0xF) == 0xD,
                    45, "results phase")
         precommit = wait_query(port, {"cmd": "card_drops_list"},
-                               lambda r: r.get("total") == count, 20, "award list")
-        query(port, {"cmd": "screenshot_present", "path": str(case_dir / "results.png")})
+                               lambda r: r.get("total") == expected_total,
+                               20, "award list")
+        zero_visible = query(port, {"cmd": "card_drops_state"})["suppression"]
+        shot_path = case_dir / "results.png"
+        shot = query(port, {"cmd": "screenshot_present",
+                            "path": str(shot_path)})
+        if not shot.get("ok"):
+            raise RuntimeError((name, "results screenshot failed", shot))
         press_cross(port)            # stock award commits as results advances
-        final = wait_query(port, {"cmd": "card_drops_list"},
-                           lambda r: r.get("order_n") == count and
-                           all(x.get("committed") for x in r.get("award_order", [])),
-                           30, "committed award order")
+        if expected_total:
+            final = wait_query(port, {"cmd": "card_drops_list"},
+                               lambda r: r.get("order_n") == expected_total and
+                               all(x.get("committed") for x in r.get("award_order", [])),
+                               30, "committed award order")
+        else:
+            wait_query(port, {"cmd": "card_drops_state"},
+                       lambda r: r.get("suppression", {}).get("zero_suppressed_awards", 0) ==
+                       suppressed_before + 1, 30, "suppressed zero-card award")
+            final = query(port, {"cmd": "card_drops_list"})
         story = query(port, {"cmd": "story_rewards"})
+        zero_final = query(port, {"cmd": "card_drops_state"})["suppression"]
         after = ram(port, 0x801D024F + REWARD, 1)[0]
+        card_zero_after = ram(port, 0x801D024F, 1)[0]
+        trunk_after = ram(port, 0x801D0250, 722)
+        ring_after = ram(port, 0x801D07BC, 32)
+
+        if count == 0:
+            hook_seed_before = zero_final.get("rng_seed_before")
+            hook_seed_after = zero_final.get("rng_seed_after")
+            want_seed = ((hook_seed_before * 0x41C64E6D + 0x3039)
+                         & 0xFFFFFFFF)
+            if (hook_seed_after != want_seed or
+                    zero_final.get("rng_calls_last") != 1 or
+                    not zero_final.get("rng_exact_one")):
+                raise AssertionError((name, "zero RNG policy", seed_before,
+                                      want_seed, zero_final))
 
         order = final["award_order"]
-        if len(order) != count:
-            raise AssertionError(f"{name}: expected {count} awards, got {len(order)}")
+        if len(order) != expected_total:
+            raise AssertionError(f"{name}: expected {expected_total} awards, got {len(order)}")
         if expect_story:
             if order[0] != {"id": REWARD, "kind": "story", "committed": True}:
                 raise AssertionError(f"{name}: story reward is not first: {order[:2]}")
@@ -219,15 +270,44 @@ def run_case(args, case):
                 raise AssertionError(f"{name}: campaign reward escaped its gate")
             if story.get("fired") - fired_before != 0:
                 raise AssertionError(f"{name}: gated reward fired")
+        if count == 0 and not expect_story:
+            if (not zero_visible.get("visible") or
+                    zero_visible.get("reason") != "zero_normal"):
+                raise AssertionError((name, "truthful zero-card result missing", zero_visible))
+            if (trunk_after != trunk_before or
+                    card_zero_after != card_zero_before or
+                    ring_after != ring_before or
+                    final.get("total") != 0 or final.get("order_n") != 0):
+                raise AssertionError((name, "zero live award mutated state", final,
+                                      zero_final))
 
         return {"case": name, "drops": count, "mode": "none" if every < 0 else
                 ("every" if every else "first"), "free_duel": free_duel,
                 "already_defeated": beaten, "expected_story": expect_story,
                 "fixture": {"state_sha256": digest(fixture_state),
                             "thumb_sha256": digest(fixture_thumb)},
+                "results_png": {"path": str(shot_path),
+                                "sha256": digest(shot_path)},
                 "port": port, "precommit": precommit, "final": final,
                 "story": story, "reward_trunk_before": before,
-                "reward_trunk_after": after, "pass": True}
+                "reward_trunk_after": after,
+                "card_zero_before": card_zero_before,
+                "card_zero_after": card_zero_after,
+                "memory": {
+                    "trunk_before_sha256":
+                        hashlib.sha256(trunk_before).hexdigest(),
+                    "trunk_after_sha256":
+                        hashlib.sha256(trunk_after).hexdigest(),
+                    "ring_before_sha256":
+                        hashlib.sha256(ring_before).hexdigest(),
+                    "ring_after_sha256":
+                        hashlib.sha256(ring_after).hexdigest()},
+                "zero_visible": zero_visible,
+                "zero_final": zero_final,
+                "zero_rng": {"winning_input_seed": seed_before,
+                             "hook_seed_before": zero_final.get("rng_seed_before"),
+                             "hook_seed_after": zero_final.get("rng_seed_after")},
+                "pass": True}
     finally:
         if proc is not None:
             print(name, "process status before cleanup", proc.poll(), flush=True)

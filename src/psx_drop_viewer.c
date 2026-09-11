@@ -53,6 +53,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_db.h"
+#include "psx_card_drops.h"
 #include "psx_card_packs.h"
 #include "psx_cpu_data.h"        /* psx_cpu_display_name(): a renamed duelist shows here too */
 #include "psx_drop_db.h"
@@ -66,6 +67,7 @@
 #include "psx_ui_draw.h"
 #include "psx_ui_font.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_netplay.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
 
 /* --- look ---------------------------------------------------------------- */
@@ -289,6 +291,18 @@ static int  s_edit_len;
  * header until its deadline passes. */
 static char     s_msg[256];
 static uint32_t s_msg_until;
+
+/* Ordered duel-starchip rules live in the same backend/file as drop edits,
+ * but their conditional authoring needs more room than a table cell. The
+ * modal edits the shared pending state directly; Done leaves it unsaved and
+ * Save & close uses the manager's normal validated Save path. */
+static int  s_chip_open;
+static int  s_chip_sel = -1;
+static int  s_chip_scroll;
+static int  s_chip_amount_edit;
+static char s_chip_amount_buf[8];
+static int  s_chip_amount_len;
+static uint32_t s_chip_clear_armed_ms;
 
 /* Right-click context menu: a handful of actions on whatever was under the
  * pointer. One level, no submenus — band choices are spelled out as items. */
@@ -534,7 +548,7 @@ static void invalidate(void)
 
 typedef struct {
     Rect bar, tab_cards, tab_duel, search, btn_save, btn_import, btn_export,
-         btn_random, btn_restore, btn_third;
+         btn_random, btn_restore, btn_third, smart_toggle, chip_open;
     int  mod_x;                     /* left edge of the mod indicator        */
     Rect pane[2];                   /* the two panels                        */
     Rect title[2];                  /* what is listed, per panel             */
@@ -543,6 +557,11 @@ typedef struct {
     Rect sb[2];                     /* scrollbar tracks                      */
     int  row_h, nrows;
     int  foot_y, foot_h;            /* the help / unsaved line at the bottom */
+    Rect chip_modal, chip_list, chip_fields;
+    Rect chip_add, chip_remove, chip_up, chip_down, chip_clear;
+    Rect chip_cond[4], chip_any[4], chip_prev[4], chip_next[4];
+    Rect chip_amount, chip_done, chip_save;
+    int  chip_row_h, chip_rows;
     /* Left pane, BY CARD: each column's left and right edge. */
     int c_id_x, c_id_r, c_name_x, c_name_r, c_type_x, c_type_r,
         c_atk_x, c_atk_r, c_def_x, c_def_r, c_drop_x, c_drop_r;
@@ -597,6 +616,13 @@ static void layout_compute(void)
     const int top = L->bar.h + gap;
     L->foot_h = px(U_FOOT_H);
     L->foot_y = s_h - gap - L->foot_h;
+    {
+        const int fw = tw(fs, "Starchip rewards" S_ELLIP) + px(18.0f);
+        L->chip_open = (Rect){ s_w - gap - fw, L->foot_y, fw, L->foot_h };
+        const int sw = tw(fs, "Smart drops: Off") + px(18.0f);
+        L->smart_toggle = (Rect){ L->chip_open.x - px(5.0f) - sw,
+                                  L->foot_y, sw, L->foot_h };
+    }
     const int ph = L->foot_y - gap - top;
     const int avail = s_w - 3 * gap;
     int lw = avail * (s_view == VIEW_CARDS ? 60 : 38) / 100;
@@ -660,6 +686,63 @@ static void layout_compute(void)
         L->r_name_x = (s_view == VIEW_CARDS) ? cx + px(U_ICON) + px(8.0f) : L->r_id_r + px(8.0f);
         L->r_name_r = L->r_rank_x - cg;
         if (L->r_name_r < L->r_name_x + px(40.0f)) L->r_name_r = L->r_name_x + px(40.0f);
+    }
+
+    /* Responsive conditional-reward editor. It is intentionally a modal in
+     * the existing Drop Tables page, preserving the one-window/tab lifecycle
+     * and keeping the serialized backend single-sourced. */
+    {
+        int mw = px(660.0f), mh = px(330.0f);
+        if (mw > s_w - gap * 2) mw = s_w - gap * 2;
+        if (mh > s_h - gap * 2) mh = s_h - gap * 2;
+        L->chip_modal = (Rect){ (s_w - mw) / 2, (s_h - mh) / 2, mw, mh };
+        const int ip = px(14.0f), head = px(34.0f), actions = px(25.0f);
+        const int body_y = L->chip_modal.y + head;
+        const int body_h = L->chip_modal.h - head - actions - ip * 2;
+        int left_w = L->chip_modal.w * 44 / 100;
+        if (left_w < px(235.0f)) left_w = px(235.0f);
+        if (left_w > L->chip_modal.w - px(245.0f)) left_w = L->chip_modal.w - px(245.0f);
+        L->chip_list = (Rect){ L->chip_modal.x + ip, body_y,
+                               left_w - ip, body_h };
+        L->chip_fields = (Rect){ L->chip_modal.x + left_w + px(8.0f), body_y,
+                                 L->chip_modal.w - left_w - ip - px(8.0f), body_h };
+        L->chip_row_h = px(17.0f);
+        L->chip_rows = L->chip_list.h / L->chip_row_h;
+        if (L->chip_rows < 1) L->chip_rows = 1;
+        const int ay = L->chip_modal.y + L->chip_modal.h - ip - px(19.0f);
+        int bx = L->chip_list.x;
+#define CHIP_ACTION(rect, label) do { \
+            const int bw_ = tw(fs, label) + px(12.0f); \
+            L->rect = (Rect){ bx, ay, bw_, px(19.0f) }; \
+            bx += bw_ + px(3.0f); \
+        } while (0)
+        CHIP_ACTION(chip_add, "Add");
+        CHIP_ACTION(chip_remove, "Remove");
+        CHIP_ACTION(chip_up, "Up");
+        CHIP_ACTION(chip_down, "Down");
+        CHIP_ACTION(chip_clear, "Confirm clear");
+#undef CHIP_ACTION
+        const int sw = tw(fs, "Save & close") + px(16.0f);
+        const int dw = tw(fs, "Done") + px(16.0f);
+        L->chip_save = (Rect){ L->chip_modal.x + L->chip_modal.w - ip - sw,
+                               ay, sw, px(19.0f) };
+        L->chip_done = (Rect){ L->chip_save.x - px(4.0f) - dw,
+                               ay, dw, px(19.0f) };
+        const int fh = px(22.0f), fy0 = body_y + px(22.0f);
+        for (int i = 0; i < 4; i++) {
+            const int y = fy0 + i * (fh + px(8.0f));
+            const int aw = px(38.0f), ar = px(19.0f);
+            L->chip_any[i] = (Rect){ L->chip_fields.x + L->chip_fields.w - aw,
+                                     y, aw, fh };
+            L->chip_next[i] = (Rect){ L->chip_any[i].x - px(4.0f) - ar, y, ar, fh };
+            L->chip_prev[i] = (Rect){ L->chip_next[i].x - px(3.0f) - ar, y, ar, fh };
+            L->chip_cond[i] = (Rect){ L->chip_fields.x + px(66.0f), y,
+                                      L->chip_prev[i].x - px(4.0f) -
+                                      (L->chip_fields.x + px(66.0f)), fh };
+        }
+        L->chip_amount = (Rect){ L->chip_fields.x + px(66.0f),
+                                 fy0 + 4 * (fh + px(8.0f)),
+                                 L->chip_fields.w - px(66.0f), fh };
     }
 }
 
@@ -1071,6 +1154,224 @@ static void draw_button(const Rect *r, const char *label, int primary, int hover
     text_centered(r, label, COL_TEXT, face_bold());
 }
 
+static int chip_clear_armed(void)
+{
+    return s_chip_clear_armed_ms &&
+           (uint32_t)(SDL_GetTicks() - s_chip_clear_armed_ms) < 10000u;
+}
+
+static void chip_sync_amount(void)
+{
+    PsxStarchipRule r;
+    if (psx_drop_edits_starchip_get(s_chip_sel, &r))
+        snprintf(s_chip_amount_buf, sizeof s_chip_amount_buf, "%u",
+                 (unsigned)r.amount);
+    else s_chip_amount_buf[0] = 0;
+    s_chip_amount_len = (int)strlen(s_chip_amount_buf);
+    s_chip_amount_edit = 0;
+}
+
+static void chip_keep_visible(void)
+{
+    const int n = psx_drop_edits_starchip_count();
+    if (!n) { s_chip_sel = -1; s_chip_scroll = 0; return; }
+    if (s_chip_sel < 0) s_chip_sel = 0;
+    if (s_chip_sel >= n) s_chip_sel = n - 1;
+    if (s_chip_sel < s_chip_scroll) s_chip_scroll = s_chip_sel;
+    if (s_chip_sel >= s_chip_scroll + s_L.chip_rows)
+        s_chip_scroll = s_chip_sel - s_L.chip_rows + 1;
+    if (s_chip_scroll < 0) s_chip_scroll = 0;
+}
+
+static int chip_commit_amount(void)
+{
+    if (!s_chip_amount_edit) return 1;
+    if (psx_ygo_netplay_session()) {
+        chip_sync_amount();
+        say("Starchip reward rules cannot be changed during netplay; saved offline rules are preserved");
+        return 0;
+    }
+    PsxStarchipRule r;
+    if (!psx_drop_edits_starchip_get(s_chip_sel, &r)) {
+        chip_sync_amount();
+        return 0;
+    }
+    char *end = NULL;
+    const unsigned long n = strtoul(s_chip_amount_buf, &end, 10);
+    if (!s_chip_amount_buf[0] || end == s_chip_amount_buf || *end || n > 999999ul) {
+        say("Starchip reward must be a whole number from 0 to 999999");
+        chip_sync_amount();
+        return 0;
+    }
+    r.amount = (uint32_t)n;
+    (void)psx_drop_edits_starchip_set(s_chip_sel, &r);
+    s_chip_amount_edit = 0;
+    s_dirty = 1;
+    return 1;
+}
+
+static void chip_select(int index)
+{
+    (void)chip_commit_amount();
+    s_chip_sel = index;
+    chip_keep_visible();
+    chip_sync_amount();
+    s_dirty = 1;
+}
+
+static void chip_editor_open(void)
+{
+    edit_end();
+    cmenu_close();
+    s_chip_open = 1;
+    s_chip_sel = psx_drop_edits_starchip_count() ? 0 : -1;
+    s_chip_scroll = 0;
+    s_chip_clear_armed_ms = 0;
+    chip_sync_amount();
+    s_dirty = 1;
+}
+
+static void chip_editor_close(void)
+{
+    if (psx_ygo_netplay_session()) {
+        /* A session may start while the offline editor is already open.
+         * Closing must stay reachable, but an unfinished numeric edit must
+         * never leak into the persisted rule set. */
+        chip_sync_amount();
+        s_chip_open = 0;
+        s_chip_clear_armed_ms = 0;
+        s_dirty = 1;
+        return;
+    }
+    if (!chip_commit_amount()) return;
+    s_chip_open = 0;
+    s_chip_amount_edit = 0;
+    s_chip_clear_armed_ms = 0;
+    s_dirty = 1;
+}
+
+static const char *chip_mode_name(int v)
+{
+    static const char *const n[] = { "Campaign", "Free Duel" };
+    return v < 0 ? "Any mode" : n[v];
+}
+
+static const char *chip_outcome_name(int v)
+{
+    static const char *const n[] = { "Loss", "Win" };
+    return v < 0 ? "Win or loss" : n[v];
+}
+
+static const char *chip_rank_name(int v)
+{
+    static const char *const n[] = {
+        "D-TEC", "C-TEC", "B-TEC", "A-TEC", "S-TEC",
+        "D-POW", "C-POW", "B-POW", "A-POW", "S-POW"
+    };
+    return v < 0 ? "Any rank" : n[v];
+}
+
+static void chip_opponent_name(int v, char *out, unsigned cap)
+{
+    if (v < 0) snprintf(out, cap, "Any opponent");
+    else snprintf(out, cap, "%02d  %s", v + 1, psx_cpu_display_name(v));
+}
+
+static void chip_rule_summary(const PsxStarchipRule *r, char *out, unsigned cap)
+{
+    char opp[52];
+    chip_opponent_name(r->opponent, opp, sizeof opp);
+    snprintf(out, cap, "%s / %s / %s / %s  =  %u",
+             chip_mode_name(r->mode), opp, chip_outcome_name(r->outcome),
+             chip_rank_name(r->rank), (unsigned)r->amount);
+}
+
+static void chip_cycle_condition(int field, int delta, int make_any)
+{
+    if (psx_ygo_netplay_session()) return;
+    PsxStarchipRule r;
+    if (!chip_commit_amount() ||
+        !psx_drop_edits_starchip_get(s_chip_sel, &r)) return;
+    int *v = field == 0 ? &r.mode : field == 1 ? &r.opponent
+             : field == 2 ? &r.outcome : &r.rank;
+    const int max = field == 0 ? 1 : field == 1 ? NDUEL - 1
+                    : field == 2 ? 1 : 9;
+    if (make_any) *v = -1;
+    else if (*v < 0) *v = delta < 0 ? max : 0;
+    else {
+        *v += delta;
+        if (*v < 0) *v = max;
+        if (*v > max) *v = 0;
+    }
+    (void)psx_drop_edits_starchip_set(s_chip_sel, &r);
+    s_dirty = 1;
+}
+
+static void chip_add_rule(void)
+{
+    if (psx_ygo_netplay_session()) return;
+    if (!chip_commit_amount()) return;
+    PsxStarchipRule r = {
+        -1, s_sel_duelist, PSX_STARCHIP_OUTCOME_WIN, -1, 5u
+    };
+    const int at = psx_drop_edits_starchip_count();
+    if (!psx_drop_edits_starchip_set(at, &r)) {
+        say("At most 64 starchip reward rules are supported");
+        return;
+    }
+    s_chip_sel = at;
+    chip_keep_visible();
+    chip_sync_amount();
+    s_dirty = 1;
+}
+
+static void chip_remove_rule(void)
+{
+    if (psx_ygo_netplay_session()) return;
+    if (!chip_commit_amount() ||
+        !psx_drop_edits_starchip_remove(s_chip_sel)) return;
+    chip_keep_visible();
+    chip_sync_amount();
+    s_dirty = 1;
+}
+
+static void chip_move_rule(int delta)
+{
+    if (psx_ygo_netplay_session()) return;
+    if (!chip_commit_amount() ||
+        !psx_drop_edits_starchip_move(s_chip_sel, delta)) return;
+    s_chip_sel += delta;
+    chip_keep_visible();
+    chip_sync_amount();
+    s_dirty = 1;
+}
+
+static void chip_clear_rules(void)
+{
+    if (psx_ygo_netplay_session()) return;
+    if (!psx_drop_edits_starchip_count()) {
+        say("There are no starchip reward rules to clear");
+        return;
+    }
+    if (!chip_clear_armed()) {
+        s_chip_clear_armed_ms = SDL_GetTicks();
+        if (!s_chip_clear_armed_ms) s_chip_clear_armed_ms = 1;
+        say("Clear every starchip reward rule? Click Clear all again within 10 seconds");
+        s_dirty = 1;
+        return;
+    }
+    s_chip_clear_armed_ms = 0;
+    const int n = psx_drop_edits_starchip_clear();
+    s_chip_sel = -1;
+    s_chip_scroll = 0;
+    chip_sync_amount();
+    char msg[96];
+    snprintf(msg, sizeof msg, "Cleared %d starchip reward rule%s; Save is required",
+             n, n == 1 ? "" : "s");
+    say(msg);
+    s_dirty = 1;
+}
+
 static void draw_bar(void)
 {
     const Layout *L = &s_L;
@@ -1419,13 +1720,149 @@ static void draw_footer(void)
 {
     const Layout *L = &s_L;
     const PsxUiFace *fs = face_small();
-    const Rect f = { L->pane[0].x + px(4.0f), L->foot_y, s_w - 2 * L->pane[0].x - px(8.0f), L->foot_h };
+    const Rect f = { L->pane[0].x + px(4.0f), L->foot_y,
+                     L->smart_toggle.x - px(8.0f) - L->pane[0].x,
+                     L->foot_h };
     if (psx_drop_edits_empty_count())
         text_in(&f, 0, "Empty bands are pending only: add a card, Randomize, or restore defaults before Save/export. The running game still uses its last safe table.", COL_WARN, fs);
     else if (psx_drop_edits_dirty())
         text_in(&f, 0, "Unsaved edits. Save writes drop_table_edits.ini in your player-data folder; the game rolls what you save.", COL_WARN, fs);
     else
         text_in(&f, 0, "Click a weight to type a new one, Enter keeps it. Click a rank to move it between bands. Drag a card from the list onto a duelist to add it. Right-click a row for more.", COL_DIM, fs);
+    draw_button(&L->smart_toggle,
+                psx_drop_edits_smart_drop() ? "Smart drops: On" : "Smart drops: Off",
+                psx_drop_edits_smart_drop(),
+                !s_chip_open && in_rect(&L->smart_toggle, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_open, "Starchip rewards" S_ELLIP,
+                psx_drop_edits_starchip_count() > 0,
+                !s_chip_open && in_rect(&L->chip_open, s_mouse_x, s_mouse_y));
+}
+
+static void draw_chip_editor(void)
+{
+    if (!s_chip_open) return;
+    const Layout *L = &s_L;
+    const PsxUiFace *ft = face_title(), *fb = face_bold(), *fr = face_body(),
+                    *fs = face_small();
+    psx_ui_fill(&s_cv, 0, 0, s_w, s_h, 0xB8000000u);
+    psx_ui_round_rect_shadow(&s_cv, L->chip_modal.x, L->chip_modal.y,
+                             L->chip_modal.w, L->chip_modal.h,
+                             (float)px(U_R_PANEL), COL_PANEL, px(6.0f));
+    psx_ui_round_rect(&s_cv, L->chip_modal.x, L->chip_modal.y,
+                      L->chip_modal.w, L->chip_modal.h,
+                      (float)px(U_R_PANEL), COL_PANEL);
+    const int ex = L->chip_modal.x + px(14.0f);
+    psx_ui_text(&s_cv, ex,
+                L->chip_modal.y + px(8.0f) + psx_ui_font_ascent(ft),
+                "Duel starchip rewards", COL_ACCENT, ft);
+    char head[112];
+    snprintf(head, sizeof head, "%d ordered rule%s - first matching rule wins",
+             psx_drop_edits_starchip_count(),
+             psx_drop_edits_starchip_count() == 1 ? "" : "s");
+    text_right(L->chip_modal.x + L->chip_modal.w - px(14.0f),
+               L->chip_modal.y + px(8.0f) + psx_ui_font_ascent(fs),
+               head, COL_DIM, fs);
+
+    psx_ui_round_rect(&s_cv, L->chip_list.x, L->chip_list.y,
+                      L->chip_list.w, L->chip_list.h,
+                      (float)px(U_R_BOX), COL_EDIT_BG);
+    const int count = psx_drop_edits_starchip_count();
+    for (int vr = 0; vr < L->chip_rows; vr++) {
+        const int i = s_chip_scroll + vr;
+        if (i >= count) break;
+        PsxStarchipRule r;
+        if (!psx_drop_edits_starchip_get(i, &r)) continue;
+        const Rect row = { L->chip_list.x + px(3.0f),
+                           L->chip_list.y + vr * L->chip_row_h,
+                           L->chip_list.w - px(6.0f), L->chip_row_h };
+        if (i == s_chip_sel)
+            psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h,
+                              row.h * 0.5f, COL_SEL_BG);
+        else if (in_rect(&row, s_mouse_x, s_mouse_y))
+            psx_ui_round_rect(&s_cv, row.x, row.y, row.w, row.h,
+                              row.h * 0.5f, COL_HOVER);
+        char sum[180], line[196];
+        chip_rule_summary(&r, sum, sizeof sum);
+        snprintf(line, sizeof line, "%02d  %s", i + 1, sum);
+        text_in(&row, px(6.0f), line,
+                i == s_chip_sel ? COL_ACCENT : COL_TEXT, fs);
+    }
+    if (!count) {
+        const Rect empty = { L->chip_list.x + px(8.0f), L->chip_list.y,
+                             L->chip_list.w - px(16.0f), L->chip_row_h * 3 };
+        text_in(&empty, 0, "No override rules. Every duel keeps the disc's exact 1-5 starchip reward.", COL_DIM, fr);
+    }
+
+    if (s_chip_sel >= 0 && s_chip_sel < count) {
+        PsxStarchipRule r;
+        (void)psx_drop_edits_starchip_get(s_chip_sel, &r);
+        const char *const labels[5] = {
+            "Mode", "Opponent", "Outcome", "Rank", "Amount"
+        };
+        const int fy0 = L->chip_cond[0].y;
+        for (int i = 0; i < 5; i++) {
+            Rect lab = { L->chip_fields.x, fy0 + i * (L->chip_cond[1].y - fy0),
+                         px(62.0f), L->chip_amount.h };
+            text_in(&lab, 0, labels[i], COL_DIM, fb);
+        }
+        for (int i = 0; i < 4; i++) {
+            const Rect *box = &L->chip_cond[i];
+            psx_ui_round_rect(&s_cv, box->x, box->y, box->w, box->h,
+                              (float)px(U_R_BOX), COL_EDIT_BG);
+            psx_ui_round_rect_line(&s_cv, box->x, box->y, box->w, box->h,
+                                   (float)px(U_R_BOX), COL_TRACK, 1.0f);
+            char opp[72];
+            const char *value = i == 0 ? chip_mode_name(r.mode)
+                              : i == 1 ? (chip_opponent_name(r.opponent, opp, sizeof opp), opp)
+                              : i == 2 ? chip_outcome_name(r.outcome)
+                                       : chip_rank_name(r.rank);
+            text_in(box, px(7.0f), value, COL_TEXT, fr);
+            draw_button(&L->chip_prev[i], "<", 0,
+                        in_rect(&L->chip_prev[i], s_mouse_x, s_mouse_y));
+            draw_button(&L->chip_next[i], ">", 0,
+                        in_rect(&L->chip_next[i], s_mouse_x, s_mouse_y));
+            draw_button(&L->chip_any[i], "Any", (i == 0 ? r.mode : i == 1 ? r.opponent
+                        : i == 2 ? r.outcome : r.rank) < 0,
+                        in_rect(&L->chip_any[i], s_mouse_x, s_mouse_y));
+        }
+        psx_ui_round_rect(&s_cv, L->chip_amount.x, L->chip_amount.y,
+                          L->chip_amount.w, L->chip_amount.h,
+                          (float)px(U_R_BOX), COL_EDIT_BG);
+        psx_ui_round_rect_line(&s_cv, L->chip_amount.x, L->chip_amount.y,
+                               L->chip_amount.w, L->chip_amount.h,
+                               (float)px(U_R_BOX),
+                               s_chip_amount_edit ? COL_ACCENT : COL_TRACK, 1.0f);
+        const int end = psx_ui_text(&s_cv, L->chip_amount.x + px(7.0f),
+                                    psx_ui_baseline_in(L->chip_amount.y,
+                                                       L->chip_amount.h, fr),
+                                    s_chip_amount_buf, COL_TEXT, fr);
+        if (s_chip_amount_edit && s_caret_on)
+            psx_ui_fill(&s_cv, end + 1, L->chip_amount.y + px(4.0f),
+                        imax(1, px(1.0f)), L->chip_amount.h - px(8.0f),
+                        COL_ACCENT);
+        Rect note = { L->chip_fields.x, L->chip_amount.y + L->chip_amount.h + px(8.0f),
+                      L->chip_fields.w, px(42.0f) };
+        text_in(&note, 0, "0-999999. The saved total saturates safely at 999999; unmatched duels retain stock behavior.", COL_DIM, fs);
+    } else {
+        Rect hint = { L->chip_fields.x, L->chip_fields.y + px(20.0f),
+                      L->chip_fields.w, px(80.0f) };
+        text_in(&hint, 0, "Add a rule, then choose any or one duel mode, opponent, outcome and rank.", COL_DIM, fr);
+    }
+
+    draw_button(&L->chip_add, "Add", 0,
+                in_rect(&L->chip_add, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_remove, "Remove", 0,
+                in_rect(&L->chip_remove, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_up, "Up", 0,
+                in_rect(&L->chip_up, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_down, "Down", 0,
+                in_rect(&L->chip_down, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_clear, chip_clear_armed() ? "Confirm clear" : "Clear all",
+                chip_clear_armed(), in_rect(&L->chip_clear, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_done, "Done", 0,
+                in_rect(&L->chip_done, s_mouse_x, s_mouse_y));
+    draw_button(&L->chip_save, "Save & close", 1,
+                in_rect(&L->chip_save, s_mouse_x, s_mouse_y));
 }
 
 static void draw(void)
@@ -1447,6 +1884,7 @@ static void draw(void)
     draw_footer();
     draw_cmenu();
     draw_ghost();
+    draw_chip_editor();
 }
 
 /* --- import / export ------------------------------------------------------
@@ -1683,6 +2121,72 @@ static void open_clear_menu(void)
     s_dirty = 1;
 }
 
+static void chip_scroll_by(int amount)
+{
+    const int count = psx_drop_edits_starchip_count();
+    int max = count - s_L.chip_rows;
+    if (max < 0) max = 0;
+    s_chip_scroll += amount;
+    if (s_chip_scroll < 0) s_chip_scroll = 0;
+    if (s_chip_scroll > max) s_chip_scroll = max;
+    s_dirty = 1;
+}
+
+static void chip_click(int x, int y)
+{
+    const Layout *L = &s_L;
+    if (psx_ygo_netplay_session()) {
+        if (in_rect(&L->chip_done, x, y)) {
+            chip_editor_close();
+            return;
+        }
+        say("Starchip reward rules cannot be changed during netplay; saved offline rules are preserved");
+        return;
+    }
+    if (in_rect(&L->chip_list, x, y)) {
+        const int row = (y - L->chip_list.y) / L->chip_row_h;
+        const int at = s_chip_scroll + row;
+        if (at < psx_drop_edits_starchip_count()) chip_select(at);
+        return;
+    }
+    if (in_rect(&L->chip_add, x, y)) { chip_add_rule(); return; }
+    if (in_rect(&L->chip_remove, x, y)) { chip_remove_rule(); return; }
+    if (in_rect(&L->chip_up, x, y)) { chip_move_rule(-1); return; }
+    if (in_rect(&L->chip_down, x, y)) { chip_move_rule(1); return; }
+    if (in_rect(&L->chip_clear, x, y)) { chip_clear_rules(); return; }
+    if (in_rect(&L->chip_done, x, y)) { chip_editor_close(); return; }
+    if (in_rect(&L->chip_save, x, y)) {
+        if (!chip_commit_amount()) return;
+        do_save();
+        if (!psx_drop_edits_dirty()) chip_editor_close();
+        return;
+    }
+    if (s_chip_sel < 0 ||
+        s_chip_sel >= psx_drop_edits_starchip_count()) return;
+    for (int i = 0; i < 4; i++) {
+        if (in_rect(&L->chip_any[i], x, y)) {
+            chip_cycle_condition(i, 0, 1); return;
+        }
+        if (in_rect(&L->chip_prev[i], x, y)) {
+            chip_cycle_condition(i, -1, 0); return;
+        }
+        if (in_rect(&L->chip_next[i], x, y) ||
+            in_rect(&L->chip_cond[i], x, y)) {
+            chip_cycle_condition(i, 1, 0); return;
+        }
+    }
+    if (in_rect(&L->chip_amount, x, y)) {
+        if (!s_chip_amount_edit) {
+            s_chip_amount_buf[0] = 0;
+            s_chip_amount_len = 0;
+        }
+        s_chip_amount_edit = 1;
+        s_dirty = 1;
+    } else {
+        (void)chip_commit_amount();
+    }
+}
+
 /* --- input --------------------------------------------------------------- */
 
 static void set_sort(int col)
@@ -1748,6 +2252,22 @@ static void click(int x, int y)
     /* A click lands somewhere else: whatever number box was open is done.
      * (Clicking a weight cell reopens one right after.) */
     edit_end();
+    if (in_rect(&L->smart_toggle, x, y)) {
+        if (psx_ygo_netplay_session()) {
+            say("Smart drops cannot be changed during netplay; the saved offline setting is preserved");
+        } else {
+            const int on = !psx_drop_edits_smart_drop();
+            (void)psx_card_drops_smart_set(on);
+            say(on ? "Smart drops enabled for every normal reward; Save is required"
+                   : "Smart drops disabled; Save is required");
+        }
+        s_dirty = 1;
+        return;
+    }
+    if (in_rect(&L->chip_open, x, y)) {
+        chip_editor_open();
+        return;
+    }
     if (in_rect(&L->bar, x, y)) {
         switch (button_at(x, y)) {
         case 0: set_view(VIEW_CARDS); break;
@@ -2067,6 +2587,11 @@ static int on_event(const void *evp)
         if (ev->button.windowID != id) return 0;
         const int x = (int)ev->button.x, y = (int)ev->button.y;
         layout_compute();
+        s_mouse_x = x; s_mouse_y = y;
+        if (s_chip_open) {
+            if (ev->button.button == SDL_BUTTON_LEFT) chip_click(x, y);
+            return 1;
+        }
         if (ev->button.button == SDL_BUTTON_RIGHT) {
             rclick(x, y);
             return 1;
@@ -2090,6 +2615,7 @@ static int on_event(const void *evp)
     case SDL_MOUSEBUTTONUP: {
         if (ev->button.windowID != id) return 0;
         if (ev->button.button != SDL_BUTTON_LEFT) return 1;
+        if (s_chip_open) return 1;
         const int x = (int)ev->button.x, y = (int)ev->button.y;
         layout_compute();
         if (s_sb_drag) {
@@ -2111,6 +2637,12 @@ static int on_event(const void *evp)
         if (ev->motion.windowID != id) return 0;
         const int x = (int)ev->motion.x, y = (int)ev->motion.y;
         layout_compute();
+        if (s_chip_open) {
+            if (x != s_mouse_x || y != s_mouse_y) {
+                s_mouse_x = x; s_mouse_y = y; s_dirty = 1;
+            }
+            return 1;
+        }
         hover_move(x, y);
         if (s_sb_drag) {
             sb_drag_to(y);
@@ -2148,6 +2680,10 @@ static int on_event(const void *evp)
         SDL_GetMouseState(&mx, &my);
 #endif
         layout_compute();
+        if (s_chip_open) {
+            chip_scroll_by(ev->wheel.y > 0 ? -3 : 3);
+            return 1;
+        }
         scroll_by(mx, ev->wheel.y > 0 ? -3 : 3);
         return 1;
     }
@@ -2158,6 +2694,26 @@ static int on_event(const void *evp)
 #else
         const int key = (int)ev->key.keysym.sym;
 #endif
+        if (s_chip_open) {
+            if (s_chip_amount_edit) {
+                if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+                    (void)chip_commit_amount();
+                } else if (key == SDLK_ESCAPE) {
+                    chip_sync_amount();
+                    s_dirty = 1;
+                } else if (key == SDLK_BACKSPACE && s_chip_amount_len) {
+                    s_chip_amount_buf[--s_chip_amount_len] = 0;
+                    s_dirty = 1;
+                }
+                return 1;
+            }
+            if (key == SDLK_ESCAPE) chip_editor_close();
+            else if (key == SDLK_UP && s_chip_sel > 0) chip_select(s_chip_sel - 1);
+            else if (key == SDLK_DOWN &&
+                     s_chip_sel + 1 < psx_drop_edits_starchip_count())
+                chip_select(s_chip_sel + 1);
+            return 1;
+        }
         if (key == SDLK_ESCAPE && (s_cmenu_n || s_drag_live)) {
             /* Escape backs out of the menu or cancels a drag first. */
             cmenu_close();
@@ -2198,7 +2754,14 @@ static int on_event(const void *evp)
     case SDL_TEXTINPUT:
         if (ev->text.windowID != id) return 0;
         for (const char *p = ev->text.text; *p; p++) {
-            if (s_edit_row >= 0) {
+            if (s_chip_open) {
+                if (s_chip_amount_edit && *p >= '0' && *p <= '9' &&
+                    s_chip_amount_len + 1 < (int)sizeof s_chip_amount_buf) {
+                    s_chip_amount_buf[s_chip_amount_len++] = *p;
+                    s_chip_amount_buf[s_chip_amount_len] = 0;
+                    s_dirty = 1;
+                }
+            } else if (s_edit_row >= 0) {
                 if (*p >= '0' && *p <= '9'
                     && s_edit_len + 1 < (int)sizeof(s_edit_buf)) {
                     s_edit_buf[s_edit_len++] = *p;
@@ -2341,6 +2904,11 @@ void psx_drop_viewer_close(void)
     s_drag_live = 0;
     s_sb_drag = 0;
     s_edit_row = -1;
+    s_chip_open = 0;
+    s_chip_sel = -1;
+    s_chip_scroll = 0;
+    s_chip_amount_edit = 0;
+    s_chip_clear_armed_ms = 0;
 }
 
 void psx_drop_viewer_toggle(void)
@@ -2651,24 +3219,38 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
     if (!out || cap < 256u) return 0;
     if (s_win) layout_compute();
     const Layout *L = &s_L;
+    PsxStarchipRule chip_rule;
+    const int chip_has_rule = psx_drop_edits_starchip_get(s_chip_sel, &chip_rule);
+    char selected_name[PSX_CPU_NAME_MAX * 2 + 8];
+    char chip_name[PSX_CPU_NAME_MAX * 2 + 8];
+    (void)psx_cpu_display_name_json(s_sel_duelist, selected_name, sizeof selected_name);
+    if (!chip_has_rule || chip_rule.opponent < 0)
+        snprintf(chip_name, sizeof chip_name, "Any opponent");
+    else (void)psx_cpu_display_name_json(chip_rule.opponent, chip_name, sizeof chip_name);
     unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"view\":\"%s\",\"sort\":%d,\"desc\":%d,"
         "\"rsort\":%d,\"rdesc\":%d,\"dsort\":%d,\"ddesc\":%d,"
         "\"search\":\"%s\",\"cards_listed\":%d,\"rows\":%d,"
-        "\"sel_card\":%d,\"sel_duelist\":%d,\"modded\":%d,\"ready\":%d,"
+        "\"sel_card\":%d,\"sel_duelist\":%d,\"sel_duelist_name\":\"%s\",\"modded\":%d,\"ready\":%d,"
         "\"canvas\":[%d,%d],\"split_x\":%d,\"list_rows\":%d,\"unit\":%.3f,"
         "\"hover\":[%d,%d],\"hover_btn\":%d,\"edit_row\":%d,\"edit_buf\":\"%s\","
         "\"edits_dirty\":%d,\"empty_bands\":%d,\"clear_armed\":%d,\"msg\":\"%s\",\"menu\":%d,\"menu_hover\":%d,"
-        "\"drag\":%d,\"drag_live\":%d,\"scroll\":[%d,%d],\"all_cpu\":%d,\"disc_portraits\":%d",
+        "\"drag\":%d,\"drag_live\":%d,\"scroll\":[%d,%d],\"all_cpu\":%d,\"disc_portraits\":%d,"
+        "\"starchip_editor\":{\"open\":%d,\"selected\":%d,\"scroll\":%d,"
+        "\"count\":%d,\"opponent_name\":\"%s\",\"amount_edit\":%d,\"amount_buf\":\"%s\",\"clear_armed\":%d}",
         s_win != NULL, s_view == VIEW_CARDS ? "cards" : "duelists",
         s_sort, s_desc, s_rsort, s_rdesc, s_dsort, s_ddesc,
         s_search, s_order_n, s_rows_n,
-        s_sel_card, s_sel_duelist, s_eff_modded, psx_card_db_ready(),
+        s_sel_card, s_sel_duelist, selected_name,
+        s_eff_modded, psx_card_db_ready(),
         s_w, s_h, s_win ? L->pane[1].x : 0, s_win ? list_rows() : 0, s_u,
         s_hover_pane, s_hover_row, s_hover_btn, s_edit_row, s_edit_buf,
         psx_drop_edits_dirty(), psx_drop_edits_empty_count(), clear_armed(-1, 0),
         s_msg, s_cmenu_n, s_cmenu_hover,
-        s_drag_kind, s_drag_live, s_scroll, s_scroll_right, s_all_cpu, psx_duelist_portraits_ready());
+        s_drag_kind, s_drag_live, s_scroll, s_scroll_right, s_all_cpu,
+        psx_duelist_portraits_ready(), s_chip_open, s_chip_sel, s_chip_scroll,
+        psx_drop_edits_starchip_count(), chip_name, s_chip_amount_edit,
+        s_chip_amount_buf, chip_clear_armed());
     if (!s_win || n >= cap) return n < cap;
     /* Geometry, so a script can click what it sees without knowing the
      * layout's arithmetic. Rects are [x, y, w, h] in canvas pixels. */
@@ -2683,6 +3265,8 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
     if (n < cap) n += rect_json(out + n, cap - n, "randomize", &L->btn_random);
     if (n < cap) n += rect_json(out + n, cap - n, "restore_all", &L->btn_restore);
     if (n < cap) n += rect_json(out + n, cap - n, "third", &L->btn_third);
+    if (n < cap) n += rect_json(out + n, cap - n, "smart_toggle", &L->smart_toggle);
+    if (n < cap) n += rect_json(out + n, cap - n, "starchip_open", &L->chip_open);
     if (n < cap) n += rect_json(out + n, cap - n, "left", &L->pane[0]);
     if (n < cap) n += rect_json(out + n, cap - n, "right", &L->pane[1]);
     if (n < cap) n += rect_json(out + n, cap - n, "left_cols", &L->cols[0]);
@@ -2700,6 +3284,35 @@ int psx_drop_viewer_state_json(char *out, unsigned cap)
         L->d_name_x, L->d_name_r, L->d_drops_x, L->d_drops_r,
         L->r_name_x, L->r_name_r, L->r_rank_x, L->r_rank_r, L->r_weight_x, L->r_weight_r,
         L->r_chance_x, L->r_chance_r);
+    if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
+        ",\"starchip\":{\"modal\":[%d,%d,%d,%d],\"list\":[%d,%d,%d,%d],"
+        "\"row_h\":%d,\"rows\":%d,\"add\":[%d,%d],\"remove\":[%d,%d],"
+        "\"up\":[%d,%d],\"down\":[%d,%d],\"clear\":[%d,%d],"
+        "\"amount\":[%d,%d,%d,%d],\"done\":[%d,%d],\"save\":[%d,%d],\"conditions\":[",
+        L->chip_modal.x, L->chip_modal.y, L->chip_modal.w, L->chip_modal.h,
+        L->chip_list.x, L->chip_list.y, L->chip_list.w, L->chip_list.h,
+        L->chip_row_h, L->chip_rows,
+        L->chip_add.x + L->chip_add.w / 2, L->chip_add.y + L->chip_add.h / 2,
+        L->chip_remove.x + L->chip_remove.w / 2, L->chip_remove.y + L->chip_remove.h / 2,
+        L->chip_up.x + L->chip_up.w / 2, L->chip_up.y + L->chip_up.h / 2,
+        L->chip_down.x + L->chip_down.w / 2, L->chip_down.y + L->chip_down.h / 2,
+        L->chip_clear.x + L->chip_clear.w / 2, L->chip_clear.y + L->chip_clear.h / 2,
+        L->chip_amount.x, L->chip_amount.y, L->chip_amount.w, L->chip_amount.h,
+        L->chip_done.x + L->chip_done.w / 2, L->chip_done.y + L->chip_done.h / 2,
+        L->chip_save.x + L->chip_save.w / 2, L->chip_save.y + L->chip_save.h / 2);
+    for (int i = 0; i < 4 && n < cap; i++)
+        n += (unsigned)snprintf(out + n, cap - n,
+            "%s{\"value\":[%d,%d],\"prev\":[%d,%d],\"next\":[%d,%d],\"any\":[%d,%d]}",
+            i ? "," : "",
+            L->chip_cond[i].x + L->chip_cond[i].w / 2,
+            L->chip_cond[i].y + L->chip_cond[i].h / 2,
+            L->chip_prev[i].x + L->chip_prev[i].w / 2,
+            L->chip_prev[i].y + L->chip_prev[i].h / 2,
+            L->chip_next[i].x + L->chip_next[i].w / 2,
+            L->chip_next[i].y + L->chip_next[i].h / 2,
+            L->chip_any[i].x + L->chip_any[i].w / 2,
+            L->chip_any[i].y + L->chip_any[i].h / 2);
+    if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "]}");
     return n < cap;
 }
 

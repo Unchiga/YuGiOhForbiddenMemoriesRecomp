@@ -417,6 +417,21 @@ int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
     static Entry ents[4096];
     const int k = zip_entries(b, n, ents, 4096, info->error, sizeof info->error);
     if (k < 0) { free(b); return 0; }
+    /* The directory alone is not a payload preflight. Validate every CRC and
+     * compressed stream now, before import can replace one existing file.
+     * This includes PNGs and unknown additive entries, not just card.ini. */
+    for (int i = 0; i < k; i++) {
+        if ((i % 100) == 0) starvation_watchdog_heartbeat();
+        long sz = 0;
+        unsigned char *entry = zip_extract(b, n, &ents[i], &sz);
+        if (!entry) {
+            snprintf(info->error, sizeof info->error,
+                     "damaged archive entry: %.63s", ents[i].name);
+            free(b);
+            return 0;
+        }
+        free(entry);
+    }
     static unsigned char have[CARD_COUNT + 1];
     memset(have, 0, sizeof have);
     int manifest = 0;

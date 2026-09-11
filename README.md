@@ -104,7 +104,10 @@ refused.
 
 ### Card drops (`MODS → CARD DROPS`)
 
-Stock, a won duel awards exactly one card. This makes it **1-99**. It comes with
+Stock, a won duel awards exactly one card. This makes it **0-99**. Zero is an
+intentional no-normal-card result, not an empty-table roll: it consumes the
+one stock carrier roll but skips its award safely. A separate eligible
+guaranteed campaign reward still fires once. It comes with
 a results screen stock never had: the cards you won across three pages you flip
 with **D-pad Left/Right**, with the game's own yellow **New!** tag on anything
 you didn't already own.
@@ -147,8 +150,10 @@ them**. Right-click a row in the Drop Table Manager to set or clear one, and
 pick whether it comes on the **first** campaign win only or on **every** one.
 A stock install has none, so a duelist with no card set is the off switch.
 
-The scripted card replaces that duelist's random drop rather than adding to
-it, and only in the campaign - Free Duel is untouched. Pairs are kept in
+For a nonzero Card Drops count, the scripted card is position one of the
+configured total and the remaining positions use the selected normal rank
+table. At Card Drops zero it is the one separate award. This applies only in
+the campaign - Free Duel is untouched. Pairs are kept in
 `drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
 and `Export` shares them.
 
@@ -174,6 +179,24 @@ drop between bands; right-click for add, move and remove; or **drag a card from
 the left list onto a duelist**. Every band still totals exactly 2048, so what
 you add comes off that duelist's other drops in proportion, and an edit that
 cannot balance is refused rather than fudged.
+
+`Smart drops` is an authoring toggle here, saved and shared with the tables.
+For **every normal reward** it excludes weighted cards already owned three
+times across deck and trunk, including cards earned earlier in the same duel,
+then preserves the eligible cards' relative probabilities. If every weighted
+card is full, that reward is skipped instead of retrying forever or giving a
+fourth copy. Guaranteed story rewards are separate from this filter. The saved
+offline choice remains intact but has no effect during stock netplay.
+
+`Starchip rewards...` opens an ordered, first-match-wins rule editor. A rule
+can match campaign or Free Duel, a stable opponent ID, win or loss, and rank,
+with `Any` available for every condition. With no matching rule the disc's
+exact reward remains in charge. Authored amounts are 0 through 999999, add
+safely up to the save's 999999 cap, and use a compact results overlay that can
+show all six digits. Reordering makes overlaps explicit; the displayed
+opponent label follows CPU renames while the saved condition remains numeric.
+Creating and loading a savestate during the results screen preserves the
+already-applied decision, so a custom reward cannot be added twice.
 
 **Nothing is written until `Save`**, which persists your table as
 `drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
@@ -234,9 +257,11 @@ the ones `FREE DUEL` shows. Click either and type.
 `Rename…`) and type what the `FREE DUEL` grid should call them, up to 20
 characters from the game's own font (letters, digits and a little
 punctuation, no accents). Enter keeps it, an empty box puts the disc's name
-back, and the grid shows the new name at once. The Drop Table Manager and
-this window's list print it too; the ini keeps the disc's name as the
-section header so a renamed duelist can still be found.
+back, and the grid shows the new name at once. CPU-aware authoring and status
+surfaces—including Drop Tables, guaranteed rewards, Drop Missing Cards and
+starchip rules—update too; serialized conditions continue to use the stable
+numeric opponent ID. The ini keeps the disc's name as the section header so a
+renamed duelist can still be found.
 
 **Portraits.** The header above the deck shows the portrait large, with
 `Change portrait…`, `Stock portrait` and `Rename…` under it (the portrait and
@@ -260,6 +285,22 @@ once any portrait is replaced, a `.ygoduelists` file (a zip, like
 whole; `Import…` takes either, is kept straight away and replaces what was
 there, overrides and portraits included.
 
+### Free Duel completion
+
+The upper-right of the `FREE DUEL` heading shows **owned / obtainable** for
+the selected unlocked opponent. Obtainable is the unique union of every
+nonzero card in that opponent's three effective rank bands after Drop Missing
+Cards and saved Drop Table edits; owned means at least one copy exists across
+the live deck and trunk. Forbidden Memories does not record which opponent
+originally awarded a card, so this is collection progress against the current
+table rather than drop provenance.
+
+When every obtainable card is owned, the supplied eight-frame glow animates
+over that opponent's portrait. Empty effective tables show `0/0` and are never
+marked complete. The fraction, scrolling portrait positions, unlock state and
+animation are present-only, and the whole completion overlay is disabled in
+stock netplay.
+
 ### Card Manager (`VIEW → CARD MANAGER`)
 
 > **Experimental, expect bugs.** Much newer than the rest of this list. It
@@ -270,6 +311,12 @@ Change any of the 722 cards: **name, description, face art, duel thumbnail, ATK,
 DEF, both Guardian Stars, type, level, attribute, price and password**. The
 change shows up **everywhere the card is drawn**, because it is applied where
 the game reads, not where it draws.
+
+The effective eight-digit password is also shown in white at the bottom-right
+of the common full-card detail view used in duels, the Library, deck building
+and other card viewers. It appears only after the card has flipped into view
+and disappears as soon as that view starts closing, without taking one of the
+description's seven lines.
 
 ![The Card Manager on Time Wizard: face art and duel thumbnail, then name, description, stats, stars, type, level, attribute, price, password and frame color](docs/screenshots/card-manager-time-wizard.png)
 
@@ -460,8 +507,9 @@ Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 One file with everything. `Export MOD package…` writes a `.ygomods` file (a
 zip, like `.ygocards`) holding every manager's edits and every mod setting:
 your own edited cards and their pictures (always the `cards/` set, never the
-Dev Card Effects set, whichever is live), the drop tables and scripted story
-drops, the CPU duelists' decks, AI, names and portraits, the fusion edits,
+Dev Card Effects set, whichever is live), the drop tables, scripted story
+drops, Smart Drops choice and starchip rules, the CPU duelists' decks, AI,
+names and portraits, the fusion edits,
 the dialogue translation, the drop-missing-cards placements, the card shop's
 configuration, and a `mod_settings.ini` with the value of every `MODS`,
 `CHEATS` and `VIEW` mod row. Whatever you have not touched is left out.
@@ -476,6 +524,9 @@ that manager's own import, so each part replaces yours the way that
 manager's Import does and is kept straight away; the settings rows are set
 as if you had clicked them. A part the file does not carry leaves that
 manager alone. The default folder is `mod_packages` beside your saves.
+Every member is decompressed and CRC-checked before import begins. If an
+intact later section is rejected by its manager, the complete pre-import
+managed state is restored instead of leaving an earlier section half-applied.
 
 **Packages keep working across versions.** Every part is a plain-text file
 read only by its own manager; a part the file lacks, a file the game does not

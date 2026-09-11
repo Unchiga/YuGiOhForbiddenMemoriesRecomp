@@ -18,12 +18,14 @@ only drives its own seat's pad (slot 0 on the host, slot 1 on the guest); the
 other seat's presses arrive through the session. Screenshots go through
 screenshot_present so the guest overlays are in them.
 
-Instance layout (NETPAIR_DIR, default the session scratchpad):
+Instance layout (an explicit, per-run NETPAIR_DIR outside player data):
     host/  card1.mcd = copy of required NETPAIR_SEED, card2.mcd = blank
     guest/ card1.mcd = the same save with a different duelist code, card2.mcd = blank
-Debug ports 4372 (host) / 4373 (guest); UDP 7777 / 7778.
+Debug ports default to 4372/4373 and UDP to 7777/7778. Override them with
+NETPAIR_DEBUG_HOST/GUEST and NETPAIR_UDP_HOST/GUEST; all four are bind-tested
+before launch.
 """
-import os, sys, time, subprocess, shutil, signal
+import os, sys, time, subprocess, shutil, socket
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(TOOLS)
@@ -39,8 +41,14 @@ ROOT = os.environ.get('NETPAIR_DIR') or os.path.join(
     os.environ.get('CLAUDE_SCRATCHPAD', '/tmp'), 'netpair')
 SHOT = os.environ.get('SHOTDIR', os.path.join(ROOT, 'shots'))
 NAMES = {0: 'host', 1: 'guest'}
-DBG = {0: 4372, 1: 4373}
-UDP = {0: 7777, 1: 7778}
+DBG = {
+    0: int(os.environ.get('NETPAIR_DEBUG_HOST', '4372')),
+    1: int(os.environ.get('NETPAIR_DEBUG_GUEST', '4373')),
+}
+UDP = {
+    0: int(os.environ.get('NETPAIR_UDP_HOST', '7777')),
+    1: int(os.environ.get('NETPAIR_UDP_GUEST', '7778')),
+}
 SESSION = 7
 
 B = dict(select=0x0001, start=0x0008, up=0x0010, right=0x0020, down=0x0040,
@@ -198,6 +206,8 @@ def cards(code=None):
 
 def validate_root():
     from pathlib import Path
+    if not os.environ.get('NETPAIR_DIR'):
+        raise ValueError('NETPAIR_DIR must be explicit and unique to this run')
     root, personal = Path(ROOT).resolve(), Path(DATA).resolve()
     if root == personal or personal in root.parents:
         raise ValueError('NETPAIR_DIR must be outside personal player data')
@@ -220,25 +230,66 @@ def pids():
     return result
 
 
-def stop():
-    for p in pids():
+def verify_ports_free():
+    """Bind-test every exact port before either peer is started."""
+    ports = [(socket.SOCK_STREAM, DBG[s], 'debug') for s in (0, 1)]
+    ports += [(socket.SOCK_DGRAM, UDP[s], 'netplay') for s in (0, 1)]
+    if len({(kind, port) for kind, port, _ in ports}) != len(ports):
+        raise RuntimeError('netplay pair ports must be distinct per protocol')
+    held = []
+    try:
+        for kind, port, label in ports:
+            if port < 1 or port > 65535:
+                raise RuntimeError('%s port is out of range: %d' % (label, port))
+            sock = socket.socket(socket.AF_INET, kind)
+            try:
+                sock.bind(('127.0.0.1', port))
+                if kind == socket.SOCK_STREAM:
+                    sock.listen(1)
+            except OSError as exc:
+                sock.close()
+                raise RuntimeError('%s port is not free: %d (%s)' %
+                                   (label, port, exc)) from exc
+            held.append(sock)
+    finally:
+        for sock in held:
+            sock.close()
+    print('ports verified free: debug %d/%d, UDP %d/%d' %
+          (DBG[0], DBG[1], UDP[0], UDP[1]))
+
+
+def stop(limit=20):
+    """Gracefully stop only peers owned by this exact executable/root pair."""
+    owned = pids()
+    if not owned:
+        return []
+    replies = {}
+    for s in (0, 1):
         try:
-            os.kill(p, signal.SIGTERM)
-        except OSError:
-            pass
-    time.sleep(2)
-    for p in pids():
-        try:
-            os.kill(p, signal.SIGKILL)
-        except OSError:
-            pass
+            replies[s] = inst(s).q({'cmd': 'quit_graceful'})
+        except Exception as exc:
+            replies[s] = {'error': repr(exc)}
+    deadline = time.monotonic() + limit
+    remaining = pids()
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.25)
+        remaining = pids()
+    if remaining:
+        raise RuntimeError('owned peers did not stop gracefully: %r; replies=%r' %
+                           (remaining, replies))
+    return owned
 
 
 def start(extra=(), guest_memcard=True, env_extra=None):
     validate_root()
     if not DISC:
         raise ValueError('NETPAIR_DISC is required')
-    stop()
+    if os.path.basename(DISC) != 'Yu-Gi-Oh! Forbidden Memories (USA).cue':
+        raise ValueError('NETPAIR_DISC must be the explicit USA cue')
+    owned = pids()
+    if owned:
+        raise RuntimeError('refusing to replace an existing owned pair: %r' % owned)
+    verify_ports_free()
     procs = []
     for s in (0, 1):
         i = Inst(s)

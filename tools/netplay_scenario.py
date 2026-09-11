@@ -114,6 +114,32 @@ def end_turn(player, host):
     player.press('start', 12, 1.0)
 
 
+def place_selected_hand_card(player, host, face_direction=None, tag='placement'):
+    """Drive the placement state machine without wall-clock assumptions.
+
+    Selecting a hand card remains in phase 4 but advances substate 81 -> 83.
+    Only then does left/right choose face-down/up. The first confirmation
+    advances to stable substate 84; the next passes through the transient
+    phase-7 animation and settles at phase 8, then the last returns to the
+    phase-5 field cursor. Waiting for stable edges keeps loss/rollback stalls
+    from redirecting an input into the preceding screen.
+    """
+    player.press('cross', 6, 1.0)
+    wait_for(host, lambda: phase(host) == 4 and
+             (host.b(0x8009B174) & 0x7f) == 3,
+             tag + ' hand selected', 30)
+    if face_direction:
+        player.press(face_direction, 6, 1.0)
+    player.press('cross', 6, 1.0)
+    wait_for(host, lambda: phase(host) == 4 and
+             (host.b(0x8009B174) & 0x7f) == 4,
+             tag + ' choice confirmed', 30)
+    player.press('cross', 6, 1.0)
+    wait_for(host, lambda: phase(host) == 8, tag + ' confirm', 30)
+    player.press('cross', 6, 1.0)
+    wait_for(host, lambda: phase(host) == 5, tag + ' field cursor', 30)
+
+
 # The two Guardian Star wheels. A star beats the value to its right here.
 # These ids are the packed card-stat ids documented in psx_card_extend.c.
 GS_BEATS = {8: 9, 9: 10, 10: 7, 7: 8,
@@ -159,8 +185,7 @@ def main():
     shots('s_duel0')
 
     # P1: summon hand card 0 face-up
-    H.press('cross', 6, 1.5); H.press('right', 6, 1.0); H.press('cross', 6, 3.0); H.press('cross', 6, 3.0); H.press('cross', 6, 5.0)
-    wait_for(H, lambda: phase(H) == 5, 'P1 placed', 30)
+    place_selected_hand_card(H, H, 'right', 'P1 placement')
     shots('s_p1_placed')
     end_turn(H, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 1, 'P2 hand up', 90)
@@ -172,23 +197,17 @@ def main():
             i.q({'cmd': 'quit_graceful'})
         log('stopped after the P2 turn shots'); return
 
-    # P2: set hand card 0 face-down (the extra cross leaves the placement view)
-    G.press('cross', 6, 1.5); G.press('cross', 6, 3.0); G.press('cross', 6, 5.0)
-    wait_for(H, lambda: phase(H) in (5, 8), 'P2 placed', 30)
-    if phase(H) == 8:
-        G.press('cross', 6, 4.0)
-    wait_for(H, lambda: phase(H) == 5, 'P2 field cursor', 30)
+    # P2: set hand card 0 face-down. This player's untouched placement choice
+    # starts on face-down; the extra cross leaves the placement view.
+    place_selected_hand_card(G, H, None, 'P2 placement')
     check_facedown_privacy('s_p2_facedown', 1)
     end_turn(G, H)
     wait_for(H, lambda: phase(H) == 4 and H.b(0x8009B1D5) == 0, 'P1 hand up (2)', 90)
     time.sleep(3)
 
-    # P1: set hand card 0 face-down
-    H.press('cross', 6, 1.5); H.press('cross', 6, 3.0); H.press('cross', 6, 5.0)
-    wait_for(H, lambda: phase(H) in (5, 8), 'P1 placed (2)', 30)
-    if phase(H) == 8:
-        H.press('cross', 6, 4.0)
-    wait_for(H, lambda: phase(H) == 5, 'P1 field cursor (2)', 30)
+    # P1: likewise choose face-down explicitly; this menu can retain the
+    # face-up side selected by P1's previous summon.
+    place_selected_hand_card(H, H, 'left', 'P1 placement (2)')
     check_facedown_privacy('s_p1_facedown', 0)
     with open(os.path.join(np.ROOT, 'privacy-results.json'), 'w') as f:
         json.dump({'passed': True, 'checks': PRIVACY}, f, indent=2, sort_keys=True)
@@ -233,8 +252,7 @@ def main():
         'ATK', atk, 'star', ags, 'vs', dgs, 'effective', effective, 'damage', damage)
     for _ in range(hand_slot):
         G.press('right', 6, .8)
-    G.press('cross', 6, 1.5); G.press('right', 6, 1.0); G.press('cross', 6, 3.0); G.press('cross', 6, 3.0); G.press('cross', 6, 5.0)
-    wait_for(H, lambda: phase(H) == 5, 'P2 placed (2)', 30)
+    place_selected_hand_card(G, H, 'right', 'P2 placement (2)')
     placed = H.rd(0x801A7AD8, 0x1C * 30)
     log('battle rows', [tuple(struct.unpack('<hhhhhH',
          placed[i * 0x1C + 0xC:i * 0x1C + 0x18])) for i in range(30)
@@ -333,5 +351,4 @@ if __name__ == '__main__':
     try:
         main()
     finally:
-        for slot in (0, 1):
-            np.inst(slot).q({'cmd': 'quit_graceful'})
+        np.stop()

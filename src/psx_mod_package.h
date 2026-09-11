@@ -7,7 +7,8 @@
  *   manifest.ini                   format, version, what is inside
  *   cards-manifest.ini             the Card Manager's own manifest
  *   cards/<id>/<file>              edited cards (card.ini, art, thumb, title)
- *   drop_table_edits.ini           drop tables and scripted story drops
+ *   drop_table_edits.ini           drop tables, scripted story drops, Smart
+ *                                  Drops, and ordered starchip reward rules
  *   cpu-duelists.ini               CPU decks, AI, names
  *   duelists/<id>/portrait.png     CPU portraits
  *   fusion-edits.txt               the Fusion Manager's edits

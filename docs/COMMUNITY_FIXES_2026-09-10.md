@@ -47,25 +47,33 @@ opaque `FACE-DOWN CARD` detail strip instead of the stock card name and stats.
 The owner retains normal details. This is a present-only overlay; guest RAM,
 VRAM, rollback state, and hashes are not changed.
 
-Final policy evidence is
-`/tmp/ygofm-community-fixes-2026-09-10/netplay-stock-final/stock-policy.json`.
-Both peers booted at frames 8435/8436 with requested/effective speed 1,
-GAME/CHEATS/MODS disabled, 18 mutation probes rejected, offline edit fixtures
-still present, no active custom package, and no persistent fixture hash change.
+Current-binary policy evidence is
+`/tmp/ygofm-final-netplay-20260911-policy-root2/stock-policy.json` (SHA-256
+`b5a5be9b7c9efcdc8bb79c7d39e9a7dfe09dc34d143d1100d8f7c9713f0ba0d0`).
+Both peers exited 0 with requested/effective speed 1, every current mutation
+probe rejected, offline Smart/zero-drop/starchip/CPU/package fixtures still
+loaded but inactive, and no persistent fixture hash change.
 
-Face-down evidence for both owners is in each final `privacy-results.json`:
+Face-down evidence for both owners is in each current `privacy-results.json`:
 
-- `/tmp/ygofm-community-fixes-2026-09-10/netplay-final-normal/`
-- `/tmp/ygofm-community-fixes-2026-09-10/netplay-final-rollback/`
-- `/tmp/ygofm-community-fixes-2026-09-10/netplay-final-loss-5pct/`
+- `/tmp/ygofm-final-netplay-20260911-normal-root3/`
+- `/tmp/ygofm-final-netplay-20260911-rollback-root2/`
+- `/tmp/ygofm-final-netplay-20260911-loss5-root6/`
 
-Player 2's card 137 is hidden from slot 0 and visible to slot 1; player 1's
-card 261 is visible to slot 0 and hidden from slot 1. All three scenarios also
-completed the duel, results, trade, graceful shutdown, and scratch-card
-carry-back with backups. The rollback 35 ms/15 ms run logged synchronized
-startup-FMV hold/desync telemetry at simulation frames 2775 and 7118, then
-recovered and completed. The 5 percent loss run reported zero snapshot
-overflow and completed with deliberate packet drops.
+All three scenarios completed both owner directions, the duel, results, trade,
+graceful shutdown, and scratch-card carry-back with backups. Normal scenario
+and privacy SHA-256 values are
+`1a77c6c8cd03624ab2c440cc117392872ea6d9da2057a28f3d1d9e64c7a076d3` and
+`70170567ade9dbe3b7c6e4aa4155a825b10f7dc8e770feb7338d3a501150cd27`;
+rollback 35/15 values are
+`da37f85fa52baae1397dfea72af589a4b1ef463b0db1531f250e21f07d9fdabc` and
+`8b5b64aab09a6f479f423c232e2a48ced3ae711ac51ef31adad8ff48756f11bb`;
+seeded 5 percent loss values are
+`dda29dd07a8b8bd97b47acda5ed979eb60271a22382bbc265afb191d877179c0` and
+`8b5b64aab09a6f479f423c232e2a48ced3ae711ac51ef31adad8ff48756f11bb`.
+The rollback simulator held 54,944/54,079 packets with zero overflow and peaks
+120/123. The loss run deliberately dropped 5,847/5,861 packets with zero
+overflow and peaks 12/15.
 
 ### Guaranteed story rewards and multi-drop order
 
@@ -84,51 +92,93 @@ card 37 as award-order entry zero with `kind: story` and later entries marked
 `normal`. A separate self-launch proof is under
 `story-self-launch-final-v2/results.json`.
 
-### Smart first normal drop
+### Zero normal-card drops
 
-`MODS > Smart first drop` is an optional, persisted setting whose default is
-Off. For the first normal reward only, it excludes weighted cards the player
-already owns at least three of across the 40-card deck and trunk. It uses the
-resident opponent/rank table after Drop Table edits and other transforms, then
-rescales eligible weights to exactly 2048 with deterministic largest-remainder
-rounding and card-ID tie breaking. The guest still performs its one ordinary
-RNG call. The original table is restored byte-for-byte before later normal
-awards, so their table and RNG stream are unchanged.
+`MODS > Card drops` accepts 0 through 99, with a stock notch at 1. Zero is an
+intentional no-normal-card outcome, not an empty-table roll: the results
+routine performs its one unavoidable in-flight stock roll (exactly one LCG
+advance, with no retry), then the function-entry replacement skips the award.
+No card 0 is invented, the trunk and recent-card ring stay unchanged, and the
+per-duel New/result lists are cleared. A present-only panel covers both the
+unearned stock card number and name with `NO NORMAL CARD DROP`, so SPOILS does
+not claim that the rolled-but-discarded card was earned.
 
-A guaranteed campaign reward retains position zero. With two or more total
-drops, Smart applies to the first normal reward after it and sees ownership
-after the guaranteed card was awarded; with one total drop there is no normal
-reward to filter. If every weighted card is already owned at least three times,
-the intentional deterministic fallback is one unfiltered roll from the
-selected rank table. There is no retry loop.
+Guaranteed campaign rewards remain separate. If one is eligible while Card
+Drops is 0, the same in-flight roll is steered to that card and it is awarded
+once; Free Duel and a gated/already-consumed reward still award no card. Smart
+Drops remains saved but reports ineffective at zero because there is no normal
+award to filter. The zero/no-reward, zero/Free-Duel, zero/first-win, and
+zero/every-win cases are part of `tools/story_reward_regression.py`; each live
+zero-count case checks the hook-scoped pre/post seed for the exact single-call
+RNG result, while no-reward cases require a byte-identical 722-card trunk,
+recent-card ring, and card-0 sentinel.
+The shared no-card presentation also covers a Smart Drops final-roll
+suppression with `NO ELIGIBLE CARD DROP`; an already-awarded guaranteed story
+card remains visible because its SPOILS entry is truthful.
 
-Seeded coverage used 1, 2, 16, and 99 drops, ownership counts 0, 1, 2, 3 and
-255, a deck/trunk split of 1+2, all three rank bands, duplicate weights, an
-all-ineligible table, and 100,000-roll distributions. A controlled live Free
-Duel used `1:2000, 2:48`: card 1 was present 40 times in the deck and card 2
-was absent, so award zero was card 2 while the other 15 awards returned to the
-original table (14 card 1, one additional card 2). The results page showed
-Mystical Elf x2 and Blue-eyes White Dragon x14; card 2's New state was true and
-card 1's false. Screenshots and the exact fixture are under
-`/tmp/ygofm-smart-live-filter-EtFaWE/`. A separate live all-ineligible run
-under `/tmp/ygofm-smart-live-duel-G29EGf/` took the unfiltered fallback and
-rendered 16 distinct rewards across multiple result pages without hanging.
+Live zero-count evidence was recorded under
+`/tmp/ygofm-zero-opaque-live-MD6dL1/evidence-no-reward/` and
+`/tmp/ygofm-zero-final-live-oCdvRb/evidence-{first,every,free-duel}/`.
+All four cases passed. The final no-reward screenshot hash is
+`9dd67c74ae9b815d9a6af4c2eab285ed6b1fb3b0ce078fda9a1e1b841ed0f44e`;
+its opaque panel covers the complete stock card number/name area. Its card-0
+sentinel stayed `2`, and the before/after trunk and recent-ring hashes were
+identical. Both guaranteed modes committed card 37 exactly once; Free Duel
+and no-reward modes committed no card.
 
-The setting survived save/restart and a MOD-package export, clear, import and
-restart/import cycle. The old `full-coverage-2026-09-07.ygomods` fixture, which
-has no Smart key, still imports and leaves the additive default Off. During
-stock netplay the stored On preference remains configured, but effective state
-and row-enabled state are both false; mutation is rejected on both peers and
-the hostile fixture hashes remain unchanged after graceful shutdown. Evidence
-is `/tmp/ygofm-smart-netplay-policy-SdVaeX/stock-policy.json`.
-The consolidated machine-readable result, including exact seeded counts,
-package hash, live award order and screenshot hashes, is
-`/tmp/ygofm-smart-first-final-evidence/results.json`.
+### Smart Drops
+
+`Smart drops` is now the Drop Table Manager's optional, persisted authoring
+toggle, default Off. It applies to every normal reward, not only the first. At
+each position it excludes weighted cards already owned three times across the
+40-card deck and trunk, including rewards committed earlier in the same duel.
+Surviving weights are rescaled to exactly 2048 with deterministic
+largest-remainder rounding and card-ID tie breaking, then the resident band is
+restored byte-for-byte. The selected rank table and one normal RNG call per
+position remain authoritative.
+
+A guaranteed campaign reward is separate: it retains position zero and is not
+Smart-filtered; every following normal reward is. Once no eligible weighted
+card remains, that position consumes its ordinary RNG call but awards nothing.
+There is no retry loop and no unfiltered duplicate fallback. The results page
+uses `NO ELIGIBLE CARD DROP` only when the final suppressed stock carrier would
+otherwise display a card that was not earned; a truthful guaranteed story card
+remains visible.
+
+The setting is additive `smart_drop = on|off` in drop-table format 3, so direct
+Drop Tables exports and `.ygomods` packages share it even when there are no
+weight edits. An absent key keeps the stock-compatible default Off; explicit
+Off can replace a recipient's earlier On. Old packages whose transient setting
+was named `smart_first_drop` migrate on import. Stock netplay preserves the
+offline file but disables the filter and rejects mutation.
+
+The final aggregate is
+`/tmp/ygofm-smart-independent-aggregate-final4-20260911/aggregate.json`
+(SHA-256 `8d7c483b9f985b624d00274794d6c84a2803509ad5ec79093f80c95879240948`).
+Independent real-duel processes cover counts 1, 2, 16 and 99; ownership 0, 1,
+2, 3 and many with deck/trunk splits; duplicate weights; all-ineligible pools;
+story-first ordering; exact resident-table restore; New markers; and result
+pagination. The 99-drop case exhausted its 40 available copy slots and safely
+skipped the remaining positions. Seeded 100,000-roll checks on each imported
+rank band produced `49780 / 25185 / 25035` for weights `1024 / 512 / 512`.
+
+The live fixture's displayed S-TEC result nevertheless reached the guest hook
+as effective tier 0. Real-duel filtering is therefore demonstrated at tier 0;
+tiers 1 and 2 are covered by format-3 import/export and the same deterministic
+host-side distribution implementation, not claimed as separate live rolls.
 
 Adding the distribution probe exposed the framework debug-command registry's
 silent 64-command ceiling. psxrecomp commit `adbef3b9` raises the fixed registry
 to 128 and adds a capacity/dispatch regression, restoring all previously
-registered title probes.
+registered title probes. Follow-up psxrecomp commit `7d5f0205` adds the opt-in
+generated/interpreted function-replacement hook used to skip a suppressed
+award without patching guest text or code.
+
+The legacy `card_drops_test` and `card_drops_sim` commands were also retired:
+they recursively ran guest code from the debug callback and could consume
+interrupt/SIO event state, eventually stranding the BIOS. They now return a
+clear error. Real-duel fixtures cover award behavior; the Smart distribution
+probe is host-only and non-mutating.
 
 ### FM Editor
 
@@ -184,6 +234,97 @@ between `scale-200-final/results.json` and the JSON files in `scale-200/`.
 the exact pre-test monitor modes, scale, priority and placement were restored.
 `tools/fm_editor_desktop_regression.py` makes the five-page containment and
 oversize check repeatable without changing display configuration itself.
+
+### Free Duel collection progress
+
+The upper-right of the native `FREE DUEL` title now shows the selected CPU's
+unique owned / obtainable cards. Obtainable is the union of nonzero card IDs
+from all three effective rank bands after Drop Missing Cards and valid saved
+Drop Table overrides. Owned intersects that set with the live deck and trunk;
+the game has no per-opponent acquisition history, so this is current collection
+progress rather than drop provenance. A genuinely empty effective union is
+`0/0` and is never complete.
+
+Owning the full set overlays the project owner's eight supplied 48x48 glow
+frames on the stock-visible portrait. The bake is lossless ARGB, every original
+PNG hash and all 2,304 pixels per frame are verified by
+`tools/verify_portrait_borders.py`, and the animation is present-only. Build
+Deck/empty cells show no ratio, scrolling follows real D-pad navigation, and
+stock netplay hides the complete overlay because local inventory and authoring
+state are intentionally unavailable there.
+
+The isolated software-rendered live result is
+`/tmp/ygofm-fd-completion-20260910-f/results.json`. Real input reached Duel
+Master K at scroll row 5; the copied-save state showed `12/157` with no frame,
+then a scratch-only inventory fill produced `157/157`, a frame aligned at guest
+`[244,144]`, and distinct animation frames 2 and 3. PID 3052468 shut down
+gracefully; no personal card or monitor configuration was used.
+
+### CPU rename propagation
+
+CPU renaming was already supported by the CPU page and native Free Duel string
+table. The display-name path is now single-sourced and JSON-safe across CPU
+status, Drop Tables sorting/selection, story rewards, Drop Missing Cards,
+portrait feedback, debug responses, and the starchip opponent picker. A rename
+invalidates those live lists immediately, including quoted names. Persisted
+drop/starchip conditions continue to use stable numeric opponent IDs and stock
+section keys, so a later rename cannot retarget a rule.
+
+The editor accepts at most 20 glyphs from the game's supported set: space,
+ASCII letters and digits, plus `. ! ' , ? - # " & / : ( ) $ * > < + %`.
+Empty restores the stock name. Package round-trip coverage includes a quoted
+name, clear/import, a second export, native Free Duel lookup, Drop Tables, and
+the starchip label while confirming that the saved starchip rule remains
+`opponent = 2`.
+
+### Conditional duel starchip rewards
+
+The Drop Tables page now owns an ordered, first-match-wins reward-rule editor.
+Each condition can be Any or one campaign/Free Duel mode, opponent ID,
+win/loss outcome, and D-through-S TEC/POW rank. Earlier rules have priority;
+the UI supports add, remove, reorder, two-step clear, Done-without-save and
+Save-and-close. With no matching rule the guest's exact stock 1-through-5
+calculation and write remain untouched.
+
+The live hook snapshots the pre-stock 32-bit total at results entry, then
+replaces only a matched award with `min(before + amount, 999999)`. Accepted
+amounts are 0 through 999999; parsing rejects unsupported values before state
+changes. A present-only compact star-times-number row covers the stock star
+loop and fits every six-digit value without clipping other results. Both
+mutation and presentation are disabled in stock netplay while the offline
+rules remain saved.
+
+The in-progress results decision is mirrored into guest-backed savestate data.
+Loading after the rule has applied restores the decided flag, pre-award total,
+matched rule and capped result, so the next results frame cannot add the same
+reward twice. Loading an older state with no marker starts with no cached
+decision. Leaving results clears every per-duel selector and amount, including
+the debug state for an unmatched stock fallback.
+
+Current-binary follow-up evidence is
+`/tmp/ygofm-final-starchip-savestate-cpu-20260911/` and
+`/tmp/ygofm-final-starchip-followup2-cpu-20260911/results.json`. A matched 777
+reward changed 100 to 877, survived a save/load after an intervening mutation
+to 43,210, and remained applied exactly once for another 420 result callbacks.
+A nonmatching rule kept 500 with no overlay; an explicit amount zero canceled
+the stock increment and kept 700 while rendering `x0`. The focused result is
+6/6 PASS (SHA-256
+`b6279fc1c670141012b6ab4238aca415398323036fed1e45b5b81ed07664dbe4`).
+
+Rules and the Smart toggle are additive sections in `drop_table_edits.ini`
+format 3. This keeps weight tables, scripted story rewards, Smart filtering
+and starchip rules in one validated backend for direct export, card-share and
+full `.ygomods` packages. Old formats remain importable; malformed known
+fields and future versions fail transactionally.
+
+Both container readers now inflate and CRC-check every archive member before
+any manager is allowed to mutate state, including unknown additive entries.
+Full MOD-package import also snapshots every managed section and restores that
+snapshot if a later manager rejects an otherwise intact payload. Thus a bad
+late fusion section cannot leave earlier card/drop changes applied, and a
+damaged late image cannot partly replace a card set. Format-3 `smart_drop` is
+authoritative when a transitional package also contains the older
+`smart_first_drop` setting; packages containing only the old key still migrate.
 
 ### Continuation: reward-only exports and equip authoring
 
@@ -404,21 +545,47 @@ eight-line Library image is
 
 ## Build and regression summary
 
-- Current recompiler tools, debug title, and release title build successfully.
-  No generator source changed, so game/OpenBIOS regeneration was not required.
+- Current recompiler tools, generated game/OpenBIOS, debug title, and release
+  title build successfully. The function-entry generator change required a
+  forced regeneration; all 69 regenerated game shards matched their
+  pre-regeneration content. Final SHA-256 values are
+  `64895239c27d97eec774b6b79aa939cd8d8c0c0a5eb79cb753f0669e18e741ba`
+  (`psxrecomp-game`),
+  `661ed38c86db0c6a7390053f10d61f2648f7c023394f883df81c3d2f99200d86`
+  (`psxrecomp-bios`),
+  `da61649a8d2b39f74799bd44ff2573cb819db5fec0cecb8b86b82a546ea3d2a7`
+  (debug game), and
+  `3d9258dbf178adf8fa76dc3c60ea8f5aa43612120c9bdb9eb016a8aca9f66292`
+  (release game).
 - `build-dbg/menu_preview --selftest`: PASS.
 - Description boundary/live suite: PASS.
 - Story reward suite: 7/7 PASS plus independent self-launch PASS.
-- FM Editor and full manager/package round trip: PASS. The final full package
-  after the description allocator correction is
-  `/tmp/ygofm-community-fixes-2026-09-10/package-final-v3/full-coverage.ygomods`.
+- FM Editor and full manager/package round trip: PASS. The current 722-card
+  package includes Card Drops 0, Smart Drops, all rank bands, a story reward,
+  starchip rules, passwords, equips, field allow-lists and a quoted CPU rename;
+  it survives stock reset/import and bytewise member comparison. Old fixtures,
+  future/malformed input, damaged late members, late-manager rollback and
+  legacy Smart migration pass with zero failures in
+  `/tmp/ygofm-final-followup-cpu-20260911/package-roundtrip.log` (SHA-256
+  `15e73f2657725718cd3d2f6bd1f84298749712dc197fa465dc99574a0e91d085`).
 - All 20 executable effect regressions: PASS in
-  `/tmp/ygofm-community-fixes-2026-09-10/effects-final/results.json`.
-- Offline audio speed: PASS at 1x, 2x, 3x, 4x with 59.94, 119.87, 179.81,
-  and 239.73 game fps and approximately 44.05 kHz SPU production, with no
-  queue underflow/overflow. Evidence is `audio-speed-final/results.json`.
-- Netplay normal, rollback 35/15, and 5 percent loss: PASS, including both
-  face-down owners, result/trade continuation, and graceful carry-back.
+  `/tmp/ygofm-final-effects-20260910-d/results.json` (aggregate SHA-256
+  `89c612bcec44a40d52b29d33e20fbdde112a20f86b9c03d01836904dbcbb6330`).
+- Offline OpenGL audio speed: PASS at 1x, 2x, 3x, 4x with 59.933, 119.877,
+  179.831, and 239.751 game fps and 44,050-44,060 Hz SPU production, with no
+  queue underrun/overflow. Evidence is
+  `/tmp/ygofm-final-audio-20260911-final-gl/results.json` (SHA-256
+  `13ec51267b7937887154f070e450c3af8b325bbbd3d43ee93d41bcf67745d839`).
+  The retained software-renderer run passed 1x but could sustain only 114.844
+  fps/42,205 Hz at 2x and recorded 50,675 device underruns; it is not counted
+  as a speed pass (`/tmp/ygofm-final-audio-20260911-final/results.json`).
+- Netplay normal, rollback 35/15, and seeded 5 percent loss: PASS on the final
+  debug binary, including both face-down owners, result/trade continuation,
+  graceful carry-back and zero simulator overflow. The old fixed 256-packet
+  delay queue did overflow in the first 35/15 attempt; recomp-net commit
+  `6cf5b01d` expands burst capacity and adds a deterministic 512-packet
+  regression (17/17 recomp-net tests pass). psxrecomp commit `0703254c`
+  records that nested gitlink.
 - `Play.sh` resolves `build-dbg` normally and `build` with `-rel`; both files
   were rebuilt at this checkpoint.
 
@@ -434,8 +601,10 @@ new title-source warning was introduced.
 
 ## Known unverified platform behavior
 
-The current Linux software-rendered live paths and Linux OpenGL gameplay paths
-were tested. A physical controller was not available; controller activation is
+The current Linux software-rendered editor/live paths and Linux OpenGL gameplay
+paths were tested. Software gameplay sustained stock 1x here but not the 2x
+audio-speed acceptance threshold; normal OpenGL sustained 1x through 4x. A
+physical controller was not available; controller activation is
 covered by the menu's shared keyboard/controller handler selftest, not a real
 device. Windows, macOS, Vulkan, real HiDPI hardware behavior, and a completed
 post-lock in-process launcher cycle were not tested in this checkpoint.

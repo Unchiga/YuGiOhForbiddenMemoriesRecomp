@@ -42,17 +42,29 @@ void psx_card_drops_register_menu(void);
 /* Host-frame update: drives the results page's "New!" sprite overlay. */
 void psx_card_drops_tick(void);
 
-/* MODS > CARD DROPS menu row, 1..PSX_VM_CARD_DROPS_MAX (1 = stock). A
- * preference, not a live write — it only changes what the NEXT won duel
- * awards. Returns 0 and changes nothing if the value is out of range. */
+/* MODS > CARD DROPS menu row, 0..PSX_VM_CARD_DROPS_MAX (1 = stock). Zero
+ * skips every normal-table award; an eligible guaranteed campaign reward is
+ * separate and still fires. A preference, not a live write — it only changes
+ * what the NEXT won duel awards. Returns 0 and changes nothing if the value
+ * is out of range. */
 int  psx_card_drops_set(int drops);
 
-/* Optional first-normal-award filter. It excludes cards owned at three or
- * more across deck + trunk, preserving the active rank table's relative
- * weights. The saved preference remains configured during stock netplay but
- * is not effective there. */
+/* Optional every-normal-award filter. It excludes cards owned at three or
+ * more across deck + trunk, including awards already made in this results
+ * sequence, while preserving the active rank table's relative weights. The
+ * saved preference remains configured during stock netplay but is not
+ * effective there. */
 int  psx_card_drops_smart_set(int enabled);
 int  psx_card_drops_smart_state_json(char *out, unsigned cap);
+int  psx_card_drops_suppression_state_json(char *out, unsigned cap);
+
+/* Present-only truthful replacement for the stock SPOILS card strip when a
+ * zero-normal-card duel has no separate guaranteed story reward, or when a
+ * Smart Drops pool is exhausted before the in-flight final award. */
+int  psx_card_drops_no_card_image(const uint32_t **pixels, int *w, int *h);
+void psx_card_drops_no_card_origin(int *x, int *y);
+int  psx_card_drops_no_card_needs_present(void);
+void psx_card_drops_no_card_placed(const int *placement);
 
 /* Deterministic, non-mutating distribution probe over the currently resident
  * tier and ownership. COUNTS and WEIGHTS each have 722 entries. */
@@ -84,7 +96,8 @@ int  psx_card_drops_order_json(char *out, unsigned cap);
  * be swept without winning a duel per value. */
 int  psx_card_drops_simulate(CPUState *cpu, int tier, int drops,
                              uint32_t *out_card, int *out_granted,
-                             int *out_bail);
+                             int *out_bail, uint32_t *out_seed_before,
+                             uint32_t *out_seed_after);
 
 /* One nested roll on demand, reporting what the guest call produced. */
 int  psx_card_drops_test_roll(CPUState *cpu, int tier, int do_award,

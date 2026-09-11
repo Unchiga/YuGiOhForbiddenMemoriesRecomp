@@ -503,6 +503,18 @@ func_80036C14 writes, and eight bytes appear there the moment a save loads.
 The caption at the bottom of the grid is the check; the vertical strip on
 the right is decoration. Cells 1 and 2 (Simon, Teana) are empty on this
 box's save, so RIGHT from Build Deck shows no caption; RIGHT x3 is Jono.
+Accepted name glyphs are space, A-Z, a-z, 0-9 and
+`. ! ' , ? - # " & / : ( ) $ * > < + %`; names are at most 20 glyphs.
+Quoted names remain valid in old CPU ini/package fixtures and are JSON-escaped
+by the shared CPU-name backend for every debug response.
+
+The `managers` group in `tools/upstream_regression.py` renames Teana to a
+quoted name, asserts that CPU and Drop Tables state both update, and asserts a
+starchip rule still serializes `opponent = 2` rather than the display name.
+The `mods` group also proves the game-side table entry for Simon points at
+0x801D9CC0 before capturing the renamed FREE DUEL grid. The package round-trip
+test carries `Round "Trip"` through `cpu-duelists.ini`, Revert to Stock,
+inspect/import, and a second export.
 
 Export writes an .ini, or a .ygoduelists zip (cpu-duelists.ini plus
 duelists/<id>/portrait.png) once any portrait is edited. The right pane's
@@ -675,6 +687,17 @@ X. LP on the rules screen: LEFT on each pad steps its own value down by 500
 to 500, then 1. Duel state: phase `0x8009B23A & 0xF` (4 hand, 5 field cursor,
 6 magic zoom, 7 placement view, 8 placement confirm, 9 battle, 0xC/0xD
 results), substate `0x8009B174`, effect `0x8009B254` (2 = TRIANGLE card view).
+Under rollback or loss, do not direct placement with fixed sleeps: hand
+selection has stable phase-4 substates `0x81 -> 0x83 -> 0x84`, phase 7 can be
+transient, phase 8 is the stable placement confirmation, and phase 5 is the
+field cursor. `netplay_scenario.py` waits for each stable edge before sending
+the next input.
+
+Every link-simulator release line must say `overflow=0`. A nonzero overflow
+means some datagrams were delivered without the configured delay and the run
+does not qualify, even if gameplay completed. A 35 +/- 15 ms full duel exposed
+the former 256-entry capacity; the current 1024-entry burst table and
+`netsim_capacity_test` cover that regression.
 
 Let the scenario finish its `quit_graceful` requests. If a harness must be
 interrupted, use its recorded subprocess handles and then query each owned
@@ -727,13 +750,33 @@ the copied authorized slot state and writes this evidence as JSON:
 python3 -B tools/story_reward_regression.py --help
 ```
 
-`card_drops_set` also accepts `smart:0|1`. `card_drops_state.smart` separates
-the persisted `configured` choice from `effective` and `row_enabled`, then
-reports attempts, applied/unchanged/fallback counts, restores, active-table
-state, tier, eligible/excluded counts, surviving source weight and selected
-card. Stock netplay must report configured 1 / effective 0 / row-enabled 0
-when an offline On setting was loaded, reject a debug mutation, and leave the
-settings file byte-identical.
+`card_drops_set` accepts `drops:0..99` and `smart:0|1`. Zero means no normal
+table award: the result routine still consumes its one in-flight stock RNG
+call, never retries, and the award entry is skipped. An eligible guaranteed
+campaign reward remains separate and uses that roll as its carrier. With no
+guaranteed reward, `card_drops_state.suppression.reason` is `zero_normal`, its
+present-only cover must say `NO NORMAL CARD DROP` over both the stock card
+number and name, and `card_drops_list` must remain empty before and after
+leaving results. The full 722-byte trunk, card-0 sentinel, and 32-byte
+recent-card ring must remain byte-identical.
+`tools/story_reward_regression.py` includes zero with first-win, every-win,
+no-reward, and Free Duel cases. Each live zero case asserts
+`suppression.rng_seed_before` to `rng_seed_after` is exactly one LCG advance
+at the award entry and `rng_exact_one` is true.
+
+The same truthful cover is used when Smart Drops exhausts the weighted pool
+before the final in-flight normal award: `suppression.reason` is
+`smart_exhausted`, the card strip says `NO ELIGIBLE CARD DROP`, and no fallback
+duplicate is banked. If a guaranteed story card was already awarded and is
+what SPOILS displays, it remains visible instead of being covered.
+
+`card_drops_state.smart` separates the Drop Table Manager's persisted
+`configured` choice from `effective`, then reports the configured normal-award
+count, attempts, applied/unchanged/exhausted counts, restores, skipped awards,
+active-table state, tier, eligible/excluded cards, remaining copy capacity,
+surviving source weight and selected card. Stock netplay must report configured
+1 / effective 0 / toggle-enabled 0 when an offline On table file was loaded,
+reject debug/editor mutation, and leave that file byte-identical.
 
 `card_drops_smart_sim` is the non-mutating distribution probe. It takes
 `tier`, `seed`, and `rolls` (1 through 1,000,000), snapshots the live deck and
@@ -743,13 +786,31 @@ distribution checks instead of thousands of re-entrant guest calls. The
 shipping selection still uses the game's roll routine and one normal RNG call;
 the probe merely makes that probability calculation measurable.
 
-Smart means the first applicable **normal** reward. A story reward stays at
-position zero; Smart starts after it only when another reward exists. Count
-deck plus trunk, with 0/1/2 copies eligible and 3+ excluded. If all weighted
-cards are excluded, expect one unfiltered selected-rank roll and `fallbacks`
-to increment—never a retry. For multi-drop evidence, compare stock and Smart
-from the same seed: only award zero may differ, the tail and final seed must
-match, and the resident 1,444-byte band must be byte-identical before/after.
+`tools/package_roundtrip.py` additionally builds intact-but-invalid and
+CRC-damaged late-member fixtures. It asserts that a later fusion-parser
+failure restores the complete pre-import package, that MOD and edited-card
+archives reject a damaged late member before mutation, and that malformed
+drop section/card/mode fields plus future drop formats leave the prior layer
+intact. It also covers transitional `smart_first_drop` migration and the rule
+that an embedded format-3 `smart_drop` key wins when both are present.
+
+Smart applies to **every normal reward**, rebuilding eligibility after each
+committed award. A guaranteed story reward stays separate at position zero and
+is never filtered; all normal positions after it are. Count deck plus trunk,
+with 0/1/2 total copies eligible and 3+ excluded. Earlier awards in the same
+duel immediately reduce the remaining capacity, so no card can finish above
+three copies. If all weighted cards are excluded, consume that position's
+ordinary RNG call but skip its award—never retry and never fall back to a
+duplicate. For multi-drop evidence, require the resident 1,444-byte band to be
+byte-identical before/after, every returned copy count to respect its initial
+capacity, and the configured RNG-position stream to be consumed even when a
+position is skipped.
+
+The old `card_drops_test` and `card_drops_sim` debug commands are intentionally
+refused. They recursively dispatched guest code from a debug callback and a
+live sweep proved they could consume interrupt/SIO event state and strand the
+BIOS. Use real-duel fixtures for award behavior and `card_drops_smart_sim` for
+the pure seeded distribution calculation.
 
 The Drop Tables page's Restore All Drops to Stock action is separate from
 MODS > Revert to Stock. It needs two activations in ten seconds, resets only

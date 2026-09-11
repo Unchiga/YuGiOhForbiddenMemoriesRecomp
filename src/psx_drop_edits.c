@@ -55,13 +55,17 @@ static uint8_t  g_replace_mask[NDUEL];
  * same Save, same Import / Export as the weights above. */
 static uint16_t g_reward[NDUEL];
 static uint8_t  g_reward_every[NDUEL];
+static uint8_t  g_smart_drop;
+static uint8_t  g_smart_drop_present;
+static PsxStarchipRule g_starchip[PSX_STARCHIP_RULE_MAX];
+static int      g_starchip_n;
 static int      g_loaded;
 static int      g_dirty;
 static unsigned g_gen = 1;
 static char     g_ini_path[1024] = "";
 static char     g_status[96] = "not loaded";
 
-#define DROP_EDIT_FORMAT 2
+#define DROP_EDIT_FORMAT 3
 
 static void reset_data(void)
 {
@@ -69,6 +73,10 @@ static void reset_data(void)
     memset(g_n, 0, sizeof g_n);
     memset(g_reward, 0, sizeof g_reward);
     memset(g_reward_every, 0, sizeof g_reward_every);
+    g_smart_drop = 0;
+    g_smart_drop_present = 0;
+    memset(g_starchip, 0, sizeof g_starchip);
+    g_starchip_n = 0;
     memset(g_replace, 0, sizeof g_replace);
     memset(g_replace_mask, 0, sizeof g_replace_mask);
 }
@@ -87,6 +95,97 @@ static char *trim(char *s)
     while (e > s && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' '
                      || e[-1] == '\t')) *--e = 0;
     return s;
+}
+
+static char *key_value(char *line, const char *key)
+{
+    const size_t n = strlen(key);
+    if (strncmp(line, key, n) ||
+        (line[n] != ' ' && line[n] != '\t' && line[n] != '=')) return NULL;
+    char *eq = strchr(line + n, '=');
+    return eq ? trim(eq + 1) : NULL;
+}
+
+static int starts_key(const char *line, const char *key)
+{
+    const size_t n = strlen(key);
+    return !strncmp(line, key, n) &&
+           (line[n] == ' ' || line[n] == '\t' || line[n] == '=');
+}
+
+static int starchip_rule_valid(const PsxStarchipRule *r)
+{
+    return r && r->mode >= -1 && r->mode <= PSX_STARCHIP_MODE_FREE_DUEL &&
+           r->opponent >= -1 && r->opponent < NDUEL &&
+           r->outcome >= -1 && r->outcome <= PSX_STARCHIP_OUTCOME_WIN &&
+           r->rank >= -1 && r->rank < 10 && r->amount <= 999999u;
+}
+
+static int parse_starchip_choice(const char *value,
+                                 const char *const *names, int count,
+                                 int *out)
+{
+    if (!strcmp(value, "any")) { *out = -1; return 1; }
+    for (int i = 0; i < count; i++) {
+        if (!strcmp(value, names[i])) { *out = i; return 1; }
+    }
+    return 0;
+}
+
+static int parse_starchip_line(char *line, PsxStarchipRule *rule,
+                               char *err, unsigned errcap, int line_no)
+{
+    static const char *const modes[] = { "campaign", "free_duel" };
+    static const char *const outcomes[] = { "loss", "win" };
+    static const char *const ranks[] = {
+        "D-TEC", "C-TEC", "B-TEC", "A-TEC", "S-TEC",
+        "D-POW", "C-POW", "B-POW", "A-POW", "S-POW"
+    };
+    char *v = key_value(line, "mode");
+    if (!v && starts_key(line, "mode")) goto bad;
+    if (v) {
+        if (!parse_starchip_choice(v, modes, 2, &rule->mode)) goto bad;
+        return 1;
+    }
+    v = key_value(line, "opponent");
+    if (!v && starts_key(line, "opponent")) goto bad;
+    if (v) {
+        if (!strcmp(v, "any")) rule->opponent = -1;
+        else {
+            char *end = NULL;
+            const long n = strtol(v, &end, 10);
+            if (end == v || *trim(end) || n < 1 || n > NDUEL) goto bad;
+            rule->opponent = (int)n - 1;
+        }
+        return 1;
+    }
+    v = key_value(line, "outcome");
+    if (!v && starts_key(line, "outcome")) goto bad;
+    if (v) {
+        if (!parse_starchip_choice(v, outcomes, 2, &rule->outcome)) goto bad;
+        return 1;
+    }
+    v = key_value(line, "rank");
+    if (!v && starts_key(line, "rank")) goto bad;
+    if (v) {
+        if (!parse_starchip_choice(v, ranks, 10, &rule->rank)) goto bad;
+        return 1;
+    }
+    v = key_value(line, "amount");
+    if (!v && starts_key(line, "amount")) goto bad;
+    if (v) {
+        char *end = NULL;
+        const unsigned long n = strtoul(v, &end, 10);
+        if (end == v || *trim(end) || n > 999999ul) goto bad;
+        rule->amount = (uint32_t)n;
+        return 1;
+    }
+    return 0; /* unknown additive key */
+
+bad:
+    if (err && errcap)
+        snprintf(err, errcap, "invalid starchip rule on line %d", line_no);
+    return -1;
 }
 
 static int parse_replacement(char *value, uint16_t out[NCARDS],
@@ -175,7 +274,7 @@ static int read_ini(const char *path, char *err, unsigned errcap)
     if (!f) return -1;
     reset_data();
     char line[16384];
-    int cur = -1, entries = 0, format = 1, line_no = 0;
+    int cur = -1, chip_cur = -1, entries = 0, format = 1, line_no = 0;
     while (fgets(line, sizeof(line), f)) {
         line_no++;
         if (!strchr(line, '\n') && !feof(f)) {
@@ -185,7 +284,7 @@ static int read_ini(const char *path, char *err, unsigned errcap)
         }
         char *s = trim(line);
         if (!*s || *s == ';' || *s == '#') continue;
-        if (cur < 0 && !strncmp(s, "format", 6) &&
+        if (cur < 0 && chip_cur < 0 && !strncmp(s, "format", 6) &&
             (s[6] == ' ' || s[6] == '\t' || s[6] == '=')) {
             int parsed = 0;
             char trailing = 0;
@@ -204,13 +303,63 @@ static int read_ini(const char *path, char *err, unsigned errcap)
             }
             continue;
         }
+        if (cur < 0 && chip_cur < 0 && starts_key(s, "smart_drop")) {
+            char *v = key_value(s, "smart_drop");
+            if (!v || (strcmp(v, "on") && strcmp(v, "off") &&
+                       strcmp(v, "1") && strcmp(v, "0"))) {
+                if (err && errcap) snprintf(err, errcap,
+                    "smart_drop must be on or off on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            g_smart_drop = (uint8_t)(!strcmp(v, "on") || !strcmp(v, "1"));
+            g_smart_drop_present = 1;
+            continue;
+        }
         if (*s == '[') {
             char *e = strchr(s, ']');
-            if (!e) continue;
+            if (!e) {
+                if (err && errcap) snprintf(err, errcap,
+                    "unterminated section header on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
             *e = 0;
+            char *tail = trim(e + 1);
+            if (*tail && *tail != ';' && *tail != '#') {
+                if (err && errcap) snprintf(err, errcap,
+                    "trailing text after section header on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
             cur = -1;
+            chip_cur = -1;
+            if (!strncmp(s + 1, "Starchip Reward ", 16)) {
+                char *end = NULL;
+                const long label = strtol(s + 17, &end, 10);
+                if (end == s + 17 || *trim(end) || label < 1 ||
+                    g_starchip_n >= PSX_STARCHIP_RULE_MAX) {
+                    if (err && errcap) snprintf(err, errcap,
+                        "invalid starchip section on line %d", line_no);
+                    fclose(f);
+                    return -2;
+                }
+                chip_cur = g_starchip_n++;
+                g_starchip[chip_cur].mode = -1;
+                g_starchip[chip_cur].opponent = -1;
+                g_starchip[chip_cur].outcome = -1;
+                g_starchip[chip_cur].rank = -1;
+                g_starchip[chip_cur].amount = UINT32_MAX;
+                continue;
+            }
             for (int d = 0; d < NDUEL; d++)
                 if (!strcmp(PSX_DROP_DB[d].name, s + 1)) { cur = d; break; }
+            continue;
+        }
+        if (chip_cur >= 0) {
+            const int rc = parse_starchip_line(
+                s, &g_starchip[chip_cur], err, errcap, line_no);
+            if (rc < 0) { fclose(f); return -2; }
             continue;
         }
         if (cur < 0) continue;
@@ -237,14 +386,42 @@ static int read_ini(const char *path, char *err, unsigned errcap)
             if (handled) continue;
         }
         {   /* the section's scripted reward, if it has one */
-            int rc = 0;
-            char when[16];
-            if (sscanf(s, "card = %d", &rc) == 1) {
-                if (rc >= 1 && rc <= NCARDS) g_reward[cur] = (uint16_t)rc;
+            char *v = key_value(s, "card");
+            if (!v && starts_key(s, "card")) {
+                if (err && errcap) snprintf(err, errcap,
+                    "malformed scripted card on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            if (v) {
+                char *end = NULL;
+                const long card = strtol(v, &end, 10);
+                if (end == v || *trim(end) || card < 1 || card > NCARDS) {
+                    if (err && errcap) snprintf(err, errcap,
+                        "scripted card must be 1 through %d on line %d",
+                        NCARDS, line_no);
+                    fclose(f);
+                    return -2;
+                }
+                g_reward[cur] = (uint16_t)card;
                 continue;
             }
-            if (sscanf(s, "when = %15s", when) == 1) {
-                g_reward_every[cur] = (uint8_t)(strcmp(when, "every") == 0);
+            v = key_value(s, "when");
+            if (!v && starts_key(s, "when")) {
+                if (err && errcap) snprintf(err, errcap,
+                    "malformed scripted reward mode on line %d", line_no);
+                fclose(f);
+                return -2;
+            }
+            if (v) {
+                if (strcmp(v, "first") && strcmp(v, "every")) {
+                    if (err && errcap) snprintf(err, errcap,
+                        "scripted reward mode must be first or every on line %d",
+                        line_no);
+                    fclose(f);
+                    return -2;
+                }
+                g_reward_every[cur] = (uint8_t)!strcmp(v, "every");
                 continue;
             }
         }
@@ -287,6 +464,23 @@ static int read_ini(const char *path, char *err, unsigned errcap)
         e->w[0] = (uint16_t)w0; e->w[1] = (uint16_t)w1; e->w[2] = (uint16_t)w2;
     }
     fclose(f);
+    if ((g_starchip_n || g_smart_drop_present) && format < 3) {
+        if (err && errcap) snprintf(err, errcap,
+            "smart drops and starchip rewards require format 3");
+        return -2;
+    }
+    for (int i = 0; i < g_starchip_n; i++) {
+        if (g_starchip[i].amount == UINT32_MAX) {
+            if (err && errcap) snprintf(err, errcap,
+                "starchip reward %d has no amount", i + 1);
+            return -2;
+        }
+        if (!starchip_rule_valid(&g_starchip[i])) {
+            if (err && errcap) snprintf(err, errcap,
+                "starchip reward %d is outside the supported range", i + 1);
+            return -2;
+        }
+    }
     if (!validate_loaded_edits(err, errcap)) return -2;
     return entries;
 }
@@ -316,6 +510,7 @@ int psx_drop_edits_any(void)
 int psx_drop_edits_has_export_content(void)
 {
     psx_drop_edits_ensure_loaded();
+    if (g_starchip_n || g_smart_drop_present) return 1;
     for (int d = 0; d < NDUEL; d++)
         if (g_n[d] || g_reward[d] || g_replace_mask[d]) return 1;
     return 0;
@@ -473,7 +668,7 @@ static int write_to(const char *path)
     if (!f) return 0;
     fprintf(f,
 "; Yu-Gi-Oh! Forbidden Memories - Recompiled : drop table edits\n"
-"format = 2\n"
+"format = 3\n"
 ";\n"
 "; Written by the Drop Table Manager (VIEW > DROP TABLE MANAGER); hand-editing\n"
 "; works too. One section per duelist, one line per edited card:\n"
@@ -493,12 +688,23 @@ static int write_to(const char *path)
 "; These edits apply on top of MODS > DROP MISSING CARDS when that row is on.\n"
 "; Delete a line (or the file) to fall back to the table underneath.\n"
 ";\n"
-"; A section may also carry a SCRIPTED REWARD - the card that duelist is\n"
+"; smart_drop = on applies ownership-aware filtering to EVERY normal reward\n"
+"; roll in the duel. Cards at 3 total copies across deck and trunk are removed\n"
+"; and survivor weights retain their relative probability. Missing means Off.\n"
+";\n"
+"; A duelist section may also carry a SCRIPTED REWARD - the card that duelist is\n"
 "; guaranteed to drop when the campaign beats them:\n"
 ";\n"
 ";     card = 92        the card id\n"
 ";     when = every     optional; without it, only the FIRST win gives it\n"
+";\n"
+"; Ordered first-match-wins STARCHIP REWARD sections may match any or one\n"
+"; campaign/free_duel mode, opponent (1..39), win/loss, and duel rank.\n"
+"; Amount is 0..999999. If no rule matches, the disc's exact 1..5 reward is\n"
+"; retained. Earlier sections have priority when conditions overlap.\n"
 "\n");
+    if (g_smart_drop_present)
+        fprintf(f, "smart_drop = %s\n\n", g_smart_drop ? "on" : "off");
     for (int d = 0; d < NDUEL; d++) {
         if (!g_n[d] && !g_reward[d] && !g_replace_mask[d]) continue;
         fprintf(f, "[%s]\n", PSX_DROP_DB[d].name);
@@ -527,6 +733,25 @@ static int write_to(const char *path)
             fprintf(f, "\n");
         }
         fprintf(f, "\n");
+    }
+    {
+        static const char *const mode[] = { "campaign", "free_duel" };
+        static const char *const outcome[] = { "loss", "win" };
+        static const char *const rank[] = {
+            "D-TEC", "C-TEC", "B-TEC", "A-TEC", "S-TEC",
+            "D-POW", "C-POW", "B-POW", "A-POW", "S-POW"
+        };
+        for (int i = 0; i < g_starchip_n; i++) {
+            const PsxStarchipRule *r = &g_starchip[i];
+            fprintf(f, "[Starchip Reward %d]\n", i + 1);
+            fprintf(f, "mode = %s\n", r->mode < 0 ? "any" : mode[r->mode]);
+            if (r->opponent < 0) fprintf(f, "opponent = any\n");
+            else fprintf(f, "opponent = %d\n", r->opponent + 1);
+            fprintf(f, "outcome = %s\n",
+                    r->outcome < 0 ? "any" : outcome[r->outcome]);
+            fprintf(f, "rank = %s\n", r->rank < 0 ? "any" : rank[r->rank]);
+            fprintf(f, "amount = %u\n\n", (unsigned)r->amount);
+        }
     }
     fclose(f);
     return 1;
@@ -614,13 +839,18 @@ int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
     const char *base = base_name(p);
     const int n = entry_total();
     const int r = psx_drop_edits_reward_count();
+    const int sc = psx_drop_edits_starchip_count();
+    const int sd = psx_drop_edits_smart_drop_present();
     /* Exporting is a copy for someone else; it neither saves the live ini
      * nor clears the unsaved-changes marker. */
     snprintf(g_status, sizeof(g_status), "exported %.60s", base);
     if (msg && cap) {
-        if (r)
-            snprintf(msg, cap, "Exported %d weight entr%s and %d scripted drop%s as %.40s",
-                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s", base);
+        if (r || sc || sd)
+            snprintf(msg, cap, "Exported %d weight entr%s, %d scripted drop%s, %d starchip rule%s%s%s as %.28s",
+                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s",
+                     sc, sc == 1 ? "" : "s",
+                     sd ? ", Smart drops " : "", sd ? (g_smart_drop ? "On" : "Off") : "",
+                     base);
         else
             snprintf(msg, cap, "Exported %d weight entr%s as %.48s",
                      n, n == 1 ? "y" : "ies", base);
@@ -644,13 +874,17 @@ int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
      * what the game rolls; this makes the file agree with it. */
     const int kept = psx_drop_edits_save();
     const int r = psx_drop_edits_reward_count();
+    const int sc = psx_drop_edits_starchip_count();
+    const int sd = psx_drop_edits_smart_drop_present();
     if (msg && cap) {
         if (!kept)
             snprintf(msg, cap, "Imported %d entr%s, but %s could not be written",
                      n, n == 1 ? "y" : "ies", INI_NAME);
-        else if (r)
-            snprintf(msg, cap, "Imported %d entr%s and %d scripted drop%s, and kept them",
-                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s");
+        else if (r || sc || sd)
+            snprintf(msg, cap, "Imported %d entr%s, %d scripted drop%s, %d starchip rule%s%s%s; kept",
+                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s",
+                     sc, sc == 1 ? "" : "s",
+                     sd ? ", Smart drops " : "", sd ? (g_smart_drop ? "On" : "Off") : "");
         else
             snprintf(msg, cap, "Imported %d entr%s and kept them",
                      n, n == 1 ? "y" : "ies");
@@ -675,12 +909,17 @@ int psx_drop_edits_load_file(const char *name_or_path)
     static uint16_t backup_reward[NDUEL];
     static uint8_t backup_every[NDUEL], backup_mask[NDUEL];
     static uint16_t backup_replace[NDUEL][3][NCARDS];
+    static PsxStarchipRule backup_starchip[PSX_STARCHIP_RULE_MAX];
+    const int backup_starchip_n = g_starchip_n;
+    const int backup_smart = g_smart_drop;
+    const int backup_smart_present = g_smart_drop_present;
     memcpy(backup_edit, g_edit, sizeof g_edit);
     memcpy(backup_n, g_n, sizeof g_n);
     memcpy(backup_reward, g_reward, sizeof g_reward);
     memcpy(backup_every, g_reward_every, sizeof g_reward_every);
     memcpy(backup_mask, g_replace_mask, sizeof g_replace_mask);
     memcpy(backup_replace, g_replace, sizeof g_replace);
+    memcpy(backup_starchip, g_starchip, sizeof g_starchip);
     char why[160] = "";
     const int n = read_ini(path, why, sizeof why);
     if (n < 0) {
@@ -690,6 +929,10 @@ int psx_drop_edits_load_file(const char *name_or_path)
         memcpy(g_reward_every, backup_every, sizeof g_reward_every);
         memcpy(g_replace_mask, backup_mask, sizeof g_replace_mask);
         memcpy(g_replace, backup_replace, sizeof g_replace);
+        memcpy(g_starchip, backup_starchip, sizeof g_starchip);
+        g_starchip_n = backup_starchip_n;
+        g_smart_drop = (uint8_t)backup_smart;
+        g_smart_drop_present = (uint8_t)backup_smart_present;
         snprintf(g_status, sizeof(g_status), "load FAILED: %.76s",
                  n == -1 ? "could not read file" : why);
         return n;
@@ -872,6 +1115,130 @@ int psx_drop_edits_reward_count(void)
     return n;
 }
 
+int psx_drop_edits_smart_drop(void)
+{
+    psx_drop_edits_ensure_loaded();
+    return g_smart_drop != 0;
+}
+
+int psx_drop_edits_smart_drop_present(void)
+{
+    psx_drop_edits_ensure_loaded();
+    return g_smart_drop_present != 0;
+}
+
+int psx_drop_edits_smart_drop_set(int enabled)
+{
+    psx_drop_edits_ensure_loaded();
+    const uint8_t value = enabled ? 1u : 0u;
+    if (g_smart_drop_present && g_smart_drop == value) return 0;
+    g_smart_drop = value;
+    g_smart_drop_present = 1;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_smart_drop_reset(void)
+{
+    psx_drop_edits_ensure_loaded();
+    if (!g_smart_drop && !g_smart_drop_present) return 0;
+    g_smart_drop = 0;
+    g_smart_drop_present = 0;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_starchip_count(void)
+{
+    psx_drop_edits_ensure_loaded();
+    return g_starchip_n;
+}
+
+int psx_drop_edits_starchip_get(int index, PsxStarchipRule *out)
+{
+    psx_drop_edits_ensure_loaded();
+    if (index < 0 || index >= g_starchip_n || !out) return 0;
+    *out = g_starchip[index];
+    return 1;
+}
+
+int psx_drop_edits_starchip_set(int index, const PsxStarchipRule *rule)
+{
+    psx_drop_edits_ensure_loaded();
+    if (!starchip_rule_valid(rule) || index < 0 || index > g_starchip_n ||
+        (index == g_starchip_n && g_starchip_n >= PSX_STARCHIP_RULE_MAX))
+        return 0;
+    if (index == g_starchip_n) g_starchip_n++;
+    else if (!memcmp(&g_starchip[index], rule, sizeof *rule)) return 0;
+    g_starchip[index] = *rule;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_starchip_remove(int index)
+{
+    psx_drop_edits_ensure_loaded();
+    if (index < 0 || index >= g_starchip_n) return 0;
+    memmove(&g_starchip[index], &g_starchip[index + 1],
+            (size_t)(g_starchip_n - index - 1) * sizeof g_starchip[0]);
+    g_starchip_n--;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_starchip_move(int index, int delta)
+{
+    psx_drop_edits_ensure_loaded();
+    const int to = index + delta;
+    if (index < 0 || index >= g_starchip_n || to < 0 || to >= g_starchip_n ||
+        !delta) return 0;
+    const PsxStarchipRule moving = g_starchip[index];
+    if (to > index)
+        memmove(&g_starchip[index], &g_starchip[index + 1],
+                (size_t)(to - index) * sizeof g_starchip[0]);
+    else
+        memmove(&g_starchip[to + 1], &g_starchip[to],
+                (size_t)(index - to) * sizeof g_starchip[0]);
+    g_starchip[to] = moving;
+    g_dirty = 1;
+    g_gen++;
+    return 1;
+}
+
+int psx_drop_edits_starchip_clear(void)
+{
+    psx_drop_edits_ensure_loaded();
+    const int n = g_starchip_n;
+    if (!n) return 0;
+    g_starchip_n = 0;
+    g_dirty = 1;
+    g_gen++;
+    return n;
+}
+
+int psx_drop_edits_starchip_select(int mode, int opponent, int outcome,
+                                   int rank, uint32_t *amount,
+                                   int *rule_index)
+{
+    psx_drop_edits_ensure_loaded();
+    for (int i = 0; i < g_starchip_n; i++) {
+        const PsxStarchipRule *r = &g_starchip[i];
+        if (r->mode >= 0 && r->mode != mode) continue;
+        if (r->opponent >= 0 && r->opponent != opponent) continue;
+        if (r->outcome >= 0 && r->outcome != outcome) continue;
+        if (r->rank >= 0 && r->rank != rank) continue;
+        if (amount) *amount = r->amount;
+        if (rule_index) *rule_index = i;
+        return 1;
+    }
+    if (rule_index) *rule_index = -1;
+    return 0;
+}
+
 int psx_drop_edits_apply(int duelist, int tier, uint16_t *w)
 {
     psx_drop_edits_ensure_loaded();
@@ -909,8 +1276,11 @@ int psx_drop_edits_state_json(char *out, unsigned cap)
     }
     return snprintf(out, cap,
         "\"entries\":%d,\"duelists\":%d,\"replacements\":%d,"
-        "\"empty_bands\":%d,\"dirty\":%d,\"gen\":%u,"
+        "\"empty_bands\":%d,\"smart_drop\":%d,\"smart_drop_present\":%d,"
+        "\"starchip_rules\":%d,"
+        "\"dirty\":%d,\"gen\":%u,"
         "\"status\":\"%s\"",
         total, duelists, replacements, psx_drop_edits_empty_count(),
+        g_smart_drop, g_smart_drop_present, g_starchip_n,
         g_dirty, g_gen, g_status);
 }

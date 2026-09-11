@@ -205,8 +205,29 @@ def main():
         time.sleep(2)
         e=q({'cmd':'fm_editor'});page_ids['cpu']=e['window_id']
         assert e['window_id'] == window_id and e['page_name'] == 'CPU',e
-        q({'cmd':'cpu_data','duelist':1,'name':'Catchup Simon','save':1})
+        renamed = 'Catchup "Teana"'
+        q({'cmd':'cpu_data','duelist':1,'name':renamed,'save':1})
+        cpu = q({'cmd':'cpu_data'})
+        assert next(row for row in cpu['duelists'] if row['d'] == 1)['shown'] == renamed, cpu
         q({'cmd':'cpu_manager','duelist':1,'shot':str(shots/'cpu-manager.ppm')})
+        q({'cmd':'starchip_rewards','op':'clear'})
+        chips = q({'cmd':'starchip_rewards','op':'set','index':0,
+                   'mode':1,'opponent':1,'outcome':1,'rank':9,'amount':25})
+        assert chips['rules'][0]['opponent'] == 1, chips
+        assert chips['rules'][0]['opponent_name'] == renamed, chips
+        q({'cmd':'drop_viewer_set','open':1})
+        time.sleep(.5)
+        q({'cmd':'drop_viewer_set','view':1,'duelist':1})
+        drops = q({'cmd':'drop_viewer'})
+        assert drops['sel_duelist_name'] == renamed, drops
+        x,y,w,h = drops['geom']['starchip_open']
+        q({'cmd':'drop_viewer_click','x':x+w//2,'y':y+h//2,'button':1})
+        drops = q({'cmd':'drop_viewer'})
+        assert drops['starchip_editor']['opponent_name'] == renamed, drops
+        drop_ini = root/'rename-drop-tables.ini'
+        q({'cmd':'drop_viewer_set','export':str(drop_ini)})
+        chip_text = drop_ini.read_text()
+        assert 'opponent = 2' in chip_text and renamed not in chip_text, chip_text
         q({'cmd':'card_manager_set','open':1})
         time.sleep(2)
         e=q({'cmd':'fm_editor'});page_ids['cards_return']=e['window_id']

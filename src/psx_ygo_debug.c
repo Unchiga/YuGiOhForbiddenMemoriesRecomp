@@ -39,6 +39,7 @@
 #include "psx_cpu_manager.h"
 #include "psx_mod_package.h"
 #include "psx_story_rewards.h"
+#include "psx_starchip_rewards.h"
 #include "psx_card_manager.h"
 #include "psx_card_shop.h"
 #include "psx_card_packs.h"
@@ -62,6 +63,96 @@ static int reject_stock_netplay_mutation(int id)
     if (!psx_ygo_netplay_session()) return 0;
     send_err(id, "unavailable during stock netplay");
     return 1;
+}
+
+/* starchip_rewards — ordered first-match-wins authoring and live decision
+ * state. Numeric conditions use -1 for any; opponent is the internal 0..38
+ * index and rank 0..9 is D..S TEC followed by D..S POW. */
+static void handle_starchip_rewards(int id, const char *json)
+{
+    char op[24] = "", runtime[1024];
+    int selected = -2;
+    uint32_t selected_amount = 0;
+    (void)json_get_str(json, "op", op, sizeof op);
+    const int mutating = !strcmp(op, "set") || !strcmp(op, "remove") ||
+                         !strcmp(op, "move") || !strcmp(op, "clear") ||
+                         !strcmp(op, "save");
+    if (mutating && reject_stock_netplay_mutation(id)) return;
+    if (!strcmp(op, "set")) {
+        int index = json_get_int(json, "index", psx_drop_edits_starchip_count());
+        PsxStarchipRule r = { -1, -1, -1, -1, 0 };
+        if (index < psx_drop_edits_starchip_count() &&
+            !psx_drop_edits_starchip_get(index, &r)) {
+            send_err(id, "bad starchip rule index"); return;
+        }
+        const int amount = json_get_int(json, "amount", -1);
+        r.mode = json_get_int(json, "mode", r.mode);
+        r.opponent = json_get_int(json, "opponent", r.opponent);
+        r.outcome = json_get_int(json, "outcome", r.outcome);
+        r.rank = json_get_int(json, "rank", r.rank);
+        if (amount >= 0) r.amount = (uint32_t)amount;
+        else if (index == psx_drop_edits_starchip_count()) {
+            send_err(id, "amount is required when appending a rule"); return;
+        }
+        if (!psx_drop_edits_starchip_set(index, &r)) {
+            send_err(id, "invalid or unchanged starchip rule"); return;
+        }
+    } else if (!strcmp(op, "remove")) {
+        if (!psx_drop_edits_starchip_remove(json_get_int(json, "index", -1))) {
+            send_err(id, "bad starchip rule index"); return;
+        }
+    } else if (!strcmp(op, "move")) {
+        if (!psx_drop_edits_starchip_move(
+                json_get_int(json, "index", -1),
+                json_get_int(json, "delta", 0))) {
+            send_err(id, "starchip rule cannot move there"); return;
+        }
+    } else if (!strcmp(op, "clear")) {
+        (void)psx_drop_edits_starchip_clear();
+    } else if (!strcmp(op, "save")) {
+        if (!psx_drop_edits_save()) {
+            send_err(id, "could not save drop-table edits"); return;
+        }
+    } else if (!strcmp(op, "select")) {
+        if (!psx_drop_edits_starchip_select(
+                json_get_int(json, "mode", -2),
+                json_get_int(json, "opponent", -2),
+                json_get_int(json, "outcome", -2),
+                json_get_int(json, "rank", -2),
+                &selected_amount, &selected)) {
+            selected = -1;
+        }
+    } else if (op[0] && strcmp(op, "state")) {
+        send_err(id, "op must be state|set|remove|move|clear|save|select"); return;
+    }
+
+    if (!psx_starchip_rewards_state_json(runtime, sizeof runtime)) {
+        send_err(id, "starchip runtime state too long"); return;
+    }
+    char *body = (char *)malloc(16384u);
+    if (!body) { send_err(id, "out of memory"); return; }
+    unsigned n = (unsigned)snprintf(body, 16384u,
+        "{\"id\":%d,\"ok\":true,%s,\"selected\":%d,"
+        "\"selected_amount\":%u,\"rules\":[", id, runtime,
+        selected, (unsigned)selected_amount);
+    const int count = psx_drop_edits_starchip_count();
+    for (int i = 0; i < count && n + 220u < 16384u; i++) {
+        PsxStarchipRule r;
+        if (!psx_drop_edits_starchip_get(i, &r)) continue;
+        char opponent_name[PSX_CPU_NAME_MAX * 2 + 8];
+        if (r.opponent >= 0)
+            (void)psx_cpu_display_name_json(r.opponent, opponent_name, sizeof opponent_name);
+        else snprintf(opponent_name, sizeof opponent_name, "Any opponent");
+        n += (unsigned)snprintf(body + n, 16384u - n,
+            "%s{\"index\":%d,\"mode\":%d,\"opponent\":%d,\"opponent_name\":\"%s\","
+            "\"outcome\":%d,\"rank\":%d,\"amount\":%u}",
+            i ? "," : "", i, r.mode, r.opponent, opponent_name,
+            r.outcome, r.rank,
+            (unsigned)r.amount);
+    }
+    snprintf(body + n, 16384u - n, "]}");
+    send_fmt("%s", body);
+    free(body);
 }
 
 static void handle_netplay_privacy(int id, const char *json)
@@ -203,61 +294,22 @@ static void handle_rank_meter_state(int id, const char *json)
              oc[0],oc[1],oc[2],oc[3]);
 }
 
-/* card_drops_test tier=N — drive ONE nested drop roll and report what the
- * guest call produced. Lets the guest-call path be validated without winning a
- * duel first. */
-/* WARNING - these two run GUEST code re-entrantly and can wedge the emulator.
- *
- * Sweeping card_drops_test back to back stops the emulator dead after roughly
- * 9-13 calls: everything except the io-thread ping times out. The same sweep
- * with ~20 ms between calls ran 120 clean, so PACE IT. Not fixed, and the two
- * obvious fixes are already ruled out, so do not spend the time again:
- *
- *   - It is not frame starvation. A per-frame call budget never fired at all;
- *     a whole frame completes between commands anyway.
- *   - It is not "we interrupted the BIOS". Refusing unless
- *     g_debug_current_func_addr is in game text never fired either.
- *
- * What IS known: the freeze dump puts the guest at last_store_pc 0xBFC21B04,
- * inside the BIOS, with cpu->pc 0. The nested call keeps its device effects on
- * purpose (trunk writes, RNG advance) and that includes interrupt and event
- * state, so the likely mechanism is a BIOS wait stranded on an event the
- * nested call consumed. Proving that needs the event/IRQ state captured across
- * a nested call, which is the next step whenever this is picked up. */
+/* These legacy probes used to dispatch guest code recursively from the debug
+ * command callback. A live sweep proved that this can consume interrupt/SIO
+ * event state and strand the BIOS in a wait. Refuse the unsafe operation
+ * deterministically: shipping behavior is covered by real-duel fixtures, and
+ * card_drops_smart_sim remains a pure, non-mutating probability probe. */
 static void handle_card_drops_test(int id, const char *json)
 {
-    if (reject_stock_netplay_mutation(id)) return;
-    extern int psx_card_drops_test_roll(CPUState *, int, int, uint32_t *,
-                                        uint32_t *, int *);
-    if (!debug_cpu_ptr) { send_err(id, "no cpu"); return; }
-    int tier = json_get_int(json, "tier", 0);
-    int award = json_get_int(json, "award", 0);
-    uint32_t card = 0, pc = 0;
-    int bail = 0;
-    if (!psx_card_drops_test_roll(debug_cpu_ptr, tier, award, &card, &pc, &bail)) {
-        send_err(id, "roll failed"); return;
-    }
-    send_fmt("{\"id\":%d,\"ok\":true,\"tier\":%d,\"card\":%u,"
-             "\"pc_after\":\"0x%08X\",\"bail\":%d}",
-             id, tier, card, pc, bail);
+    (void)json;
+    send_err(id, "unsafe re-entrant guest roll disabled; use a live duel");
 }
 
-/* card_drops_sim tier=N drops=N — simulate one duel drop through the real hook. */
+/* Same refusal for the old whole-duel recursive simulator. */
 static void handle_card_drops_sim(int id, const char *json)
 {
-    if (reject_stock_netplay_mutation(id)) return;
-    extern int psx_card_drops_simulate(CPUState *, int, int, uint32_t *, int *, int *);
-    if (!debug_cpu_ptr) { send_err(id, "no cpu"); return; }
-    int tier = json_get_int(json, "tier", 0);
-    int drops = json_get_int(json, "drops", 0);
-    uint32_t card = 0;
-    int granted = 0, bail = 0;
-    if (!psx_card_drops_simulate(debug_cpu_ptr, tier, drops, &card, &granted, &bail)) {
-        send_err(id, "simulate failed"); return;
-    }
-    send_fmt("{\"id\":%d,\"ok\":true,\"tier\":%d,\"drops\":%d,"
-             "\"card\":%u,\"granted\":%d,\"bail\":%d}",
-             id, tier, drops, card, granted, bail);
+    (void)json;
+    send_err(id, "unsafe re-entrant duel simulation disabled; use a live duel");
 }
 
 /* card_drops_smart_sim tier=N seed=N rolls=N — no award and no guest write.
@@ -604,7 +656,9 @@ static void handle_card_packs(int id, const char *json)
     const int dev = json_get_int(json, "dev", -1);
     if (dev >= 0 && reject_stock_netplay_mutation(id)) return;
     if (dev >= 0) psx_card_packs_set_dev(dev);
-    char buf[8192];
+    /* A fully edited set can contain all 722 cards.  Keep this large enough
+     * for every entry rather than silently returning a valid-looking prefix. */
+    static char buf[128u * 1024u];
     if (!psx_card_packs_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -1090,7 +1144,8 @@ static void handle_cpu_data(int id, const char *json)
         }
     }
     if (json_get_int(json, "save", 0) && !psx_cpu_save()) { send_err(id, "could not write cpu_manager.ini"); return; }
-    char buf[4096];
+    /* All 39 duelists can carry deck, AI and name edits at once. */
+    static char buf[16u * 1024u];
     if (!psx_cpu_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -1110,7 +1165,8 @@ static void handle_story_rewards(int id, const char *json)
     if (json_get_int(json, "save", 0) && !psx_drop_edits_save()) {
         send_err(id, "could not write drop_table_edits.ini"); return;
     }
-    char buf[2048];
+    /* The additive format permits one configured reward per duelist. */
+    static char buf[8192];
     if (!psx_story_rewards_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
@@ -1134,7 +1190,7 @@ static void handle_fill_library(int id, const char *json)
 static void handle_drop_viewer(int id, const char *json)
 {
     (void)json;
-    char buf[2048];
+    static char buf[8192];
     if (!psx_drop_viewer_state_json(buf, sizeof(buf))) {
         send_err(id, "state unavailable"); return;
     }
@@ -1217,8 +1273,10 @@ static void handle_drop_viewer_set(int id, const char *json)
         && open < 0) {
         send_err(id, "viewer is closed"); return;
     }
-    char buf[2048];
-    psx_drop_viewer_state_json(buf, sizeof(buf));
+    static char buf[8192];
+    if (!psx_drop_viewer_state_json(buf, sizeof(buf))) {
+        send_err(id, "state unavailable"); return;
+    }
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
@@ -1413,21 +1471,25 @@ static void handle_card_drops_state(int id, const char *json)
     int new_count = 0, chest_builds = 0, overlays = 0;
     int page_duel = 0, awarded_total = 0;
     uint32_t last_ra = 0;
-    char smart[512];
+    char smart[512], suppression[768];
     psx_card_drops_debug(&setting, &calls, &last_ra, &tier, &granted, &bails,
                          &new_count, &chest_builds, &overlays,
                          &page_duel, &awarded_total);
     if (!psx_card_drops_smart_state_json(smart, sizeof smart)) {
         send_err(id, "smart state unavailable"); return;
     }
+    if (!psx_card_drops_suppression_state_json(
+            suppression, sizeof suppression)) {
+        send_err(id, "drop-suppression state unavailable"); return;
+    }
     send_fmt("{\"id\":%d,\"ok\":true,\"setting\":%d,\"calls\":%d,"
              "\"last_ra\":\"0x%08X\",\"last_tier\":%d,\"granted\":%d,"
              "\"bails\":%d,\"new_count\":%d,\"chest_builds\":%d,"
              "\"overlays\":%d,\"page_duel\":%d,\"awarded_total\":%d,"
-             "\"smart\":{%s}}",
+             "\"smart\":{%s},\"suppression\":{%s}}",
              id, setting, calls, last_ra, tier, granted, bails,
              new_count, chest_builds, overlays, page_duel, awarded_total,
-             smart);
+             smart, suppression);
 }
 
 #ifndef PSX_NO_DEBUG_TOOLS
@@ -1634,6 +1696,7 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_missing_state", handle_drop_missing_state);
     (void)psx_debug_add_command("fill_library",      handle_fill_library);
     (void)psx_debug_add_command("story_rewards",     handle_story_rewards);
+    (void)psx_debug_add_command("starchip_rewards",  handle_starchip_rewards);
     (void)psx_debug_add_command("cpu_data",          handle_cpu_data);
     (void)psx_debug_add_command("mod_package",       handle_mod_package);
     (void)psx_debug_add_command("cpu_manager",       handle_cpu_manager);

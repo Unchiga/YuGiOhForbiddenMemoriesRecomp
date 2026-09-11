@@ -19,12 +19,14 @@
 #include "psx_card_guard.h"
 #include "psx_card_save.h"
 #include "psx_card_shop.h"
+#include "psx_card_drops.h"
 #include "psx_card_password_view.h"
 #include "psx_cd_overlay.h"
 #include "psx_fusion_overlay.h"
 #include "psx_mode_select_confirm.h"
 #include "psx_rank_meter.h"
 #include "psx_rng_view.h"
+#include "psx_starchip_rewards.h"
 #include "psx_ygo_overlays.h"
 #include "psx_ygo_netplay.h"
 
@@ -78,6 +80,33 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_overlays_install) {
     (void)psx_guest_overlay_register(&rank);
     (void)psx_guest_overlay_register(&drops);
     (void)psx_guest_overlay_register(&fusion);
+    /* A suppressed normal drop still executes the stock carrier roll. Cover
+     * its unearned card strip so the results page tells the truth. */
+    {
+        PsxGuestOverlay zero_drop = {
+            psx_card_drops_no_card_image,
+            psx_card_drops_no_card_origin,
+            NULL,
+            psx_card_drops_no_card_needs_present,
+            -1,
+            psx_card_drops_no_card_placed,
+        };
+        (void)psx_guest_overlay_register(&zero_drop);
+    }
+    /* Authored duel rewards replace the summary page's 1..5 stock star icons
+     * with one starchip and a complete six-digit-safe amount. */
+    {
+        PsxGuestOverlay starchips = {
+            psx_starchip_rewards_image,
+            psx_starchip_rewards_origin,
+            NULL,
+            psx_starchip_rewards_needs_present,
+            -1,
+            psx_starchip_rewards_placed,
+        };
+        (void)psx_guest_overlay_register(&starchips);
+        psx_starchip_rewards_init();
+    }
     /* Effective eight-digit password on the common full-card detail view.
      * It is below the privacy cover, so a covered netplay card can never leak
      * identity through this present-only label. */
