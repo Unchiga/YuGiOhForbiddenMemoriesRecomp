@@ -27,7 +27,7 @@ What the package does, all from stock and all seeded:
                time), every trap a new ATK ceiling, every equip a new bonus,
                every field card new type boosts. Every card whose effect
                changed gets its description replaced by a short text saying
-               what it now does (eight lines of twenty).
+               what it now does (eight lines of up to twenty-one).
   drop tables  every duelist's three bands keep their drop count; monster
                slots get random monsters (every monster in the game is
                dropped by somebody), magic/trap/equip/ritual slots keep their
@@ -78,6 +78,23 @@ NAME_COLORS = ['white', 'yellow', 'blue', 'green', 'grey', 'orange', 'red']
 # capped so a fresh game never opens with a card over 3000.
 STARTER_POOL = set([3, 5, 8, 9, 10, 23, 24, 25, 29, 30, 34, 40, 47, 48, 50, 53, 58, 59, 61, 65, 75, 76, 80, 100, 101, 102, 104, 105, 107, 108, 109, 110, 112, 113, 114, 115, 116, 118, 119, 120, 121, 122, 123, 129, 130, 132, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 164, 165, 167, 169, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 187, 188, 189, 190, 191, 192, 195, 196, 197, 198, 199, 200, 201, 202, 203, 205, 206, 207, 208, 209, 210, 211, 212, 214, 215, 218, 219, 220, 221, 222, 224, 225, 226, 227, 228, 229, 231, 232, 233, 234, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 250, 251, 253, 254, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 276, 277, 279, 280, 282, 283, 285, 289, 290, 291, 292, 293, 294, 295, 296, 298, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 319, 321, 322, 323, 324, 326, 327, 328, 330, 331, 332, 333, 334, 335, 336, 337, 381, 387, 393, 394, 395, 397, 398, 399, 402, 406, 410, 411, 414, 417, 420, 421, 422, 430, 431, 432, 435, 436, 444, 445, 446, 450, 451, 452, 455, 457, 461, 463, 469, 474, 475, 476, 477, 478, 480, 481, 484, 485, 486, 488, 489, 490, 492, 496, 501, 502, 503, 504, 505, 506, 510, 514, 516, 524, 527, 530, 534, 536, 537, 538, 539, 540, 543, 544, 546, 547, 548, 549, 550, 552, 553, 556, 558, 559, 560, 561, 563, 566, 567, 568, 569, 570, 573, 574, 576, 579, 580, 581, 583, 584, 585, 586, 588, 589, 590, 591, 592, 598, 599, 600, 601, 602, 604, 605, 606, 608, 609, 610, 611, 612, 615, 616, 620, 629, 634, 635, 642, 643, 644, 646, 647, 649, 652, 654, 659])
 STARTER_CAP, ATK_CAP = 2900, 4500
+
+# The Chaos Mod Demo is intentionally unfair, but deterministic.  These cards
+# remain recognisable apex threats after the rest of the monster table is
+# rerolled, and late CPU decks are guaranteed to draw from this group.
+CHAOS_BOSS_STATS = {
+    1: (4200, 3600),       # Blue-eyes White Dragon
+    67: (4100, 3900),      # Perfectly Ultimate Great Moth
+    217: (4600, 4100),     # B. Skull Dragon
+    374: (5000, 5000),     # Gate Guardian
+    380: (5100, 5100),     # Blue-eyes Ultimate Dragon (engine maximum 5110)
+    392: (4800, 5100),     # Metalzoa
+    708: (4700, 4800),     # Cosmo Queen
+    713: (5000, 4400),     # Meteor B. Dragon
+    722: (4900, 4600),     # Magician of Black Chaos
+}
+CHAOS_BOSSES = tuple(CHAOS_BOSS_STATS)
+CHAOS_POWER_SPELLS = (336, 337, 348, 349, 657, 668, 672, 686)
 
 
 # --- stock data -------------------------------------------------------------
@@ -315,7 +332,7 @@ def old_rescale(w, cards, weights):
     return t if sum(t) == TOTAL else None
 
 
-def roll_decks(rng, db, cards, new_atk, difficulty):
+def roll_decks(rng, db, cards, new_atk, difficulty, chaos=False):
     """Per duelist: {card: weight}, the pool the same size and the same
     monster/spell split as stock, with random cards and weights. The monster
     picks come from the top slice of the ATK ladder, a slice that narrows
@@ -329,6 +346,40 @@ def roll_decks(rng, db, cards, new_atk, difficulty):
     for d, D in enumerate(db):
         r = ramp(d, difficulty)
         n_mon = sum(1 for c, w in D['deck'] if is_monster(cards, c))
+        if chaos:
+            # Keep climbing for the whole campaign.  Even Simon draws from the
+            # upper 72% of the new ladder; Duel Master K draws from its top
+            # 12%, with an increasing number of the named apex monsters forced
+            # into the pool.  The ordinary difficulty multiplier deliberately
+            # does not clamp this curve early.
+            cr = d / float(NDUEL - 1)
+            lo = int(len(ladder) * (0.28 + 0.60 * cr))
+            hi = int(len(ladder) * (0.74 + 0.26 * cr))
+            hi = min(len(ladder), max(hi, lo + n_mon + 5))
+            lo = max(0, min(lo, hi - n_mon - 5))
+            pool = ladder[lo:hi]
+            mon = rng.sample(pool, n_mon)
+            forced_n = min(n_mon, int(round(len(CHAOS_BOSSES) * cr)))
+            forced = list(CHAOS_BOSSES[-forced_n:]) if forced_n else []
+            mon = forced + [c for c in mon if c not in forced]
+            mon = mon[:n_mon]
+
+            n_spell = len(D['deck']) - n_mon
+            power_n = min(n_spell, len(CHAOS_POWER_SPELLS),
+                          int(round(n_spell * (0.25 + 0.70 * cr))))
+            chosen_spells = rng.sample(list(CHAOS_POWER_SPELLS), power_n)
+            chosen_spells += rng.sample(
+                [c for c in spells if c not in chosen_spells],
+                n_spell - power_n)
+            new = mon + chosen_spells
+            ws = sorted(random_weights(rng, len(new)), reverse=True)
+            # Heaviest odds belong to the strongest monsters and to the
+            # deliberately lethal spell package.
+            score = lambda c: (new_atk[c] if is_monster(cards, c)
+                               else (7000 if c in CHAOS_POWER_SPELLS else 2500))
+            ranked = sorted(new, key=score, reverse=True)
+            out.append(dict(zip(ranked, ws)))
+            continue
         # a window on the ladder that slides up with the campaign: the first
         # duelist draws from the weakest 65 %, the last from the strongest 25 %
         lo = int(len(ladder) * 0.75 * r)
@@ -362,7 +413,7 @@ def roll_decks(rng, db, cards, new_atk, difficulty):
     return out
 
 
-def roll_ai(rng, db, ai, difficulty):
+def roll_ai(rng, db, ai, difficulty, chaos=False):
     """Opponent id = drop database index + 1. Hand size, combo width and
     fusion depth rise with the campaign and are rolled around that; the
     fusion deck gate is rolled; the rest stays stock."""
@@ -370,6 +421,14 @@ def roll_ai(rng, db, ai, difficulty):
     for d in range(NDUEL):
         r = ramp(d, difficulty)
         b = list(ai[d + 1])
+        if chaos:
+            cr = d / float(NDUEL - 1)
+            b[0] = min(20, 8 + int(round(12 * cr)))
+            b[2] = min(20, 10 + int(round(10 * cr)))
+            b[3] = 2 if d < 10 else 3
+            b[4] = 2 if d < 6 else 3
+            out.append(b)
+            continue
         b[0] = max(5, min(20, 5 + int(round(15 * r)) + rng.randrange(-2, 3)))
         b[2] = rng.randrange(3, 16)
         b[3] = max(1, min(3, 1 + int(round(2 * r)) + rng.choice((-1, 0, 0, 1))))
@@ -488,14 +547,18 @@ def fits(sentences, width=20, lines=8):
     return len(wrap_lines(with_prefix(sentences), width)) <= lines
 
 
-def settle(items):
+def settle(items, terse=False):
     """items: [(ini lines, full sentence, terse sentence)] in the order they
     were rolled. Every effect is kept if the eight lines can hold it: the full
     wording first, the terse wording for the whole card when the full one
     overflows, and only then is the last effect dropped. Returns the kept
     ini lines and the sentences."""
     while items:
-        for k in (1, 2):
+        # Dense chaos cards use the terse labels first.  This is not merely a
+        # cosmetic preference: all 722 descriptions share the game's fixed
+        # 56,743-byte text bank, so hundreds of verbose eight-line rewrites
+        # cannot coexist even though each one fits by itself.
+        for k in ((2, 1) if terse else (1, 2)):
             texts = [it[k] for it in items]
             if fits(texts):
                 return [l for it in items for l in it[0]], texts
@@ -510,7 +573,8 @@ def short_name(cards, c, n=14):
     return nm if len(nm) <= n else nm[:n - 1] + '.'
 
 
-def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
+def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2,
+               bonus_share=0.15, chaos=False):
     """Per card: the card.ini lines. Also returns the rolled ATK per monster,
     which the deck ramp reads.
 
@@ -533,7 +597,7 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
     stats = dict(casts=0, bad=0, battles=0, bonuses=0, spells=0, rituals=0, traps=0, equips=0, fields=0)
 
     def a_cast():
-        bad = rng.random() < 0.35
+        bad = rng.random() < (0.15 if chaos else 0.35)
         return rng.choice(CAST_BAD if bad else CAST_GOOD)      # (rule, full, terse)
 
     for c in range(1, NCARDS + 1):
@@ -545,6 +609,13 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
             cap = STARTER_CAP if c in STARTER_POOL else ATK_CAP
             atk = rng.randrange(0, cap // 10 + 1) * 10
             dfn = rng.randrange(0, cap // 10 + 1) * 10
+            if chaos and c in CHAOS_BOSS_STATS:
+                atk, dfn = CHAOS_BOSS_STATS[c]
+            # "Every monster changed" should be literal, not merely probable.
+            if atk == s['atk']:
+                atk = atk + 10 if atk < cap else max(0, atk - 10)
+            if dfn == s['dfn']:
+                dfn = dfn + 10 if dfn < cap else max(0, dfn - 10)
             s1, s2 = rng.sample(STARS, 2)
             new_atk[c] = atk
             lines += ['attack = %d' % atk, 'defense = %d' % dfn, 'level = %d' % level_for(atk, dfn, rng),
@@ -552,7 +623,11 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
                       'star1 = %s' % s1, 'star2 = %s' % s2]
             items = []
             if c in fx_cards:
-                trigs = rng.sample(TRIGGERS, 2 if rng.random() < 0.33 else 1)
+                if chaos:
+                    ntrig = 3 if rng.random() < 0.35 else (2 if rng.random() < 0.75 else 1)
+                else:
+                    ntrig = 2 if rng.random() < 0.33 else 1
+                trigs = rng.sample(TRIGGERS, ntrig)
                 for trig, when, when_t in trigs:
                     rule, full, terse = a_cast()
                     items.append((['%s = %s' % (trig, rule)], '%s: %s.' % (when, full), '%s: %s.' % (when_t, terse)))
@@ -566,7 +641,7 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
                 rule, full, terse = rng.choice(BONUSES)
                 items.append((['bonus = %s' % rule], full + '.', terse + '.'))
             if items:
-                kept, texts = settle(items)
+                kept, texts = settle(items, terse=chaos)
                 lines += kept
                 said += texts
                 stats['casts'] += sum(1 for l in kept if l.split(' =')[0] in ('on_summon', 'on_flip', 'on_attack', 'on_death', 'each_turn', 'opp_turn'))
@@ -619,8 +694,72 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2, bonus_share=0.15):
             said.append('Equip: +%d ATK and DEF.' % bonus)
             stats['equips'] += 1
         if said:
-            lines.append('description = %s' % card_text(with_prefix(said)))
+            lines.append('description = %s' % card_text(
+                with_prefix(said), width=21 if chaos else 20))
         out[c] = lines
+
+    if chaos:
+        def replace_rules(card, keys, rules, description):
+            prefixes = tuple(k + ' =' for k in keys)
+            out[card] = [ln for ln in out[card]
+                         if not ln.startswith(prefixes)]
+            out[card] += rules
+            out[card].append('description = ' + card_text(
+                with_prefix([description]), width=21))
+
+        # These are both showcase bosses and regression coverage for the old
+        # monster-attached Dark Hole / Dragon Capture Jar crash paths.
+        monster_keys = ('on_summon', 'on_flip', 'on_death', 'on_attack',
+                        'each_turn', 'opp_turn', 'battle', 'immune', 'bonus',
+                        'description')
+        replace_rules(44, monster_keys,
+                      ['on_summon = dragon_jar', 'on_flip = dark_hole',
+                       'on_death = damage 1000', 'immune = magic'],
+                      'Summon destroys Dragons. Flip destroys every monster. Death burns 1000. Immune to magic.')
+        replace_rules(67, monster_keys,
+                      ['each_turn = weaken 1000', 'on_attack = harpie',
+                       'battle = slayer', 'immune = traps, magic'],
+                      'Each turn weakens foes. Attacks clear back rows. Slays in battle. Fully immune.')
+        replace_rules(374, monster_keys,
+                      ['on_summon = raigeki', 'each_turn = damage 1000',
+                       'battle = indestructible', 'immune = traps, magic'],
+                      'Summon wipes all foes. Burns 1000 each turn. Indestructible and fully immune.')
+        replace_rules(380, monster_keys,
+                      ['on_summon = raigeki', 'on_attack = destroy_strongest',
+                       'each_turn = damage 2000', 'battle = indestructible',
+                       'immune = traps, magic'],
+                      'Summon wipes all foes. Each attack kills the strongest. Burns 2000. Cannot fall.')
+        replace_rules(713, monster_keys,
+                      ['on_summon = damage 2000', 'on_attack = harpie',
+                       'battle = slayer', 'bonus = 300 per enemy'],
+                      'Summon burns 2000. Attacks clear back rows. Slays foes and grows per enemy.')
+        replace_rules(722, monster_keys,
+                      ['on_summon = swords', 'on_attack = destroy_strongest',
+                       'opp_turn = heal 1000', 'immune = magic'],
+                      'Summon casts Swords. Attacks kill the strongest. Heals on foe turns. Magic-proof.')
+
+        magic_keys = ('effect', 'amount', 'target', 'terrain', 'ritual',
+                      'equip_bonus', 'trap_atk_max', 'description')
+        fixed_magic = {
+            336: (['effect = dark_hole'], 'Destroy every monster on the field.'),
+            337: (['effect = raigeki'], 'Destroy every foe monster.'),
+            348: (['effect = swords'], 'Swords of Revealing Light.'),
+            349: (['effect = weaken', 'amount = 1500'], 'Foe monsters lose 1500 ATK and DEF.'),
+            657: (['equip_bonus = 2500'], 'Equip: gain 2500 ATK and DEF.'),
+            668: (['equip_bonus = 2000'], 'Equip: gain 2000 ATK and DEF.'),
+            672: (['effect = harpie'], 'Destroy all foe magic and traps.'),
+            686: (['trap_atk_max = 9990'], 'Trap: destroy any attacking monster.'),
+        }
+        for card, (rules, desc) in fixed_magic.items():
+            replace_rules(card, magic_keys, rules, desc)
+
+        # Recount the headline monster-rule totals after the fixed showcase
+        # cards replaced their random rules.
+        flat = [ln for c in monsters for ln in out[c]]
+        stats['casts'] = sum(ln.startswith(tuple(k + ' =' for k, _, _ in TRIGGERS)) for ln in flat)
+        stats['bad'] = sum(any(x in ln for x in ('lose_lp', 'destroy_own', 'coin_lp', 'weaken -')) for ln in flat)
+        stats['battles'] = sum(ln.startswith('battle =') for ln in flat)
+        stats['bonuses'] = sum(ln.startswith('bonus =') for ln in flat)
     return out, stats, new_atk
 
 
@@ -688,7 +827,25 @@ def text_fusions(fusions):
     return '\n'.join(s) + '\n'
 
 
-def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full'):
+def text_card_shop():
+    """A self-contained, three-card economy for shared chaos packages.
+
+    Monster rarity is computed from the imported ATK table, so the many new
+    heavy hitters remain rare/legendary for the player even while CPU decks
+    are free to use them.  Runtime resale ceilings guarantee that neither a
+    direct password purchase nor the worst possible three-card pack can be
+    sold for a profit.
+    """
+    return ('# Chaos Mod Demo card-shop balance\n'
+            '[prices]\ncommon = 20\nuncommon = 80\nrare = 200\nlegendary = 800\n\n'
+            '[packs]\ncards = 3\n\n'
+            '[monster]\nlegendary_atk = 3000\nrare_atk = 2500\n'
+            'uncommon_atk = 1600\n\n'
+            '[pools]\nmin_choices = 12\n')
+
+
+def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full',
+          chaos=False):
     rng = random.Random(seed)
     db = read_drop_db()
     tmpdir = os.path.join(ROOT, 'build', 'randomizer')
@@ -710,9 +867,14 @@ def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full'):
         print('game not reachable (%s): using cached stock data from %s' % (e, cache))
 
     drops = roll_drops(rng, db, cards) if drops_mode == 'full' else roll_drops_compat(rng, db, cards)
-    card_ini, fx_stats, new_atk = roll_cards(rng, cards)
-    decks = roll_decks(rng, db, cards, new_atk, difficulty)
-    ai_new = roll_ai(rng, db, ai, difficulty)
+    card_ini, fx_stats, new_atk = roll_cards(
+        rng, cards,
+        fx_share=0.92 if chaos else 0.60,
+        battle_share=0.48 if chaos else 0.20,
+        bonus_share=0.35 if chaos else 0.15,
+        chaos=chaos)
+    decks = roll_decks(rng, db, cards, new_atk, difficulty, chaos=chaos)
+    ai_new = roll_ai(rng, db, ai, difficulty, chaos=chaos)
     fus_new, fus_changed = roll_fusions(rng, fusions, cards)
     eq_new = roll_equips(rng, equips, cards)
     for e, mons in eq_new.items():
@@ -742,7 +904,8 @@ def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full'):
         for ln in lines:
             if ln.startswith('description = '):
                 parts = ln[len('description = '):].split('|')
-                assert len(parts) <= 8 and all(len(p) <= 20 for p in parts), (c, ln)
+                width = 21 if chaos else 20
+                assert len(parts) <= 8 and all(len(p) <= width for p in parts), (c, ln)
 
     stamp = time.strftime('%Y-%m-%d %H:%M')
     z = zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED)
@@ -756,18 +919,25 @@ def build(seed, out_path, difficulty=1.0, stock_cache=None, drops_mode='full'):
     z.writestr('drop_table_edits.ini', text_drops(db, drops))
     z.writestr('cpu-duelists.ini', text_cpu(db, decks, ai_new))
     z.writestr('fusion-edits.txt', text_fusions(fus_new))
+    if chaos:
+        z.writestr('card_shop.ini', text_card_shop())
     z.writestr('mod_settings.ini',
                '; Yu-Gi-Oh! Forbidden Memories - Recompiled : MODS and CHEATS rows\n'
-               'card_drops = 15\ndrop_missing_cards = 1\nfill_library = 1\n')
+               'card_drops = 15\ndrop_missing_cards = 1\nfill_library = 1\n'
+               + ('fusion_hint = 1\nrank_meter = 1\n' if chaos else ''))
+    title = ('Chaos Mod Demo v0.6.0 (seed %d)' if chaos else
+             'Randomizer (seed %d, difficulty %g)')
+    title = title % ((seed,) if chaos else (seed, difficulty))
     z.writestr('manifest.ini',
                '; Yu-Gi-Oh! Forbidden Memories Recompiled -- MOD package\n'
                'format = YGOFM-MOD-PACKAGE\nversion = 1\ngame = SLUS-01411\ncreated = %s\n'
-               'title = Randomizer (seed %d, difficulty %g)\n'
+               'title = %s\n'
                'cards = %d\ndrop_tables = 1\ncpu = 1\nportraits = 0\nfusion = 1\n'
-               'dialogue = 0\ndrop_missing_cards = 0\ncard_shop = 0\nsettings = 1\n'
-               % (stamp, seed, difficulty, len(ids)))
+               'dialogue = 0\ndrop_missing_cards = 0\ncard_shop = %d\nsettings = 1\n'
+               % (stamp, title, len(ids), 1 if chaos else 0))
     z.close()
-    print('wrote %s (seed %d, difficulty %g)' % (out_path, seed, difficulty))
+    print('wrote %s (seed %d, difficulty %g%s)' %
+          (out_path, seed, difficulty, ', CHAOS' if chaos else ''))
     print('  %d cards: %d casts on monsters (%d of them bad for their owner), %d battle rules, %d bonuses; '
           '%d spells re-done, %d ritual recipes, %d traps, %d equips, %d field cards'
           % (len(ids), fx_stats['casts'], fx_stats['bad'], fx_stats['battles'], fx_stats['bonuses'],
@@ -785,11 +955,14 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--seed', type=int, default=None, help='the seed; a random one when left out')
     ap.add_argument('--difficulty', type=float, default=1.0, help='how steeply the CPUs ramp (0 flat, 1 default, 2 harsh)')
+    ap.add_argument('--chaos', action='store_true',
+                    help='brutal v0.6.0 demo preset: dense effects, fixed apex bosses and a full-campaign CPU power ramp')
     ap.add_argument('--drops', choices=('compat', 'full'), default='full',
                     help='full (default) rewrites the bands and needs 0.5.7 or later; compat pins over stock and loads on 0.5.5 and 0.5.6')
     ap.add_argument('--out', default=None, help='output file (default randomizer-<seed>.ygomods in the working directory)')
     ap.add_argument('--stock', default=None, help='cached stock.json to use when the game is not running')
     a = ap.parse_args()
-    seed = a.seed if a.seed is not None else random.randrange(1, 1 << 31)
-    out = a.out or 'randomizer-%d.ygomods' % seed
-    build(seed, out, a.difficulty, a.stock, a.drops)
+    seed = a.seed if a.seed is not None else (606060 if a.chaos else random.randrange(1, 1 << 31))
+    out = a.out or (('Chaos-Mod-Demo-v0.6.0.ygomods' if a.chaos else
+                     'randomizer-%d.ygomods' % seed))
+    build(seed, out, a.difficulty, a.stock, a.drops, chaos=a.chaos)

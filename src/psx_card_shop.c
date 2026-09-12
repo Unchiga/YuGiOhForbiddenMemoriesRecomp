@@ -346,6 +346,7 @@ static int        s_cfg_pack_cards        = 3;
 static ShopForced s_cfg_forced[SHOP_CFG_FORCED_MAX];
 static int        s_cfg_forced_n;
 static int        s_cfg_loaded;
+static int        s_pools_built;
 
 static int shop_ini_path(char *out, unsigned cap) {
     const char *dir = psx_mod_player_data_dir();
@@ -489,6 +490,10 @@ static void shop_cfg_load(void) {
 /* The ini was replaced from outside (a MOD package import): read it again. */
 void psx_card_shop_reload_config(void)
 {
+    /* Package import may replace both card_shop.ini and the ATK table while
+     * the old pools are already cached.  Reparse and rebuild together so the
+     * new monster rarity floors and pack economy take effect immediately. */
+    s_pools_built = 0;
     s_cfg_loaded = 0;
     shop_cfg_load();
 }
@@ -613,7 +618,6 @@ static unsigned s_sell_runs;
 /* Card pools per (pack, tier), built once card_db + drop scarcity are up. */
 static uint16_t s_pool[SHOP_PACKS][SHOP_TIERS][PSX_CARD_DB_COUNT];
 static int      s_pool_n[SHOP_PACKS][SHOP_TIERS];
-static int      s_pools_built;
 int psx_card_shop_effective_sell_price(int id, int *source);
 
 /* ---- helpers ------------------------------------------------------------- */
