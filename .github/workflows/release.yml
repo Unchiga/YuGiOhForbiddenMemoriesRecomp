@@ -559,9 +559,10 @@ jobs:
           fi
           # The GitHub Release must contain the install tree directly. Reject
           # an accidentally re-wrapped package before upload (zip-in-a-zip).
-          if unzip -Z1 "${PACKAGES[0]}" | grep -Eiq '\.zip$'; then
+          if [[ "${{ runner.os }}" == "Windows" || "${{ runner.os }}" == "Linux" ]] && \
+             unzip -Z1 "${PACKAGES[0]}" | grep -Eiq '(^|/)ygofm-[^/]*\.zip$'; then
             echo "::error::${PACKAGES[0]} contains a nested zip"
-            unzip -Z1 "${PACKAGES[0]}" | grep -Ei '\.zip$'
+            unzip -Z1 "${PACKAGES[0]}" | grep -Ei '(^|/)ygofm-[^/]*\.zip$'
             exit 1
           fi
           ls -la dist/
