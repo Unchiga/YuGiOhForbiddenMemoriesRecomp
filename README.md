@@ -10,9 +10,9 @@ executable, not interpreted by an emulator.
 box are this project's, drawn in the game's own art.*
 
 On top sits a set of quality-of-life features: a live duel-rank meter, a fusion
-assistant, a card-drop multiplier, managers for the drop tables, the cards, the
-CPU duelists and every fusion in the game, a cheat menu, and MOD packages that
-export and import all of it as one file to share. All toggleable at runtime.
+assistant, a card-drop multiplier, the all-in-one FM Editor, a full Card Shop,
+netplay, a cheat menu, and MOD packages that export and import a complete mod
+as one file to share. All gameplay options are toggleable at runtime.
 
 Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
@@ -30,10 +30,40 @@ Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
 ---
 
+## Version 0.6.0
+
+**0.6.0 is the FM Editor + netplay update.** Existing saves, save states and
+settings carry over when the new release is extracted over an existing install.
+
+- One resizable **FM Editor** now owns Cards, Drop Tables, Fusions, Dialogue and
+  CPU duelists, including every card effect and all 117 drop tables.
+- The Card Shop now supports selling with bulk selection, a review screen and
+  prices protected against direct-card and pack resale exploits.
+- Netplay has more accurate hidden-card covers, and the fusion assistant now
+  follows the local player when playing as player two.
+- Monster effect queues, custom StarChip result screens and accelerated
+  high-resolution rendering have all been hardened.
+
+See [Release notes](RELEASE_NOTES.md#060) for the exhaustive change list.
+
 ## What this adds
 
-Everything below lives in the overlay menu on **`F10`**, and every setting takes
-effect immediately. No restart, no patched save.
+Gameplay options live in the overlay menu on **`F10`** and take effect
+immediately. The FM Editor opens from `VIEW → FM EDITOR`; netplay is launched
+from the pre-game launcher. No patched save is required.
+
+### FM Editor (`VIEW → FM EDITOR`)
+
+Cards, Drop Tables, Fusions, Dialogue and CPU duelists now live as persistent
+tabs in **one resizable editor**. Move freely between them while authoring a
+mod; each tab keeps its place, and the interface adapts to both compact windows
+and high-resolution displays.
+
+Together the five tabs cover card data, artwork and effects; all 117 drop
+tables, Smart Drops and StarChip rules; fusion recipes; campaign dialogue; and
+CPU decks, AI, names, portraits and Free Duel progress. `MODS → EXPORT MOD
+PACKAGE…` bundles the complete project into one shareable `.ygomods` file, and
+the matching import validates a package before replacing the current mod.
 
 ### Duel rank meter (`VIEW → DUEL RANK`)
 
@@ -62,7 +92,7 @@ its answers are the game's answers.
 
 `VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
 
-### Fusion Manager (`VIEW → FUSION MANAGER`)
+### Fusion editor (`VIEW → FM EDITOR → FUSIONS`)
 
 > **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: every change is a file beside your saves, and `Restore
@@ -96,7 +126,7 @@ as you make them.
 **MODS → FUSION EDITS** replaces the fusion table's **disc sectors**, so the
 game's own loader brings your table in and everything reads it, the AI planners
 included; a duel already running is patched in memory too. The table is read off
-the disc rather than duel RAM, so the window works from boot with no duel. It
+the disc rather than duel RAM, so the editor works from boot with no duel. It
 also shows the fifteen *glitch fusions* the packed format produces by accident
 and the game really performs. The format holds 65 535 bytes and stock uses 65 002,
 so there is room for about a hundred new recipes; an edit that would not fit is
@@ -104,7 +134,10 @@ refused.
 
 ### Card drops (`MODS → CARD DROPS`)
 
-Stock, a won duel awards exactly one card. This makes it **1-99**. It comes with
+Stock, a won duel awards exactly one card. This makes it **0-99**. Zero is an
+intentional no-normal-card result, not an empty-table roll: it consumes the
+one stock carrier roll but skips its award safely. A separate eligible
+guaranteed campaign reward still fires once. It comes with
 a results screen stock never had: the cards you won across three pages you flip
 with **D-pad Left/Right**, with the game's own yellow **New!** tag on anything
 you didn't already own.
@@ -147,18 +180,21 @@ them**. Right-click a row in the Drop Table Manager to set or clear one, and
 pick whether it comes on the **first** campaign win only or on **every** one.
 A stock install has none, so a duelist with no card set is the off switch.
 
-The scripted card replaces that duelist's random drop rather than adding to
-it, and only in the campaign - Free Duel is untouched. Pairs are kept in
+For a nonzero Card Drops count, the scripted card is position one of the
+configured total and the remaining positions use the selected normal rank
+table. At Card Drops zero it is the one separate award. This applies only in
+the campaign - Free Duel is untouched. Pairs are kept in
 `drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
-and `Export` shares them.
+and the bulk export shares them.
 
-### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
+### Drop Table editor (`VIEW → FM EDITOR → DROP TABLES`)
 
 ![The Drop Table Manager](docs/screenshots/drop-table-manager.png)
 
-A **separate window** you can leave open on another monitor while you play. It
-knows every card and every duelist's drop table, and **you can rewrite any
-duelist's drops and the game rolls what you wrote.**
+The Drop Tables tab knows every card and every duelist's drop table, and **you
+can rewrite any duelist's drops and the game rolls what you wrote.** Leave the
+resizable FM Editor open on another monitor while you play, or switch between
+its tabs as you build the rest of a mod.
 
 | View | What you get |
 |---|---|
@@ -175,6 +211,24 @@ the left list onto a duelist**. Every band still totals exactly 2048, so what
 you add comes off that duelist's other drops in proportion, and an edit that
 cannot balance is refused rather than fudged.
 
+`Smart drops` is an authoring toggle here, saved and shared with the tables.
+For **every normal reward** it excludes weighted cards already owned three
+times across deck and trunk, including cards earned earlier in the same duel,
+then preserves the eligible cards' relative probabilities. If every weighted
+card is full, that reward is skipped instead of retrying forever or giving a
+fourth copy. Guaranteed story rewards are separate from this filter. The saved
+offline choice remains intact but has no effect during stock netplay.
+
+`Starchip rewards...` opens an ordered, first-match-wins rule editor. A rule
+can match campaign or Free Duel, a stable opponent ID, win or loss, and rank,
+with `Any` available for every condition. With no matching rule the disc's
+exact reward remains in charge. Authored amounts are 0 through 999999, add
+safely up to the save's 999999 cap, and use a compact results overlay that can
+show all six digits. Reordering makes overlaps explicit; the displayed
+opponent label follows CPU renames while the saved condition remains numeric.
+Creating and loading a savestate during the results screen preserves the
+already-applied decision, so a custom reward cannot be added twice.
+
 **Nothing is written until `Save`**, which persists your table as
 `drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
 stock. `Randomize` rebuilds every duelist's three bands from stock: each band
@@ -182,8 +236,9 @@ keeps its number of drops, every monster slot gets a random monster from the
 whole game, the magic, trap, equip and ritual drops keep their card, and every
 slot gets a fresh weight that still totals 2048. It asks twice, since it
 replaces every duelist's edits at once, and like any edit it is not written
-until `Save`. `Export…` writes your table to a file to send to someone and `Import…`
-loads one back - an import is kept straight away, so a table someone sends you
+until `Save`. `Export all…` writes all 39 duelists and all 117 complete rank
+tables as editable `pow_table`, `bcd_table` and `tec_table` lists. `Import…`
+loads that file back - an import is kept straight away, so a table someone sends you
 is live in the game and still there next launch. With `DROP MISSING CARDS` on, the manager shows and
 edits the table you will actually roll against.
 
@@ -191,9 +246,7 @@ Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
 everything here, **never shipped**. The manager reads them off your own disc.
 
-### CPU Manager (`VIEW → CPU MANAGER (EXPERIMENTAL)`)
-
-> **Experimental, expect bugs.** The newest window here; the menu row says so.
+### CPU editor (`VIEW → FM EDITOR → CPU`)
 
 Every opponent, and the four things that make them: their portrait, their
 `WIN`/`LOSS` record, the pool their deck is drawn from, and the nine bytes the
@@ -224,7 +277,7 @@ job we can read off it:
 | `Combo width` | handed to the best-combo search |
 | `Fusion depth` | minus one, how far the fusion evaluator looks |
 
-The rest are editable but not understood, so the window leaves them unnamed
+The rest are editable but not understood, so the editor leaves them unnamed
 and shows the disc's value beside yours for every byte.
 
 **Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
@@ -234,9 +287,11 @@ the ones `FREE DUEL` shows. Click either and type.
 `Rename…`) and type what the `FREE DUEL` grid should call them, up to 20
 characters from the game's own font (letters, digits and a little
 punctuation, no accents). Enter keeps it, an empty box puts the disc's name
-back, and the grid shows the new name at once. The Drop Table Manager and
-this window's list print it too; the ini keeps the disc's name as the
-section header so a renamed duelist can still be found.
+back, and the grid shows the new name at once. CPU-aware authoring and status
+surfaces—including Drop Tables, guaranteed rewards, Drop Missing Cards and
+starchip rules—update too; serialized conditions continue to use the stable
+numeric opponent ID. The ini keeps the disc's name as the section header so a
+renamed duelist can still be found.
 
 **Portraits.** The header above the deck shows the portrait large, with
 `Change portrait…`, `Stock portrait` and `Rename…` under it (the portrait and
@@ -260,18 +315,39 @@ once any portrait is replaced, a `.ygoduelists` file (a zip, like
 whole; `Import…` takes either, is kept straight away and replaces what was
 there, overrides and portraits included.
 
-### Card Manager (`VIEW → CARD MANAGER`)
+### Free Duel completion
 
-> **Experimental, expect bugs.** Much newer than the rest of this list. It
-> cannot hurt your save: edits live in `cards/`, and `Restore stock` puts a card
-> back.
+The upper-right of the `FREE DUEL` heading shows **owned / obtainable** for
+the selected unlocked opponent. Obtainable is the unique union of every
+nonzero card in that opponent's three effective rank bands after Drop Missing
+Cards and saved Drop Table edits; owned means at least one copy exists across
+the live deck and trunk. Forbidden Memories does not record which opponent
+originally awarded a card, so this is collection progress against the current
+table rather than drop provenance.
+
+When every obtainable card is owned, the supplied eight-frame glow animates
+over that opponent's portrait. Empty effective tables show `0/0` and are never
+marked complete. The fraction, scrolling portrait positions, unlock state and
+animation are present-only, and the whole completion overlay is disabled in
+stock netplay.
+
+### Card editor (`VIEW → FM EDITOR → CARDS`)
+
+Card edits live in `cards/`, never in your save, and `Restore stock` puts an
+individual card back.
 
 Change any of the 722 cards: **name, description, face art, duel thumbnail, ATK,
-DEF, both Guardian Stars, type, level, attribute, price and password**. The
-change shows up **everywhere the card is drawn**, because it is applied where
-the game reads, not where it draws.
+DEF, both Guardian Stars, type, level, attribute, password price, sell price and
+password**. The change shows up **everywhere the card is drawn**, because it is
+applied where the game reads, not where it draws.
 
-![The Card Manager on Time Wizard: face art and duel thumbnail, then name, description, stats, stars, type, level, attribute, price, password and frame color](docs/screenshots/card-manager-time-wizard.png)
+![The FM Editor Cards tab editing Dark Magician, with its card data and artwork visible.](media/fm-editor-cards-dark-magician.png)
+
+The effective eight-digit password is also shown in white at the bottom-right
+of the common full-card detail view used in duels, the Library, deck building
+and other card viewers. It appears only after the card has flipped into view
+and disappears as soon as that view starts closing, without taking one of the
+description's eight lines.
 
 Green marks your edit and the `x` puts it back; the frame row is why an effect
 monster comes out orange, and `Name color` tints the card's name wherever the
@@ -290,11 +366,12 @@ An edited card is a folder in your player-data:
 cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         color = purple       frame (yellow, green, pink, blue, purple, orange)
                         name_color = red     the name's text (white, yellow, blue, green, grey, orange, red)
-                        description = Text with|a line break   (| = new line; no | = wrapped at 20)
+                        description = Text with|a line break   (| = new line; no | = wrapped at 21, 8 lines)
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
-                        price = 999999       password = 12345678
+                        price = 999999       sell_price = 500
+                        password = 12345678
 cards/<id>/art.png      any size, becomes the 102x96 / 256-color card face
 cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, the middle 80x64 of art.png when absent
 cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
@@ -361,6 +438,11 @@ the Magic list above plus `gamble` (Time Wizard's coin) and `destroy_own` /
 and sound the matching spell would show. A monster with any of these draws with
 the orange effect frame unless `color` says otherwise.
 
+Effects are queued rather than replacing one another: monsters with multiple
+summon or flip rules finish the complete sequence. Spell behavior attached to
+a monster uses the same guarded path, including Dark Hole and Dragon Capture
+Jar, without the crashes those combinations caused in earlier builds.
+
 #### The Card Effects mod
 
 `MODS → Card set` (or `Dev Card Effects` in the manager, the same switch)
@@ -391,19 +473,19 @@ delivering punishing
 blows.
 ```
 
-Edit it in any editor (a card shows six lines of twenty characters) and `Import
-Descriptions` reads it back: only the cards that differ are written. It shows
-live.
+Edit it in any text editor (a card shows eight lines of 21 characters) and
+`Import Descriptions` reads it back: only the cards that differ are written.
+Long descriptions use a separate safe arena, so they no longer overflow into
+adjacent game data. It shows live.
 
-### Dialogue Manager (`VIEW → DIALOGUE MANAGER`)
+### Dialogue editor (`VIEW → FM EDITOR → DIALOGUE`)
 
-> **Experimental, expect bugs.** Much newer than the rest of this list. It
-> cannot hurt your save: translations live in `dialogue/`, and `Back to
-> original` removes them.
+Translations live in `dialogue/`, never in your save, and `Back to original`
+removes them.
 
 For translations: the campaign's dialogue (150 texts) exports to one plain text
 file and a translated file imports back at runtime, without touching the disc.
-The window lists them with a search box, original beside current. The file is
+The tab lists them with a search box, original beside current. The file is
 just words:
 
 ```
@@ -425,17 +507,48 @@ original`, an import of a file with nothing translated in it, and a MOD
 package import all turn the previous one into
 `dialogue/dialogue.backup-<date>-<time>.txt` first.
 
+Imports are transactional across the whole file: if any changed block is
+invalid, none of the bulk changes are applied. The manager footer reports the
+encoded bank usage and remaining bytes. Translations may grow and shrink
+individual entries, but the campaign bank has about 1 KB of aggregate spare
+room in the unmodified US release. The original font contains no accented
+Latin glyphs, so UTF-8 accents are rejected with the exact unsupported
+character instead of being rendered as the wrong symbol.
+
 ### Card shop (`MODS → CARD SHOP`)
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
 
-The card shop has never sold a card. This makes it one: the shopkeeper's menu
-grows a fifth row that **buys card packs** with your starchips.
+The stock shop only exchanges a password and StarChips for one direct card.
+This turns it into a complete shop: the shopkeeper's menu grows a fifth row
+that **buys card packs**, and `TRIANGLE` opens a Sell screen for your own
+collection.
 
 Four pack types (monster, magic, equip, trap) across four rarities, priced
 20 / 80 / 200 / 800, with **all 722 cards in the pool**. A pack deals its cards
 one at a time: **X** turns over the next slot, **TRIANGLE** opens the game's own
 card viewer. Bought cards land in your trunk marked **New!**, like a duel drop.
+
+On the Sell screen, Left/Right changes a quantity, L1/R1 moves ten cards,
+Square selects every copy, Start or R2 selects the trunk, L2 clears the
+selection, and Triangle opens the card viewer. Nothing is sold until the
+separate review screen is confirmed. Deck cards are never included, and the
+transaction is rejected if the save changed after the review was prepared.
+The tighter layout keeps the card list, quantities and six-digit totals sharp
+without repeating labels that do not help make the decision.
+
+Selling cannot turn either purchase route into free starchips: a card's sell
+value cannot exceed its direct password price, and is also capped at the
+cheapest pack that can yield it divided by that pack's card count. Thus every
+possible pack's combined resale is at most its purchase price. Caps are
+rounded down to a clean shop denomination (for example 266 / 66 / 26 become
+250 / 60 / 25), including custom `sell_price` values. Card Manager shows the
+effective shop cap beside an authored or derived sell value.
+
+The default monster bands put 2500+ ATK monsters in Rare or above and 3000+
+ATK monsters in Legendary, even when an imported partial shop file omits the
+generated card pins. Megamorph and Blue-eyes Ultimate Dragon are always
+Legendary; Megamorph is exclusive to the Legendary Equip pool.
 
 Prices, bands and where individual cards sit are yours. The shop writes
 **`card_shop.ini`** next to your saves and re-reads it each time you leave the
@@ -460,8 +573,9 @@ Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
 One file with everything. `Export MOD package…` writes a `.ygomods` file (a
 zip, like `.ygocards`) holding every manager's edits and every mod setting:
 your own edited cards and their pictures (always the `cards/` set, never the
-Dev Card Effects set, whichever is live), the drop tables and scripted story
-drops, the CPU duelists' decks, AI, names and portraits, the fusion edits,
+Dev Card Effects set, whichever is live), the drop tables, scripted story
+drops, Smart Drops choice and starchip rules, the CPU duelists' decks, AI,
+names and portraits, the fusion edits,
 the dialogue translation, the drop-missing-cards placements, the card shop's
 configuration, and a `mod_settings.ini` with the value of every `MODS`,
 `CHEATS` and `VIEW` mod row. Whatever you have not touched is left out.
@@ -476,6 +590,9 @@ that manager's own import, so each part replaces yours the way that
 manager's Import does and is kept straight away; the settings rows are set
 as if you had clicked them. A part the file does not carry leaves that
 manager alone. The default folder is `mod_packages` beside your saves.
+Every member is decompressed and CRC-checked before import begins. If an
+intact later section is rejected by its manager, the complete pre-import
+managed state is restored instead of leaving an earlier section half-applied.
 
 **Packages keep working across versions.** Every part is a plain-text file
 read only by its own manager; a part the file lacks, a file the game does not
@@ -516,6 +633,27 @@ from the first duelist, `--difficulty 0` flattens it. Same seed, same
 package, so a seed is enough to share a run. Import it with `MODS → IMPORT MOD PACKAGE…`, after
 exporting your own package if you want your edits back.
 
+### Netplay
+
+Open **Netplay** in the pre-game launcher to host or join through the online
+lobby, on a LAN or by direct address. Each peer supplies their own matching
+game disc; the match runs one synchronized game while each player controls
+their own seat.
+
+![A netplay duel with the remote player's five-card hand hidden behind card backs and a message reading “Unchiga is choosing.”](media/netplay-card-privacy.png)
+
+Hidden information is covered only for the player who must not see it. The
+opponent's hand is hidden from its first draw-slide frame, and private
+full-card views remain covered through their closing animation; ordinary
+public card views remain visible. The status message uses the remote player's
+name so waiting never looks like a frozen game.
+
+The fusion assistant follows the **local seat**, including player two, and is
+suppressed whenever the hand currently on screen belongs to the other player.
+Save-changing mods and the FM Editor are unavailable during a stock netplay
+session so both peers remain deterministic; offline choices stay saved for the
+next local game.
+
 ### Widescreen (`VIEW → WIDESCREEN`, experimental)
 
 16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).
@@ -549,7 +687,11 @@ shows. Both duelists.
 
 Also in the `F10` menu, courtesy of PSXRecomp: save states, rewind (`F8`), an
 emulation-speed multiplier, and **`GAME → FAST LOADING`**, which cuts disc loads
-to near-instant. That one ships **off**.
+to near-instant. That one ships **off**. Directly below Speed,
+**`GAME → NATIVE-RATE RENDERING`** keeps full-resolution presentation at
+59.94 FPS while accelerated simulation and audio continue at the selected
+speed. It ships **on** to avoid redundant 4K rendering and can be turned off
+when every accelerated frame is wanted.
 
 ---
 
