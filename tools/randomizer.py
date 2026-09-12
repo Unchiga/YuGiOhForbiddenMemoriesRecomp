@@ -636,6 +636,12 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2,
                 items.append((['battle = %s' % rule], full + '.', terse + '.'))
                 if rng.random() < 0.5:
                     rule, full, terse = rng.choice(IMMUNES)
+                    # v0.6.0's destruction helper can retry a magic-immune
+                    # target forever.  Still consume the same random choice
+                    # so the demo seed remains stable, but ship trap immunity
+                    # only; newer runtimes also guard this combination.
+                    if chaos and 'magic' in rule:
+                        rule, full, terse = IMMUNES[0]
                     items.append((['immune = %s' % rule], full + '.', terse + '.'))
             if c in bonus_cards:
                 rule, full, terse = rng.choice(BONUSES)
@@ -714,20 +720,27 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2,
                         'description')
         replace_rules(44, monster_keys,
                       ['on_summon = dragon_jar', 'on_flip = dark_hole',
-                       'on_death = damage 1000', 'immune = magic'],
-                      'Summon destroys Dragons. Flip destroys every monster. Death burns 1000. Immune to magic.')
+                       'on_death = damage 1000'],
+                      'Summon destroys Dragons. Flip destroys every monster. Death burns 1000.')
+        # The original demo seed gave this card a repeating
+        # opponent-turn destroy-strongest cast.  Besides being oppressive, it
+        # is the exact slot-0 loop report that exposed the immunity retry bug;
+        # keep the other trigger and remove that recurring destruction cast.
+        replace_rules(102, monster_keys,
+                      ['each_turn = stop_defense'],
+                      'Each turn forces foe monsters into attack mode.')
         replace_rules(67, monster_keys,
                       ['each_turn = weaken 1000', 'on_attack = harpie',
-                       'battle = slayer', 'immune = traps, magic'],
-                      'Each turn weakens foes. Attacks clear back rows. Slays in battle. Fully immune.')
+                       'battle = slayer', 'immune = traps'],
+                      'Each turn weakens foes. Attacks clear back rows. Slays in battle. Trap-proof.')
         replace_rules(374, monster_keys,
                       ['on_summon = raigeki', 'each_turn = damage 1000',
-                       'battle = indestructible', 'immune = traps, magic'],
-                      'Summon wipes all foes. Burns 1000 each turn. Indestructible and fully immune.')
+                       'battle = indestructible', 'immune = traps'],
+                      'Summon wipes all foes. Burns 1000 each turn. Indestructible and trap-proof.')
         replace_rules(380, monster_keys,
                       ['on_summon = raigeki', 'on_attack = destroy_strongest',
                        'each_turn = damage 2000', 'battle = indestructible',
-                       'immune = traps, magic'],
+                       'immune = traps'],
                       'Summon wipes all foes. Each attack kills the strongest. Burns 2000. Cannot fall.')
         replace_rules(713, monster_keys,
                       ['on_summon = damage 2000', 'on_attack = harpie',
@@ -735,8 +748,8 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2,
                       'Summon burns 2000. Attacks clear back rows. Slays foes and grows per enemy.')
         replace_rules(722, monster_keys,
                       ['on_summon = swords', 'on_attack = destroy_strongest',
-                       'opp_turn = heal 1000', 'immune = magic'],
-                      'Summon casts Swords. Attacks kill the strongest. Heals on foe turns. Magic-proof.')
+                       'opp_turn = heal 1000'],
+                      'Summon casts Swords. Attacks kill the strongest. Heals on foe turns.')
 
         magic_keys = ('effect', 'amount', 'target', 'terrain', 'ritual',
                       'equip_bonus', 'trap_atk_max', 'description')
@@ -756,6 +769,7 @@ def roll_cards(rng, cards, fx_share=0.6, battle_share=0.2,
         # Recount the headline monster-rule totals after the fixed showcase
         # cards replaced their random rules.
         flat = [ln for c in monsters for ln in out[c]]
+        assert not any(ln.startswith('immune =') and 'magic' in ln for ln in flat)
         stats['casts'] = sum(ln.startswith(tuple(k + ' =' for k, _, _ in TRIGGERS)) for ln in flat)
         stats['bad'] = sum(any(x in ln for x in ('lose_lp', 'destroy_own', 'coin_lp', 'weaken -')) for ln in flat)
         stats['battles'] = sum(ln.startswith('battle =') for ln in flat)

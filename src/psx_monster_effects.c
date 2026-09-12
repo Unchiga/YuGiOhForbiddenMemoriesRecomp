@@ -59,6 +59,7 @@
 /* ---- guest addresses (gp = 0x8009AF08) ---------------------------------- */
 #define ROWS          0x801A7AD8u
 #define ROW_STRIDE    0x1Cu
+#define ROW_FLAGS     0x16u
 #define SIDES         0x800E9FF0u     /* 2 x 0x20: +1 turn counter, +0x14 LP, +0x16 max LP */
 #define ROWMAP        0x800907D8u     /* u8[2][20] */
 #define BATTLE_OBJS   0x800E9EF0u     /* Obj*[4]: attacker, defender, gates */
@@ -94,6 +95,13 @@ static Mfx     *s_m[CARD_COUNT + 1];
 static unsigned s_seen_gen = (unsigned)-1;
 static unsigned s_frame;
 static uint32_t s_scratch_row;
+/* Destruction handlers choose their next victim by scanning the live rows.
+ * Redirecting an immune victim to the scratch row therefore was not enough:
+ * the real row stayed eligible and destroy-strongest selected it forever.
+ * Hide intercepted rows only for the lifetime of that one magic handler,
+ * then restore their exact flags before the duel action machine continues. */
+static uint32_t s_magic_hidden;
+static uint16_t s_magic_hidden_flags[30];
 
 typedef struct { int side, fx, amount, target, terrain, card; } Cast;
 static Cast s_q[24];
@@ -107,7 +115,7 @@ static uint32_t s_rng = 0x6D2B79F5u;
 static uint32_t s_state_mem;
 
 #define MFX_STATE_MAGIC   0x4D465853u /* MFXS */
-#define MFX_STATE_VERSION 2u
+#define MFX_STATE_VERSION 3u
 #define MFX_STATE_WORDS   384u
 
 typedef struct { int aid, arow, did, drow, decided, a_dead, d_dead, pathA; } Battle;
@@ -443,6 +451,15 @@ static void tick(void)
     }
     const unsigned mode = psx_mod_read_byte(MODE_BYTE);
     const int in_duel = mode == 0xC3 && psx_card_db_ready();
+    if (s_magic_hidden && (!in_duel || psx_mod_read_half(FX_STATE) == 0)) {
+        for (int row = 0; row < 30; row++)
+            if (s_magic_hidden & (1u << row))
+                psx_mod_write_half(ROWS + (uint32_t)row * ROW_STRIDE + ROW_FLAGS,
+                                   s_magic_hidden_flags[row]);
+        s_magic_hidden = 0;
+        memset(s_magic_hidden_flags, 0, sizeof s_magic_hidden_flags);
+        ev("magic_restore", 0, 0, 0);
+    }
     if (!in_duel) {
         /* The 3D battle scene temporarily owns low-mode 1, then returns
          * through an unflagged low-mode 3 before the stable byte is 0xC3.
@@ -483,8 +500,12 @@ static void tick(void)
             s_facedown[row] = (fl & 0x1000u) ? id : 0;
         }
     }
-    turn_tick();
-    bonus_tick();
+    /* A hidden row is still genuinely on the field.  Do not let the regular
+     * occupancy/bonus scan interpret the temporary flag as a destruction. */
+    if (!s_magic_hidden) {
+        turn_tick();
+        bonus_tick();
+    }
     casts_tick();
 }
 
@@ -593,6 +614,13 @@ static void hook_destroy(struct CPUState *cpu, uint32_t address)
     const Mfx *m = mfx(id);
     if (!magic || !m) return;
     if ((m->cfg.immune > 0) && (m->cfg.immune & PSX_CARD_IMMUNE_MAGIC) && s_scratch_row) {
+        const uint32_t bit = 1u << row;
+        if (!(s_magic_hidden & bit)) {
+            s_magic_hidden_flags[row] = (uint16_t)fl;
+            s_magic_hidden |= bit;
+            psx_mod_write_half(ROWS + (uint32_t)row * ROW_STRIDE + ROW_FLAGS,
+                               (uint16_t)(fl & ~0x8000u));
+        }
         cpu->gpr[4] = s_scratch_row;
         ev("magic_immune", id, row, 0);
         return;
@@ -607,6 +635,15 @@ static void hook_after_fx(struct CPUState *cpu, uint32_t address)
 {
     if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)cpu; (void)address;
+    if (s_magic_hidden && psx_mod_read_half(FX_STATE) == 0) {
+        for (int row = 0; row < 30; row++)
+            if (s_magic_hidden & (1u << row))
+                psx_mod_write_half(ROWS + (uint32_t)row * ROW_STRIDE + ROW_FLAGS,
+                                   s_magic_hidden_flags[row]);
+        s_magic_hidden = 0;
+        memset(s_magic_hidden_flags, 0, sizeof s_magic_hidden_flags);
+        ev("magic_restore", 0, 0, 0);
+    }
     if (s_casting && s_flipped && psx_mod_read_half(FX_STATE) == 0) { unflip(); ev("unflip", 0, 0, 0); }
 }
 
@@ -655,6 +692,8 @@ static void state_before_save(void)
     for (int r = 0; r < 30; r++) state_put(&i, (uint32_t)s_present[r]);
     state_put(&i, s_turn_last[0]); state_put(&i, s_turn_last[1]);
     state_put(&i, (uint32_t)s_in_duel);
+    state_put(&i, s_magic_hidden);
+    for (int r = 0; r < 30; r++) state_put(&i, s_magic_hidden_flags[r]);
 }
 
 static void state_after_load(void)
@@ -669,6 +708,7 @@ static void state_after_load(void)
     s_casts_done = s_casts_cancelled = s_casts_stalled = 0;
     s_queue_dropped = s_audio_skips = 0; s_in_duel = 0;
     s_turn_last[0] = s_turn_last[1] = 0;
+    s_magic_hidden = 0; memset(s_magic_hidden_flags, 0, sizeof s_magic_hidden_flags);
     s_ev_n = 0;
     if (magic != MFX_STATE_MAGIC || version != MFX_STATE_VERSION) {
         s_frame = 0; s_rng = 0x6D2B79F5u;
@@ -699,6 +739,8 @@ static void state_after_load(void)
     for (int r = 0; r < 30; r++) s_present[r] = (uint8_t)state_get(&i);
     s_turn_last[0] = (uint8_t)state_get(&i); s_turn_last[1] = (uint8_t)state_get(&i);
     s_in_duel = (int)state_get(&i);
+    s_magic_hidden = state_get(&i);
+    for (int r = 0; r < 30; r++) s_magic_hidden_flags[r] = (uint16_t)state_get(&i);
     if (s_qh < 0 || s_qh >= 24 || s_qt < 0 || s_qt >= 24) s_qh = s_qt = 0;
 }
 
