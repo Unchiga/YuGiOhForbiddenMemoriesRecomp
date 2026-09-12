@@ -95,6 +95,7 @@
 #include "psx_video_menu.h"
 
 #include "psx_card_extend.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- the guest side ------------------------------------------------------ */
 
@@ -305,6 +306,7 @@ static void read_block(uint8_t *out)
 
 static void card_save_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     uint8_t cur[EXT_BLOCK_LEN];
     uint8_t want[EXT_BLOCK_LEN];
 
@@ -408,6 +410,7 @@ static void ext_changed(int value)
 
 static void card_save_start(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     /* psx_video_menu_apply_restored() has already replayed the stored value
      * into ext_changed by the time start hooks run. */
     s_enabled = s_setting;

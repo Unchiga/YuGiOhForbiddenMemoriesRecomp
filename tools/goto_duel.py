@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""goto_duel.py -- drive the DEBUG build from a cold boot into a Free Duel against Simon.
+"""goto_duel.py -- drive the DEBUG build into a Free Duel against an unlocked opponent.
 
   python3 tools/goto_duel.py boot            cold boot -> loaded save -> FREE DUEL grid, savestate slot 8
   python3 tools/goto_duel.py duel [ids...]   from the grid (or slot 8): write the 40-card deck, start the duel
@@ -51,17 +51,32 @@ def write_deck(ids):
 
 def duel(ids):
     write_deck(ids)                    # at the grid: the deck view stages from here and commits on exit
-    p.press('right', 6, 1.0)           # Build Deck -> Simon Muran (6 frames = one step)
+    # Read the loaded overlay's availability table: saves unlock different
+    # cells, and selecting an empty cell makes Circle leave Free Duel.
+    cells = p.rd(0x80169030, 40)
+    target = next((i for i in range(1, 40) if cells[i]), None)
+    if target is None:
+        raise RuntimeError('This save has no selectable Free Duel opponent')
+    row, col = divmod(target, 5)
+    for _ in range(row): p.press('down', 6, 1.0)
+    for _ in range(col): p.press('right', 6, 1.0)
     p.press('cross', 12, 3.0)          # deck view, mode 0xC3
+    if p.mode() != 0xC3:
+        raise RuntimeError('Free Duel selection did not open the deck view')
     write_deck(ids)
     p.q({'cmd': 'press', 'buttons': 0xFFFF & ~p.B['circle'], 'frames': 12}); time.sleep(0.3)
     write_deck(ids)
     p.q({'cmd': 'clear_input'})
-    for _ in range(40):
+    for _ in range(90):
         time.sleep(1)
-        if p.mode() == 0xC3 and struct.unpack('<H', p.rd(0x800EA004, 2))[0] == 8000:
+        phase = struct.unpack('<H', p.rd(0x8009B23A, 2))[0] & 0xF
+        side = p.rd(0x8009B1D5, 1)[0]
+        if (p.mode() == 0xC3 and phase == 4 and side == 0 and
+                struct.unpack('<H', p.rd(0x800EA004, 2))[0] == 8000):
             break
-    time.sleep(6)
+    else:
+        raise RuntimeError('Duel did not reach the player hand phase')
+    time.sleep(3)
     print('duel frame', p.frame(), 'mode 0x%02X' % p.mode(), 'LP', struct.unpack('<H', p.rd(0x800EA004, 2))[0], flush=True)
 
 if __name__ == '__main__':

@@ -82,6 +82,7 @@
 #include "psx_game_hooks.h"
 #include "psx_card_save.h"
 #include "psx_card_new_cards.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- stock table bases ------------------------------------------------- */
 #define STATS_STOCK   0x801D4244u
@@ -409,6 +410,7 @@ static void assert_type_gs_strings(void)
 
 static void card_extend_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     /* The whole extension is one stored preference, latched at boot by
      * psx_card_save.c: the memory-card FILE the session writes is chosen with
      * it, so it cannot be flipped mid-run. Off means stock, patches and all --

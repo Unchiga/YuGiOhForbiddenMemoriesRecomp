@@ -22,6 +22,7 @@
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_netplay.h"
 
 /* --- Is a save actually resident? ----------------------------------------
  * `psx_mod_game_started()` is NOT this question, and three rows below were
@@ -218,7 +219,8 @@ static void reveal_tick(void);     /* defined with REVEAL ALL PORTRAITS */
 static void heal_cap_apply(void);
 
 void psx_ygo_cheats_tick(void) {
-    heal_cap_apply();
+    heal_cap_apply();   /* a rules fix baked into every build: identical on both netplay peers, so it stays */
+    if (psx_ygo_netplay_session()) return;   /* the rest is per-machine: peers must stay bit-identical */
     show_opp_hand_tick();
     force_faceup_tick();
     free_spending_tick();
@@ -276,6 +278,7 @@ static void heal_cap_apply(void) {
 }
 
 static void lp_changed(int value) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     if (value < 1) value = 1;
     if (value > 32767) value = 32767;
@@ -293,6 +296,7 @@ static void lp_changed(int value) {
  * live block, so writing the live copy is what propagates — writing a mirror
  * would display correctly and then be overwritten. */
 static void starchips_changed(int value) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (value <= 0) return;
     if (!psx_ygo_save_is_live()) { refuse(s_starchips_row, "StarChips"); return; }
     psx_mod_write_word(PSX_STARCHIPS_ADDR, (uint32_t)value);
@@ -371,6 +375,7 @@ static int ui_copy_is_trunk(void) {
 }
 
 static void all_cards_changed(int value) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (value <= 0) return;
     if (!psx_ygo_save_is_live()) { refuse(s_all_cards_row, "All cards"); return; }
     const int ui_is_trunk = ui_copy_is_trunk();
@@ -478,6 +483,7 @@ static void reveal_revert(const char *why) {
 
 #ifndef PSX_NO_DEBUG_TOOLS
 static void reveal_changed(int value) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (value <= 0) {
         reveal_revert("Portrait reveal reverted");
         return;

@@ -54,6 +54,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
+#include "psx_ygo_netplay.h"
 
 #define EMITTER_ENTRY   0x800849F0u
 #define EMITTER_STOCK   0x00805821u   /* move t3, a0 */
@@ -144,6 +145,7 @@ static uint32_t s_calib_frames;  /* frames observed before the cap is set   */
 
 static void card_guard_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_card_save_ext_enabled() || !psx_mod_game_started()) return;
 
     const int in_chest = (psx_mod_read_byte(MODE_BYTE) == MODE_CHEST);

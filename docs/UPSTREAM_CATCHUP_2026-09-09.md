@@ -1,0 +1,335 @@
+# psxrecomp catch-up — 2026-09-09
+
+The local runtime branch `ygofm-upstream-2026-09-09` starts at upstream
+`ed55299be34710a90fc080484a83e8634bd41fa9`, followed only by twelve title extension
+and regression-fix commits, ending at `718a9ce9`. The title branch is `upstream-catchup-2026-09-09`. Both worktrees are
+under `/tmp/ygofm-upstream-2026-09-09/title`; the original checkout remains on
+`netplay-2p` / `ygofm-netplay`. Nothing was pushed or released.
+
+Evidence root **E** below is `/tmp/ygofm-upstream-2026-09-09/evidence`.
+These captures, scratch saves, build logs and investigation failures are local
+artifacts, not committed assets. Preserve them before clearing `/tmp`.
+
+| Item | Baseline result | New result | Evidence under E |
+| --- | --- | --- | --- |
+| 1. Linux builds | Debug, release and setup host link | Debug, release and setup host link | `baseline/build-{debug,release,setup}.log`; `new/build-{debug,release,setup}-final.log` |
+| 2. Boot / menus | Title, LOAD, Library and Password 89631139 pass | Same; loaded-menu native capture identical | `baseline/solo-v3`, `new/solo`, `screenshot-comparison.json` |
+| 3. Duel / freezes | Two turns and win → drops → Library pass | Same; Library advances 300 frames over 5 seconds after drops | `baseline/duel-fixture`, `baseline/mods-v2`, `new/solo`, `new/win-probe` |
+| 4. Managers | Card, Fusion, Drop, CPU open/edit; randomize, card share, package round-trip pass | Same; edited ATK 3100 visible in Library | `baseline/solo-v3`, `new/solo`; manager PPMs and `commands.jsonl` |
+| 5. Video / audio | GL dropdowns/navigation pass; extra applied-control probe fails its persistence assertion; Vulkan loads; SDL menu draw missing in source | GL controls pass; software F10 and all seven composed menus pass after follow-up fix; exhaustive row activation remains incomplete | `baseline/video-v2`, `new/video`, `baseline/video-actions-v4`, `new/video-actions-v3`, `{baseline,new}/vulkan`, `new/software-menu-final-v2` |
+| 6. Mods | Art, frame color, repacked description, portrait, fill Library and monster/magic effects visible; full package round-trip passes | Same; visual means 0–3.66 | `{baseline,new}/mods`, `baseline/mods-v2`, `new/win-probe`, `mods-screenshot-comparison.json`; `{baseline,new}/magic`, `magic-comparison.json` |
+| 7. Loopback netplay | Delay-sync, rollback 35/15, 5% loss boot/P2 cover pass | All pass after CD fix and state-aware route correction; trade carries both cards back with backups | `baseline/netplay-{delay,rollback,loss}`; `new/netplay-delay-fixed`, `new/netplay-rollback-v2`, `new/netplay-loss` and matching `.log` files |
+| 8. Save integrity | Trade changes 74 bytes per card; directory unchanged | Final traded cards exactly match baseline; loss run changes zero bytes | `delay-comparison.json`, `rollback-card-comparison.json`, `loss-card-integrity.json` |
+| 9. Performance | Duel 59.9565 fps; Card Manager 60.0302 fps | Duel 59.9652 fps; Card Manager 59.9654 fps | `baseline/duel-fixture/duel-perf.json`, `baseline/solo-v3/card-manager-perf.json`, `new/solo/*-perf.json` |
+| 10. Linux setup packaging | Stages and configures offline with explicit toolchain | Same, final 31 MB setup archive staged locally | `baseline/package.log`, `baseline/staged-offline-setup-configure.log`, `new/package-final.log`, `new/staged-offline-final.log` |
+| Follow-up: 2x menu audio, software at 2x resolution | Old fork: 98.20 fps and 93,947 missing host frames in 12 s; initial port: 92.86 fps and 117,419 missing frames | Fixed: 119.88 fps, SPU 44,055 samples/s, zero underruns/overflow over 30 s; also passes borderless and 1x→2x→1x | `baseline/audio-speed`; `new/audio-before`, `new/audio-final`, `new/audio-borderless`; WAVs and timing JSON |
+| Follow-up: toast above dropdown | Prior candidate SDL toast covered by bar/panel | Software and OpenGL: all 24 sampled opaque glyph pixels survive the overlapping File panel | `new/toast-before`, `new/toast-final`, `new/toast-gl`, `new/toast-pixel-comparison.json`; composed captures |
+| Follow-up: 3x/4x menu audio | Preserved old fork, OpenGL: 179.88 / 239.76 fps, no underruns | OpenGL passes five 30-second windows at 1x/2x/3x/4x/1x: 59.93/119.88/179.80/239.34/59.94 fps, zero underruns/overflow; play helper restored to configured OpenGL | `baseline/audio-gl-34-v2`; `new/audio-gl-34`, `new/audio-all-speeds` |
+
+The 3x/4x report exposed a launcher-profile mistake: `Try-upstream.sh` still
+forced software rendering to accommodate tool windows, bypassing GPU
+rasterization during normal play. The game configuration selects OpenGL.
+The helper now respects that setting; `Try-upstream-tools.sh` explicitly selects
+software for the manager windows. Both use `manual-check` scratch data, so close
+one before switching helpers. The original checkout's Play.sh remains the old
+fork. OpenGL performance agrees with the preserved old fork at 3x/4x, with
+normal SPU production and no underruns. The first baseline 3x sample was reset
+to 1x by late startup settings; `audio-gl-34-v2` verifies the effective speed
+before measuring. Higher-speed software audio is still performance constrained;
+the 3x/4x passes here qualify OpenGL. The default audio regression now covers
+1x/2x/3x/4x/1x instead of stopping at 2x.
+
+Runtime `718a9ce9` also fixes the SDL toast order and placement: toast feedback
+is drawn last, below the bar, in drawable pixels, matching GL/Vulkan.
+`software_menu_regression.py` samples opaque lettering with and without an
+overlapping dropdown. The prior binary fails; the fixed SDL path preserves
+100% of the sampled glyph pixels, and its seven menus and Card Manager pass.
+The OpenGL run also passes all seven menus and preserves 24/24 toast pixels;
+its tool-window step is explicitly skipped for the known GL limitation.
+The script also supports OpenGL overlay checks through `screenshot_present`;
+software uses the composed `present_shot` counterpart. Build logs are
+`new/toast-{build,release-build,setup-build}.log`.
+
+The accelerated-audio follow-up exposed a gap in the original 1x performance
+suite. The scratch launcher explicitly selected software, while ordinary play
+had used GL. The preserved old software rasterizer also starves audio at 2x;
+the initial port was somewhat slower. Stack samples locate the bottleneck in
+rasterization, with display swaps taking only about 75 microseconds. Runtime
+`a39229c1` caches repeated nearest texture samples in presentation mirrors,
+fills opaque spans directly, and clears supersampled buffers in contiguous
+spans between wraps. Canonical texture reads stay ordered, and clocks, chosen
+resolution, filtering and blending stay unchanged. All 64 raster cases match
+the pre-change native VRAM, hires/wide buffers and dirty masks byte for byte.
+The registered CTest passes (`new/audio-raster-ctest.log`).
+
+`tools/audio_speed_regression.py` requires a new scratch directory, verifies
+port ownership, loads a matching menu state, records PCM WAVs and checks frame
+rate, SPU production, underruns and overflow independently. Three 30-second
+windows pass at 59.93 / 119.88 / 59.94 fps, with SPU output near 44.1 kHz
+throughout. A separate full-size borderless 2x run passes too. This validates
+clock/queue health; the retained WAVs permit listening review. The later OpenGL 1x/2x/3x/4x/1x follow-up above extends speed coverage;
+other audio scenes and other platforms remain unqualified.
+Debug, release and setup rebuild logs are `new/audio-{build,release-build,setup-build}.log`.
+The setup archive listed above predates the follow-up fixes and was not restaged.
+
+The collaborating game-code resource
+[krystalgamer/memories-decomp](https://github.com/krystalgamer/memories-decomp)
+is now recorded in `tools/AGENT-BRIEF.md`, the runtime's
+`docs/YGOFM_REFERENCE.md`, and project memory. The stale `~/memories-decomp`
+path is absent here; `~/ygofm-decomp` is a separate Unchiga checkout.
+
+Manual-launch follow-up: the user reported F10 displaying nothing in software.
+The SDL path consumed input and reserved the inset but omitted the menu image;
+earlier composed menu checks used GL and missed this. Runtime `c75132a6` adds
+SDL composition, seeds the documented 3x window default (zero previously gave
+a 1x window and a displayed 0x), and makes `present_shot` capture the entire SDL
+window including UI outside the game viewport. Existing valid settings still win.
+`tools/software_menu_regression.py` launches a new scratch profile, drives real
+F10/arrow events, checks pixels in all seven composed dropdowns and opens Card
+Manager. It passes in `new/software-menu-final-v2`; debug, release and setup
+rebuilds pass in `new/software-menu-{build,release-build,setup-build}.log`.
+The first test attempt queried title hooks before initialization; the harness
+now waits for readiness. Baseline source has the same omitted SDL draw; no new
+matched baseline run was made for this follow-up. SDL3 code remains untested.
+The scratch helper `/tmp/ygofm-upstream-2026-09-09/Try-upstream.sh` now launches
+the rebuilt candidate using configured OpenGL; the separate tools helper forces software. The original checkout's Play.sh still runs the
+original fork. No personal cards were accessed for this follow-up.
+
+The custom magic card deals exactly 500 damage on both revisions (opponent LP
+8000 → 7500), with matching hook-event sequences and image mean difference
+0.1454. Both monster-trigger runs record one completed cast.
+
+The measured Card Manager difference is 0.11%, about two frames over a 30-second
+sample. This is a throughput check, not a frame-time distribution or input-lag
+benchmark. No freeze occurred in either two-turn or post-drop Library route;
+Pause's latency was not separately instrumented.
+
+The extra baseline applied-control probe failed its widescreen persistence
+assertion after moving to an isolated portable environment; the earlier baseline
+log does record the 16:9 callback. The candidate applied-control probe passes,
+including persisted widescreen on/off, Master volume 17, and open Game savestate
+menu. A complete matched baseline for those extra controls remains unverified.
+
+The broad suite is **not an exhaustive feature certification**. Fusion and
+randomized drop edits were verified in their managers and package exports;
+their exact recipes/rewards were not all exercised in game. Dialogue import
+rebuilt the bank and the manager opened, but the translated campaign line was
+not visited. Story reward configuration round-trips, but a campaign reward was
+not awarded. Those require additional campaign/duel fixtures beyond the loaded
+scratch seed. Every cheat, fullscreen/window-scale/resolution row, live renderer
+switch, and an offline update-check failure was not individually exercised.
+Renderer selection was tested at launch. The private menu has a persisted
+renderer setting and launch update check, not dedicated visible rows for both.
+Native OS pickers were bypassed through the existing debug import/export APIs;
+the package import itself and backup-first round trip were exercised.
+
+Vulkan initializes on the RTX 4090 and accepts the loaded-save state on both
+revisions. `screenshot_present` queues only the GL capture path on both, so the
+Vulkan menu capture checks fail with a missing output image. No plain screenshot
+was substituted to claim an overlay pass. Netplay cover checks use composed GL
+captures exclusively.
+
+Native solo screenshots all pass mean gray difference <18 at 80×60. Full-window
+netplay images initially fail because the baseline's launcher settings select a
+1280×1000 window, while the candidate fits a larger display area. The originals
+are retained in `screenshot-comparison.json`. Comparing the measured game
+viewports gives 31/32 passes (`netplay-viewport-comparison.json`); the remaining
+baseline guest menu image catches the sliding menu transition, whereas the new
+image has settled. This is an explained capture mismatch, not a silently waived
+threshold. Mod art/color/description and portrait screenshots agree closely.
+
+The early baseline inherited shared menu preferences (including the Dev Card
+Effects set); later baseline visual-mod tests use a portable copy of the same
+executable and explicitly select Own Cards. The editor also exported APPIMAGE,
+which made legacy portable sidecars resolve beside the editor under Applications;
+the final harness strips APPIMAGE/APPDIR for native child executables. The final
+baseline applied-menu check uses that corrected environment. This explains the
+different opponent LP after two otherwise successful turns. The port exposed
+and fixes the fork's sidecar isolation gap: `--memcard-dir` now also isolates
+menu settings and keybinds. Early baseline/menu runs used the old shared sidecar
+behavior. Cards and title mod files stayed in scratch throughout; the personal
+cards were never written.
+
+The mechanical merge measurement found 34 conflicting paths (30 content,
+two submodule and two deleted-file conflicts), 226 text hunks. Main had 53,
+GL 77, lobby 14 and netplay 14. `conflicts.md` lists every path;
+`merge-tree.txt` retains the experiment. The fork has no shared ancestry with
+upstream; its root snapshot corresponds to upstream `1dc58357`, 397 upstream
+commits before the pinned tip. The port added 37 standalone private files plus
+CMake wiring first, then integrated runtime, netplay, video, debug and setup
+hooks as separate commits. `runtime-symbols.txt` records the 95 distinct title
+runtime calls measured with the requested prefix pattern.
+
+Upstream replacements retained: single-context GL interpolation scheduling,
+HiDPI/window handling, lobby chat/auth/session handling, guest-card transfer,
+spectator/rematch resets, dirty-rectangle/readback work, mod catalog and setup
+toolchain stamps. The old private GL presenter thread/fence scheme and duplicate
+lobby implementation were dropped. Private title menus, UI fonts/drawing,
+guest overlays, input/audio services, savestate host UI, debug commands and
+performance probes remain. Title provenance counters coexist with upstream's
+texture-correction counters under distinct names. Pause's 131072 idle latency,
+card guards/mirrors, `memcard_mirror_to`, seat names, `quit_graceful`, and portable
+setup download/unpack fallbacks remain fork-only.
+
+Two additional fixes were validated during the port:
+
+- Upstream accelerates mode A0 using a 0x48 realtime mask but its consumer guard
+  still used 0x68. This overwrote unread CD sectors and stalled at Konami even
+  with baseline generated C. One shared predicate now drives both decisions.
+  `runtime/tests/test_cdrom_accelerated_consumer.c` passes; restoring the old
+  guard fails six mode/divisor cases. See `cdrom-consumer-ctest.log` and
+  `cdrom-consumer-negative.log`.
+- `--memcard-dir` now resolves sidecars before the cached user-data default and
+  suppresses legacy shared-settings fallback. Debug/release/setup all build;
+  new live runs write `menu_settings.ini` and `keybinds.ini` in their own player
+  directories.
+
+The basic-block, decoder and seed differences from the fork were line endings,
+not semantic recompiler changes. Upstream's versions are used. The private
+guest-card default config option and Windows UTF-8 executable manifest remain.
+Game and OpenBIOS C were regenerated, then CMake was reconfigured to discover the
+new shard list: game C 67 → 70 files, 100,930,361 → 101,454,214 bytes; BIOS C two
+files, 9,420,172 → 9,468,913 bytes. See `generated-{before,after}.json` and
+`regenerate-{game,bios}.log`. Generated sources remain ignored, as before.
+
+`recomp-net` is upstream `46ef6ed` plus the retransmit fix and its new deterministic
+initial-loss regression, local tip `4952fae`. The test drops BEGIN or chunk zero
+at clocks 0 and 1000, pumps real sessions, and compares the entire payload.
+All four cases pass; unpatched upstream fails. CTest is 15/16: the existing
+`rollback_episode_test` has the same four failures on pristine upstream, verified
+separately (`net-ctest.log`, `net-initial-loss*.log`). The fix was already on the
+fork's remote, so the requested upstream PR was opened without pushing:
+https://github.com/RetroPortingToolKit/recomp-net/pull/12 . The new regression
+commit is local and is not yet in that PR.
+
+`retcomm-rbengine` is current upstream `a7b9850`; `recomp-ui` remains current
+`8bf4738`. The nine runtime structural checks pass after adapting the setup-host
+catalog guard to the private setup option (`runtime-tests.json` records the
+initial guard failure; `mod-catalog-final.log` records its passing rerun).
+
+The setup stage uses `RETCOMM_TOOLCHAIN_DIR` pointing at the locally installed
+cmake-clang-v1/1.0.14 pack, disconnected FetchContent, and existing local libjuice
+and libchdr sources. `PSXRECOMP_ALLOW_NO_BIOS=ON` permits the deliberately omitted
+generated BIOS C in a setup-host-only stage. No dependency download occurred in
+the staged configure. This machine lacked zip/7z, so packaging used a local
+Python zipfile shim under the task scratch directory; no system installation or
+release upload was performed.
+
+Reproduction tools are `tools/upstream_regression.py` (explicit executable,
+new scratch directory, seed, disc, menu reference and groups),
+`tools/compare_upstream_regression.py` (80×60 image differences and card ranges),
+and the existing pair/scenario with `NETPAIR_EXE`, `NETPAIR_DISC`, `NETPAIR_SEED`,
+`NETPAIR_DIR`. Loopback routes now fail on timeouts, require composed captures,
+select an occupied attack target, and leave attack selection before START.
+The Free Duel route reads the current save's availability grid instead of
+blindly selecting an empty tile. Diagnostic failed runs are retained rather
+than overwritten. A same-revision slot-7 menu state can shorten follow-up
+checks; do not reuse a state across regeneration.
+
+An optional final hash read of the protected personal card was rejected by
+automatic approval review and was not retried. Save-integrity evidence uses
+only scratch seeds, final cards and their pre-netplay backups.
+
+## 2026-09-10 effect-freeze and netplay follow-up
+
+The two supplied freeze reports and their state/thumb attachments were copied
+unchanged to the durable handoff and verified against `manifest.json`. Both are
+the same stock effect-stream wait: effect state 6, flags `0xC001`, and the
+class-4 effects Dark Hole (336) / Dragon Capture Jar (329). This was not the
+old CD gate defect. The matching v0.5.9 runtime eventually completes each state
+after about 20 seconds; its 900-vblank reporter fires around 15 seconds and
+therefore describes a long stall before the stock 600-count stream timeout.
+
+A fresh production `on_flip = dragon_jar` fixture reproduced the regression in
+the candidate. Synthetic monster casts enter the stock effect handler without
+the normal spell action that advances the class-4 effect-sound stream. The
+guest remained busy until its stock timeout, while two host watchdogs falsely
+called the cast complete and released the parameter/side hold at 900 frames.
+The repair leaves the stock callback and cleanup in charge, but sets that
+specific orphaned stream countdown to one so its own bounded fallback runs on
+the next driver tick. A host watchdog is now telemetry only and can no longer
+declare success or release a busy guest. Cancellation, genuine completion,
+stalls, queue rejection, and class-4 audio skips are reported separately.
+
+Effect-side host state is now deterministic and serializable. Both card and
+monster effects use fixed xorshift state rather than wall-clock `rand()`. The
+runtime provides common before-save/after-load plugin callbacks, and includes
+the Expansion1 mod allocation and GPU DMA aperture in disk, rewind, and
+rollback snapshots. Version-7 states remain readable: older 16-section states
+reset plugin mirrors instead of adopting stale host state. The saved mirrors
+cover effect parameter holds, side ownership, queues, chance state, bonuses,
+face-down/present rows, battle decisions, counters and instruction immediates.
+
+The merged generated dispatcher also made the old summon entry hook unreliable:
+internal aliases can bypass the configured function entry. Summon detection is
+now an empty-to-occupied monster-row transition, with existing rows primed on a
+legacy/mid-duel load. The production mod regression proves a real row-5 summon,
+then reveals the scripted face-down row and proves one attached trigger reaches
+genuine completion and changes LP 8000 to 7500. `goto_duel.py` no longer returns
+from the phase-3 intro; it requires phase 4, player ownership, and initialized LP.
+
+The 3D battle regression found a second upstream-return edge. After a stock 3D
+scene (low mode 1), the game briefly returns through unflagged mode `0x03` with
+action `0x8009` before stable mode `0xC3` and action 11. Treating `0x03` as a
+duel exit discarded the pending slayer/indestructible result. Pending 3D battle
+decisions now survive both transitions. The final production run records the
+3D selection, action-11 hook, rewritten defender row, duel result, and continued
+Library input in
+`/tmp/ygofm-upstream-2026-09-10-mods-battle-3d-transition-final/results.json`.
+The earlier 2D slayer run also completed.
+
+`tools/upstream_regression.py` now derives its executable-effect inventory from
+the enum and fails when it becomes stale. All 20 executable IDs passed with
+alternating owners: heal, damage, destroy-type, destroy-attack, Raigeki, Dark
+Hole, Dragon Jar, Stop Defense, flip, weaken, Swords, Cursebreaker, Harpie,
+field, destroy-strongest, lose-LP, gamble-LP, gamble, destroy-own, and
+destroy-own-LP. Ritual is deliberately excluded from synthetic casting because
+it is a recipe/table override, not an effect-driver handler; its parser and
+records remain covered by manager/package tests. Dark Hole and Dragon Jar both
+finish in about 3.3 seconds with one explicit class-4 audio skip, no stall,
+cancel, leaked side flip, or active card hold. Dragon Jar passes at 1x, 2x, 3x,
+and 4x; queue saturation reports 16 rejected casts instead of overwriting; and
+a save made during an active cast restores the cast, side flip, counters and
+hold, then genuinely completes the same timeline. Final machine-readable data
+is `/tmp/ygofm-upstream-2026-09-10-effects-after-3d-final/results.json`.
+
+This inventory is a completion/ownership/LP oracle for every executable class,
+not an exhaustive Cartesian proof of every target count, face state, stat tie,
+immunity, bonus, trigger, and recipe combination. Production summon/flip,
+magic-card damage, 2D/3D slayer, queue exhaustion, repeated activation, speed,
+and mid-cast restoration have dedicated live cases. Parser/manager tests cover
+the remaining battle, bonus, immunity, equip, terrain, trap and ritual shapes.
+Per-machine custom card packages remain intentionally disabled during netplay:
+package contents are not synchronized or included in the session handshake, so
+running asymmetric custom effects would be nondeterministic. Live netplay tests
+therefore exercise the repaired common snapshot/transport paths with that layer
+inert rather than claiming synchronized custom packages.
+
+The network follow-up repairs two different progress failures. LAN state
+transfer uses a 128 KiB congestion window, 64 chunks and a 160 ms resend timer;
+input/confirmation retries use 16 ms. Confirmation pumping can now resend cached
+history while the application is paused at a barrier, and peer-advance evidence
+stops obsolete confirmation floods. The stale rollback unit fixture was also
+corrected: predicted remote rows are no longer declared confirmed unless the
+case explicitly provides confirmed history. The full recomp-net suite is now
+16/16. Live delay, rollback with 35/15 ms simulation, and 5% loss boot all pass.
+The two full scenarios finish the duel and trade, carry both cards back with
+`.pre-netplay` backups, and have no snapshot overflow/drop; the loss-only case
+reaches player two's turn without card writes. Evidence is under
+`/tmp/ygofm-upstream-2026-09-10-netplay-{delay-required-final,rollback-postfix,loss-only-final}`.
+
+Final validation after these changes:
+
+- runtime CTest: 84/84 runnable tests passed; two documented tests disabled and
+  one toolchain-dependent test skipped;
+- recomp-net CTest: 16/16 passed with local sockets enabled;
+- debug, release, and Linux setup-host title builds linked cleanly;
+- `dist/ygofm-0.5.3-upstream-effects-fixed-local.zip` was regenerated after the
+  fixes and passed `python3 -m zipfile -t`;
+- the staged archive configured with `FETCHCONTENT_FULLY_DISCONNECTED=ON` and
+  local libjuice/libchdr, then completed all 256 setup-host build steps using
+  cmake-clang-v1/1.0.14. The first build attempt only hit the sandbox's read-only
+  default ccache directory; a scratch-local cache completed the unchanged build.
+
+No archive was uploaded and no branch was pushed. The archive is a local test
+artifact, not a release.

@@ -59,6 +59,7 @@
 #include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
+#include "psx_ygo_netplay.h"
 
 #define PSX_TEXT_FN        0x80037DA4u
 #define PSX_GLYPH_FN       0x80036C14u   /* per-decoded-character callback */
@@ -117,6 +118,7 @@ static void tint_restore(uint32_t obj)
 
 static void card_name_text(CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_TEXT_FN || cpu->gpr[31] != CARD_NAME_CALLER)
         return;
 
@@ -148,6 +150,7 @@ static void card_name_text(CPUState *cpu, uint32_t address)
 
 static void card_name_glyph(CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_GLYPH_FN || !s_tint_obj)
         return;
 

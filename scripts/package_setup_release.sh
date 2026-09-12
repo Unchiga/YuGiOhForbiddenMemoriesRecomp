@@ -92,4 +92,6 @@ exec bash "${PACKAGER}" \
   --project-dir assets \
   --project-dir mods   --project-dir launcher_assets \
   --project-exclude assets/duelist_icons \
+  --project-exclude generated \
+  --project-exclude disc.cfg \
   "${EXTRA_PROJECT[@]}"

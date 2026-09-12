@@ -237,6 +237,7 @@ psxrecomp_add_game_runtime(psx-runtime
     WINDOW_TITLE "Yu-Gi-Oh Forbidden Memories Recompiled"
     DEFAULT_GAME_CONFIG_PATH "game.toml"
     MAX_PLAYERS 2
+    PRELOADED_MODS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded"
     LAUNCHER_BOXART "${CMAKE_CURRENT_SOURCE_DIR}/launcher_assets/img/boxart.tga"
     APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/psxrecomp.ico"
     GEN_MARKER "generated/SLUS_014.11_dispatch.c"
@@ -246,21 +247,6 @@ psxrecomp_add_game_runtime(psx-runtime
 
 # The game's own headers sit beside its sources.
 target_include_directories(psx-runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-
-# Project-owned mod catalog (this game's own manifests). Staged AFTER the
-# framework's builtin copy so copy_directory merges into the same tree
-# instead of being wiped by the framework's rm -rf. An always-run ALL target
-# (not POST_BUILD) so editing only a manifest.toml re-stages without needing
-# psx-runtime to relink.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded/packages")
-    add_custom_target(psx-stage-mods ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded"
-            "$<TARGET_FILE_DIR:psx-runtime>/mods"
-        COMMENT "Staging project-owned mod catalog"
-        VERBATIM)
-    add_dependencies(psx-stage-mods psx-runtime)
-endif()
 
 # Stage runtime configs next to the exe for direct build/ launches. Only copy
 # files that exist — never fail when game_options.toml is absent.

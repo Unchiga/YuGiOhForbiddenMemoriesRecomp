@@ -46,6 +46,7 @@
 #include "psx_card_effects.h"
 #include "psx_card_colors.h"
 #include "psx_card_share.h"
+#include "psx_card_shop.h"
 #include "psx_card_texts.h"
 #include "psx_game_hooks.h"
 #include "psx_ui_draw.h"
@@ -62,6 +63,7 @@ static SDL_Texture  *s_tex;
 static uint32_t     *s_px;
 static int           s_w, s_h, s_dirty;
 static int           s_open_req;
+static int           s_suspended;        /* renderer closed only for an FM tab switch */
 static PsxUiCanvas   s_cv;
 static float         s_u = 1.0f;          /* design unit in pixels */
 static float         s_u_base = 1.0f;     /* the unit the canvas height asks for, before fitting */
@@ -121,8 +123,8 @@ static int  s_sel = 1;
 static int  s_sb_drag, s_sb_grab;
 
 /* --- editor ---------------------------------------------------------------- */
-enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_PASSWORD, F_COLOR, F_NAME_COLOR,
-       F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_TRAP_MAX,
+enum { F_NAME, F_DESC, F_ATK, F_DEF, F_STAR1, F_STAR2, F_TYPE, F_LEVEL, F_ATTR, F_PRICE, F_SELL_PRICE, F_PASSWORD, F_COLOR, F_NAME_COLOR,
+       F_EFFECT, F_AMOUNT, F_TARGET, F_TERRAIN, F_RITUAL, F_EQUIP_BONUS, F_EQUIPS, F_BOOST, F_FIELD_TARGETS, F_TRAP_MAX,
        F_RULE_FIRST,                                      /* the effects list: RULE_MAX rows of RP_N boxes */
        F_RULE_END = F_RULE_FIRST + 16 * 5,
        F_IMMUNE = F_RULE_END, F_COUNT };
@@ -170,9 +172,57 @@ static PsxCardShareInfo s_share;
 static char s_share_path[1024];
 static int  s_modal_hover = -1;
 
+/* Searchable pending allow-list for a field spell. It edits only s_edit until
+ * Apply, and Apply remains unsaved until the page's ordinary Save button. */
+static int s_target_open;
+static char s_target_search[48];
+static int s_target_order[CARDS], s_target_n, s_target_scroll;
+static int s_target_hover = -1;
+static uint8_t s_target_selected[CARDS + 1];
+static int s_target_selected_n;
+
 /* --- geometry, recomputed from the window size on every draw and click ------- */
 typedef struct { int x, y, w, h; } Rect;
 static int in_rect(const Rect *r, int x, int y) { return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h; }
+
+/* These previews are indexed, pixel-authored game assets.  Keep every source
+ * texel an exact square on screen instead of letting the window's fractional
+ * UI scale choose a bilinear destination size. */
+static Rect integer_preview_rect(int x, int y, int max_w, int max_h,
+                                 int src_w, int src_h)
+{
+    int scale = max_w / src_w;
+    const int scale_y = max_h / src_h;
+    Rect out;
+    if (scale_y < scale) scale = scale_y;
+    if (scale < 1) scale = 1;
+    out.w = src_w * scale;
+    out.h = src_h * scale;
+    out.x = x + (max_w > out.w ? (max_w - out.w) / 2 : 0);
+    out.y = y + (max_h > out.h ? (max_h - out.h) / 2 : 0);
+    return out;
+}
+
+static void blit_integer_preview(PsxUiCanvas *c, const Rect *dst,
+                                 const uint32_t *src, int src_w, int src_h)
+{
+    int scale;
+    if (!c || !c->px || !dst || !src || src_w <= 0 || src_h <= 0) return;
+    scale = dst->w / src_w;
+    if (scale < 1 ||
+        dst->w != src_w * scale || dst->h != src_h * scale) return;
+    psx_ui_mark(c, dst->x, dst->y, dst->w, dst->h);
+    for (int dy = 0; dy < dst->h; dy++) {
+        const int y = dst->y + dy;
+        if ((unsigned)y >= (unsigned)c->h) continue;
+        const uint32_t *srow = src + (size_t)(dy / scale) * src_w;
+        for (int dx = 0; dx < dst->w; dx++) {
+            const int x = dst->x + dx;
+            if ((unsigned)x < (unsigned)c->w)
+                c->px[(size_t)y * c->w + x] = srow[dx / scale];
+        }
+    }
+}
 
 typedef struct {
     Rect bar, search, list, list_rows, sb, ed;
@@ -182,11 +232,14 @@ typedef struct {
     int  bar_free;                    /* room left in the bar after the search box */
     Rect art, thumb;
     int  info_x, info_y;
+    int  form_right;
     int  status_y;
     int  fx_note_x, fx_note_y;        /* the effects note line, 0 = none */
     Rect tab[2];
     int  preview_y;                   /* the card-text preview under the rules, 0 = none */
     Rect modal, modal_ok, modal_cancel;
+    Rect target_modal, target_search, target_rows, target_sb;
+    Rect target_select, target_remove, target_clear, target_cancel, target_apply;
 } Layout;
 static Layout s_L;
 
@@ -319,8 +372,8 @@ static int param_kind(int f)
 static const char *field_label(int f)
 {
     static const char *const FIELD_LABEL[F_RULE_FIRST] = {
-        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Password", "Frame", "Name color",
-        "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Trap ATK max"
+        "Name", "Description", "Attack", "Defense", "Star 1", "Star 2", "Type", "Level", "Attribute", "Price", "Sell price", "Password", "Frame", "Name color",
+        "Effect", "Amount", "Target type", "Terrain", "Recipe", "Equip bonus", "Equips", "Boosts", "Field creatures", "Trap ATK max"
     };
     if (f < F_RULE_FIRST) return FIELD_LABEL[f];
     if (f == F_IMMUNE) return "Immune to";
@@ -606,7 +659,7 @@ static int field_fits(int f)
     case F_TERRAIN: return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD;
     case F_RITUAL:  return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_RITUAL;
     case F_EQUIP_BONUS: case F_EQUIPS: return t == 23;
-    case F_BOOST:   return s_sel >= 330 && s_sel <= 335;
+    case F_BOOST: case F_FIELD_TARGETS: return s_sel >= 330 && s_sel <= 335;
     case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686;
     case F_IMMUNE: return is_monster();
     default:
@@ -627,7 +680,7 @@ static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab;
 
 /* The help under the buttons, per tab */
 static const char *const HELP_TEXT[2] = {
-    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, six lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
+    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (21 columns, eight lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
     "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.",
 };
 #define HELP_LINES 5
@@ -649,7 +702,7 @@ static void layout_pass(void)
     L->ed = (Rect){ L->list.x + L->list.w + gap, top, s_w - (L->list.x + L->list.w + gap) - gap, s_h - top - gap };
 
     const int ex = L->ed.x + pad;
-    const int right = L->ed.x + L->ed.w - pad;
+    int right = L->ed.x + L->ed.w - pad;
     int y = L->ed.y + pad + px(16.0f) + px(8.0f);        /* below the header line */
     /* the two tabs */
     {
@@ -664,18 +717,35 @@ static void layout_pass(void)
         y += th + px(8.0f);
     }
     if (s_tab == 0) {
-        /* previews */
-        const int art_h = px(72.0f), art_w = art_h * 102 / 96;
-        L->art = (Rect){ ex, y, art_w, art_h };
-        const int th_h = px(24.0f), th_w = th_h * 40 / 32;
-        L->thumb = (Rect){ ex + art_w + pad, y, th_w, th_h };
-        L->info_x = L->thumb.x + th_w + pad;
-        L->info_y = y;
-        y += art_h + px(12.0f);
+        if (L->ed.w >= px(560.0f)) {
+            /* The form only needs the left half of a wide editor. Turn the
+             * formerly empty right half into a large, persistent art rail. */
+            const int rail_w = px(174.0f);
+            const int rail_x = right - rail_w;
+            const int art_slot_h = rail_w * 96 / 102;
+            const int th_slot_w = px(136.0f), th_slot_h = th_slot_w * 32 / 40;
+            L->art = integer_preview_rect(rail_x, y, rail_w, art_slot_h, 102, 96);
+            L->thumb = integer_preview_rect(rail_x + (rail_w - th_slot_w) / 2,
+                                             y + art_slot_h + px(20.0f),
+                                             th_slot_w, th_slot_h, 40, 32);
+            L->info_x = rail_x;
+            L->info_y = L->thumb.y + L->thumb.h + px(20.0f);
+            right = rail_x - pad;
+        } else {
+            const int art_slot_h = px(72.0f), art_slot_w = art_slot_h * 102 / 96;
+            const int th_slot_h = px(24.0f), th_slot_w = th_slot_h * 40 / 32;
+            L->art = integer_preview_rect(ex, y, art_slot_w, art_slot_h, 102, 96);
+            L->thumb = integer_preview_rect(ex + L->art.w + pad, y,
+                                             th_slot_w, th_slot_h, 40, 32);
+            L->info_x = L->thumb.x + L->thumb.w + pad;
+            L->info_y = y;
+            y += L->art.h + px(12.0f);
+        }
     }
+    L->form_right = right;
     /* fields */
     const int label_w = px(U_LABEL_W), box_h = px(U_BOX_H), step_w = px(U_STEP_W), sgap = px(3.0f);
-    const int desc_h = psx_ui_font_line_height(face_body()) * 6 + px(6.0f);   /* the game's six lines */
+    const int desc_h = psx_ui_font_line_height(face_body()) * PSX_CARD_PACK_DESC_LINES + px(6.0f);
     const int rules_here = s_tab == 1 && is_monster();
     int trow_y = 0, trow_x = 0;
     if (rules_here) {
@@ -745,7 +815,7 @@ static void layout_pass(void)
             L->step_r[f] = (Rect){ vx + vw + sgap, y, step_w, box_h };
             L->clear[f] = (Rect){ L->step_r[f].x + step_w + sgap * 2, y, step_w, box_h };
         } else {
-            const int wide = (f == F_EQUIPS || f == F_BOOST || f == F_RITUAL);
+            const int wide = (f == F_EQUIPS || f == F_BOOST || f == F_FIELD_TARGETS || f == F_RITUAL);
             vw = (f == F_NAME) ? px(170.0f) : (f == F_DESC) ? px(300.0f) : wide ? (right - vx - step_w - sgap * 2) : px(70.0f);
             if (vw > right - vx - step_w - sgap * 2) vw = right - vx - step_w - sgap * 2;
             if (vw < px(40.0f)) vw = px(40.0f);
@@ -766,12 +836,13 @@ static void layout_pass(void)
         const PsxUiFace *fb = face_bold();
         int bx = ex, bh = px(U_BTN_H);
         snprintf(s_dev_label, sizeof s_dev_label, "Dev Card Effects: %s", psx_card_packs_is_dev() ? "ON" : "OFF");
-        /* the bar's buttons, right to left, in the small face so five fit */
+        /* Match the other managers' action size; the preview rail frees the
+         * body space that used to force this page into a compact treatment. */
         {
-            const PsxUiFace *fs = face_small();
+            const PsxUiFace *fs = face_bold();
             int rx = s_w - px(8.0f);
             for (int b = B_COUNT - 1; b >= B_BAR_FIRST; b--) {
-                const int bw = psx_ui_font_text_w(fs, b == B_DEV ? s_dev_label : BTN_LABEL[b]) + px(14.0f);
+                const int bw = psx_ui_font_text_w(fs, b == B_DEV ? s_dev_label : BTN_LABEL[b]) + px(18.0f);
                 rx -= bw;
                 L->btn[b] = (Rect){ rx, (L->bar.h - bh) / 2, bw, bh };
                 rx -= px(4.0f);
@@ -795,6 +866,33 @@ static void layout_pass(void)
         const int bw = px(80.0f), bh = px(U_BTN_H);
         L->modal_ok = (Rect){ L->modal.x + L->modal.w - pad - bw * 2 - px(6.0f), L->modal.y + L->modal.h - pad - bh, bw, bh };
         L->modal_cancel = (Rect){ L->modal.x + L->modal.w - pad - bw, L->modal.y + L->modal.h - pad - bh, bw, bh };
+    }
+    /* Searchable field-spell creature allow-list. */
+    {
+        int mw = px(520.0f), mh = px(410.0f);
+        if (mw > s_w - gap * 2) mw = s_w - gap * 2;
+        if (mh > s_h - gap * 2) mh = s_h - gap * 2;
+        L->target_modal = (Rect){ (s_w - mw) / 2, (s_h - mh) / 2, mw, mh };
+        const int ip = px(14.0f), bh = px(20.0f), sbw = px(6.0f);
+        L->target_search = (Rect){ L->target_modal.x + ip,
+            L->target_modal.y + px(35.0f), L->target_modal.w - ip * 2, px(U_BOX_H) };
+        const int ay = L->target_modal.y + L->target_modal.h - ip - bh;
+        const int ry = L->target_search.y + L->target_search.h + px(7.0f);
+        L->target_rows = (Rect){ L->target_modal.x + ip, ry,
+            L->target_modal.w - ip * 2 - sbw - px(4.0f), ay - px(7.0f) - ry };
+        L->target_sb = (Rect){ L->target_rows.x + L->target_rows.w + px(4.0f),
+            ry, sbw, L->target_rows.h };
+        int bx = L->target_modal.x + ip;
+        int bw = psx_ui_font_text_w(face_small(), "Select filtered") + px(14.0f);
+        L->target_select = (Rect){ bx, ay, bw, bh }; bx += bw + px(4.0f);
+        bw = psx_ui_font_text_w(face_small(), "Remove filtered") + px(14.0f);
+        L->target_remove = (Rect){ bx, ay, bw, bh }; bx += bw + px(4.0f);
+        bw = psx_ui_font_text_w(face_small(), "Clear all") + px(14.0f);
+        L->target_clear = (Rect){ bx, ay, bw, bh };
+        const int aw = psx_ui_font_text_w(face_small(), "Apply") + px(18.0f);
+        const int cw = psx_ui_font_text_w(face_small(), "Cancel") + px(18.0f);
+        L->target_apply = (Rect){ L->target_modal.x + L->target_modal.w - ip - aw, ay, aw, bh };
+        L->target_cancel = (Rect){ L->target_apply.x - px(4.0f) - cw, ay, cw, bh };
     }
 }
 
@@ -831,9 +929,9 @@ static void layout_compute(void)
             if (b > need) need = b;
         }
         s_tab = tab;
-        if (need <= s_h || s_u <= 1.0f) break;
+        if (need <= s_h || s_u <= 0.60f) break;
         float u = s_u * (float)s_h / (float)need;
-        if (u < 1.0f) u = 1.0f;
+        if (u < 0.60f) u = 0.60f;
         if (u >= s_u) break;
         s_u = u;
     }
@@ -897,6 +995,26 @@ static void say(const char *m)
     s_dirty = 1;
 }
 
+/* The guest resolves a duplicated password by its first table match (the
+ * lowest card id), leaving every later card unreachable from PASSWORD.  Keep
+ * old/imported files loadable, but do not let an interactive edit create that
+ * ambiguous state. */
+static int password_owner(const char password[9])
+{
+    for (int card = 1; card <= CARDS; card++) {
+        if (card == s_sel) continue;
+        PsxCardPack edit;
+        PsxCardStock stock;
+        const char *effective = NULL;
+        if (psx_card_packs_get(card, &edit) && edit.password[0])
+            effective = edit.password;
+        else if (psx_card_packs_stock(card, &stock) && stock.password[0])
+            effective = stock.password;
+        if (effective && !strcmp(effective, password)) return card;
+    }
+    return 0;
+}
+
 static int ci_contains(const char *hay, const char *needle)
 {
     const size_t n = strlen(needle);
@@ -907,6 +1025,135 @@ static int ci_contains(const char *hay, const char *needle)
         if (i == n) return 1;
     }
     return 0;
+}
+
+static int target_card_type(int id)
+{
+    PsxCardPack edit;
+    PsxCardStock stock;
+    if (psx_card_packs_get(id, &edit) && edit.type >= 0) return edit.type;
+    return psx_card_packs_stock(id, &stock) ? stock.type : -1;
+}
+
+static int target_card_attr(int id)
+{
+    PsxCardPack edit;
+    PsxCardStock stock;
+    if (psx_card_packs_get(id, &edit) && edit.attribute >= 0) return edit.attribute;
+    return psx_card_packs_stock(id, &stock) ? stock.attribute : -1;
+}
+
+static int target_effective_boost(int type)
+{
+    if (type < 0 || type >= 20) return 0;
+    return s_edit.boost_set && s_edit.boost[type] != PSX_CARD_PACK_BOOST_UNSET
+        ? s_edit.boost[type] : s_stock.boost[type];
+}
+
+static int target_matches(int id)
+{
+    if (!s_target_search[0]) return 1;
+    char line[160];
+    const int type = target_card_type(id), attr = target_card_attr(id);
+    snprintf(line, sizeof line, "%03d %s %s %s", id,
+             psx_card_packs_display_name(id), psx_card_packs_type_name(type),
+             psx_card_packs_attribute_name(attr));
+    return ci_contains(line, s_target_search);
+}
+
+static void target_rebuild(void)
+{
+    s_target_n = 0;
+    for (int id = 1; id <= CARDS; id++) {
+        const int type = target_card_type(id);
+        /* Keep a selected ID reachable if a separate card edit later changes
+         * it out of the monster range; otherwise only Clear all could remove
+         * that stale entry. It has no live terrain effect while non-monster. */
+        if ((s_target_selected[id] || (type >= 0 && type < 20)) &&
+            target_matches(id))
+            s_target_order[s_target_n++] = id;
+    }
+    {
+        const int vis = s_L.row_h > 0 ? s_L.target_rows.h / s_L.row_h : 1;
+        int max = s_target_n - (vis > 0 ? vis : 1);
+        if (max < 0) max = 0;
+        if (s_target_scroll > max) s_target_scroll = max;
+    }
+    if (s_target_scroll < 0) s_target_scroll = 0;
+    s_target_hover = s_target_n ? s_target_scroll : -1;
+    s_dirty = 1;
+}
+
+static void target_picker_open(void)
+{
+    memset(s_target_selected, 0, sizeof s_target_selected);
+    s_target_selected_n = 0;
+    if (s_edit.field_targets_set) {
+        for (int i = 0; i < s_edit.field_target_n; i++) {
+            const int id = s_edit.field_target_ids[i];
+            if (id < 1 || id > CARDS || s_target_selected[id]) continue;
+            s_target_selected[id] = 1;
+            s_target_selected_n++;
+        }
+    } else {
+        /* Start an absent override at the stock-equivalent set: every monster
+         * whose effective type has a nonzero boost or penalty. */
+        for (int id = 1; id <= CARDS; id++) {
+            const int type = target_card_type(id);
+            if (type < 0 || type >= 20 || target_effective_boost(type) == 0) continue;
+            s_target_selected[id] = 1;
+            s_target_selected_n++;
+        }
+    }
+    s_target_search[0] = 0;
+    s_target_scroll = 0;
+    s_target_open = 1;
+    target_rebuild();
+}
+
+static void target_picker_filtered(int on)
+{
+    for (int i = 0; i < s_target_n; i++) {
+        const int id = s_target_order[i];
+        if (!!s_target_selected[id] == !!on) continue;
+        s_target_selected[id] = on ? 1 : 0;
+        s_target_selected_n += on ? 1 : -1;
+    }
+    s_dirty = 1;
+}
+
+static void target_picker_clear(void)
+{
+    memset(s_target_selected, 0, sizeof s_target_selected);
+    s_target_selected_n = 0;
+    s_dirty = 1;
+}
+
+static void target_picker_apply(void)
+{
+    int n = 0;
+    for (int id = 1; id <= CARDS; id++)
+        if (s_target_selected[id])
+            s_edit.field_target_ids[n++] = (uint16_t)id;
+    s_edit.field_targets_set = 1;
+    s_edit.field_target_n = n;
+    s_target_open = 0;
+    s_changed = 1;
+    s_dirty = 1;
+}
+
+static int target_visible_rows(void)
+{
+    const int n = s_L.row_h > 0 ? s_L.target_rows.h / s_L.row_h : 0;
+    return n > 0 ? n : 1;
+}
+
+static void target_clamp_scroll(void)
+{
+    int max = s_target_n - target_visible_rows();
+    if (max < 0) max = 0;
+    if (s_target_scroll > max) s_target_scroll = max;
+    if (s_target_scroll < 0) s_target_scroll = 0;
 }
 
 static void clamp_scroll(void)
@@ -942,7 +1189,7 @@ static void load_editor(void)
         memset(&s_edit, 0, sizeof s_edit);
         s_edit.id = s_sel;
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.type =
-            s_edit.level = s_edit.attribute = s_edit.price = -1;
+            s_edit.level = s_edit.attribute = s_edit.price = s_edit.sell_price = -1;
         psx_card_packs_effects_reset(&s_edit);
     }
     s_stock_ok = psx_card_packs_stock(s_sel, &s_stock);
@@ -984,6 +1231,7 @@ static int field_is_set(int f)
     case F_LEVEL: return s_edit.level >= 0;
     case F_ATTR: return s_edit.attribute >= 0;
     case F_PRICE: return s_edit.price >= 0;
+    case F_SELL_PRICE: return s_edit.sell_price >= 0;
     case F_PASSWORD: return s_edit.password[0] != 0;
     case F_COLOR: return s_edit.color >= 0;
     case F_NAME_COLOR: return s_edit.name_color >= 0;
@@ -995,6 +1243,7 @@ static int field_is_set(int f)
     case F_EQUIP_BONUS: return s_edit.equip_bonus >= 0;
     case F_EQUIPS: return s_edit.equips_set || s_edit.equip_types != 0;
     case F_BOOST: return s_edit.boost_set;
+    case F_FIELD_TARGETS: return s_edit.field_targets_set;
     case F_TRAP_MAX: return s_edit.trap_atk_max >= 0;
     case F_IMMUNE: return s_edit.immune >= 0;
     default:
@@ -1016,6 +1265,7 @@ static void field_clear(int f)
     case F_LEVEL: s_edit.level = -1; break;
     case F_ATTR: s_edit.attribute = -1; break;
     case F_PRICE: s_edit.price = -1; break;
+    case F_SELL_PRICE: s_edit.sell_price = -1; break;
     case F_PASSWORD: s_edit.password[0] = 0; break;
     case F_COLOR: s_edit.color = -1; break;
     case F_NAME_COLOR: s_edit.name_color = -1; break;
@@ -1027,6 +1277,7 @@ static void field_clear(int f)
     case F_EQUIP_BONUS: s_edit.equip_bonus = -1; break;
     case F_EQUIPS: s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; break;
     case F_BOOST: s_edit.boost_set = 0; for (int t = 0; t < 20; t++) s_edit.boost[t] = PSX_CARD_PACK_BOOST_UNSET; break;
+    case F_FIELD_TARGETS: s_edit.field_targets_set = 0; s_edit.field_target_n = 0; break;
     case F_TRAP_MAX: s_edit.trap_atk_max = -1; break;
     case F_IMMUNE: s_edit.immune = -1; break;
     default:
@@ -1055,6 +1306,13 @@ static void field_text(int f, int stock, char *out, size_t cap)
     case F_LEVEL: snprintf(out, cap, "%d", set ? s_edit.level : s_stock.level); break;
     case F_ATTR: snprintf(out, cap, "%s", psx_card_packs_attribute_name(set ? s_edit.attribute : s_stock.attribute)); break;
     case F_PRICE: snprintf(out, cap, "%d", set ? s_edit.price : s_stock.price); break;
+    case F_SELL_PRICE: {
+        const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+        int derived = psx_card_packs_derive_sell_price(purchase);
+        if (derived < 0) derived = 0;
+        snprintf(out, cap, "%d", set ? s_edit.sell_price : derived);
+        break;
+    }
     case F_PASSWORD: snprintf(out, cap, "%s", set ? s_edit.password : (s_stock.password[0] ? s_stock.password : "none")); break;
     case F_COLOR: snprintf(out, cap, "%s", psx_card_packs_color_name(set ? s_edit.color : (stock ? s_stock.color : psx_card_colors_slot(s_sel)))); break;
     case F_NAME_COLOR: snprintf(out, cap, "%s", psx_card_packs_name_color_name(set ? s_edit.name_color : PSX_CARD_NAME_COLOR_WHITE)); break;
@@ -1083,6 +1341,10 @@ static void field_text(int f, int stock, char *out, size_t cap)
     case F_BOOST:
         if (set) psx_card_packs_format_boost(&s_edit, out, (unsigned)cap);
         else { PsxCardPack tmp; memset(&tmp, 0, sizeof tmp); memcpy(tmp.boost, s_stock.boost, sizeof tmp.boost); psx_card_packs_format_boost(&tmp, out, (unsigned)cap); }
+        break;
+    case F_FIELD_TARGETS:
+        if (set) snprintf(out, cap, "Edit list...  %d selected", s_edit.field_target_n);
+        else snprintf(out, cap, "Edit list...  stock type rules");
         break;
     case F_TRAP_MAX: snprintf(out, cap, "%d", set ? s_edit.trap_atk_max : s_stock.trap_atk_max); break;
     case F_IMMUNE: snprintf(out, cap, "%s", IMMUNE_LABEL[set ? s_edit.immune : 0]); break;
@@ -1406,10 +1668,19 @@ static void focus_commit(void)
     case F_DEF: if (v < 0 || v > 5110) { say("Defense is 0 to 5110"); return; } s_edit.defense = v / 10 * 10; break;
     case F_LEVEL: if (v < 0 || v > 12) { say("Level is 0 to 12"); return; } s_edit.level = v; break;
     case F_PRICE: if (v < 0 || v > 999999) { say("Price is 0 to 999999"); return; } s_edit.price = v; break;
+    case F_SELL_PRICE: if (v < 0 || v > 999999) { say("Sell price is 0 to 999999"); return; } s_edit.sell_price = v; break;
     case F_PASSWORD: {
         int ok = strlen(s_buf) == 8;
         for (int i = 0; ok && i < 8; i++) if (s_buf[i] < '0' || s_buf[i] > '9') ok = 0;
         if (!ok) { say("A password is 8 digits"); return; }
+        const int owner = password_owner(s_buf);
+        if (owner) {
+            char message[80];
+            snprintf(message, sizeof message,
+                     "Password already belongs to card %03d", owner);
+            say(message);
+            return;
+        }
         memcpy(s_edit.password, s_buf, 9);
         break;
     }
@@ -1452,6 +1723,10 @@ static void focus_commit(void)
 static void do_save(void)
 {
     if (s_focus >= 0) focus_commit();
+    {
+        char err[192];
+        if (!psx_card_packs_validate(&s_edit, err, sizeof err)) { say(err); return; }
+    }
     if (!is_monster()) {
         /* nothing the game would draw; do not carry stale monster numbers */
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.level = s_edit.attribute = -1;
@@ -1460,6 +1735,7 @@ static void do_save(void)
     if (!field_fits(F_EFFECT)) { s_edit.effect = s_edit.amount = s_edit.target = s_edit.terrain = -1; s_edit.ritual_set = 0; }
     if (!field_fits(F_EQUIPS)) { s_edit.equip_bonus = -1; s_edit.equips_set = 0; s_edit.equip_types = 0; s_edit.equip_n = 0; }
     if (!field_fits(F_BOOST))  s_edit.boost_set = 0;
+    if (!field_fits(F_FIELD_TARGETS)) { s_edit.field_targets_set = 0; s_edit.field_target_n = 0; }
     if (!field_fits(F_TRAP_MAX)) s_edit.trap_atk_max = -1;
     if (!is_monster()) {
         s_edit.battle = -1; s_edit.immune = -1;
@@ -1575,12 +1851,16 @@ static void do_effect_text(void)
     int replaced = 0;
     if (strlen(out) > PSX_CARD_PACK_DESC_MAX) { snprintf(out, sizeof out, "%s", fx); replaced = 1; }
     if (strlen(out) > PSX_CARD_PACK_DESC_MAX) { say("The effect text alone is longer than a description can be"); return; }
-    snprintf(s_edit.description, sizeof s_edit.description, "%s", out);
-    s_changed = 1; s_dirty = 1;
     int lines = 0, longest = 0, wide = 0;
     const int fits = psx_card_packs_desc_layout(out, &lines, &longest, &wide);
+    if (!fits) {
+        char err[160];
+        (void)psx_card_packs_validate_description(out, err, sizeof err);
+        say(err); return;
+    }
+    snprintf(s_edit.description, sizeof s_edit.description, "%s", out);
+    s_changed = 1; s_dirty = 1;
     if (replaced) say("The old text and the effect did not both fit: the description is now the effect text");
-    else if (!fits) say("Effect text added; the card shows 6 lines, so trim the text above it");
     else say("Effect text added to the description");
 }
 
@@ -1804,7 +2084,9 @@ static void draw_editor(void)
     const Layout *L = &s_L;
     const PsxUiFace *ft = face_title(), *fb = face_body(), *fs = face_small();
     psx_ui_round_rect(&s_cv, L->ed.x, L->ed.y, L->ed.w, L->ed.h, (float)px(U_R_PANEL), COL_PANEL);
-    const int ex = L->ed.x + px(U_PAD), right = L->ed.x + L->ed.w - px(U_PAD);
+    const int ex = L->ed.x + px(U_PAD);
+    const int panel_right = L->ed.x + L->ed.w - px(U_PAD);
+    const int right = L->form_right ? L->form_right : panel_right;
     /* header */
     {
         char h[96]; snprintf(h, sizeof h, "%sCard %03d", psx_card_packs_is_dev() ? "[Card Effects] " : "", s_sel);
@@ -1827,14 +2109,14 @@ static void draw_editor(void)
     /* previews */
     if (s_tab == 0) {
     psx_ui_round_rect(&s_cv, L->art.x - 2, L->art.y - 2, L->art.w + 4, L->art.h + 4, (float)px(U_R_BOX), COL_EDIT_BG);
-    if (s_art_ok) psx_ui_blit_scaled(&s_cv, L->art.x, L->art.y, L->art.w, L->art.h, (float)px(4.0f), s_art_argb, 102, 96);
+    if (s_art_ok) blit_integer_preview(&s_cv, &L->art, s_art_argb, 102, 96);
     psx_ui_round_rect(&s_cv, L->thumb.x - 2, L->thumb.y - 2, L->thumb.w + 4, L->thumb.h + 4, (float)px(4.0f), COL_EDIT_BG);
-    if (s_thumb_ok) psx_ui_blit_scaled(&s_cv, L->thumb.x, L->thumb.y, L->thumb.w, L->thumb.h, (float)px(3.0f), s_thumb_argb, 40, 32);
+    if (s_thumb_ok) blit_integer_preview(&s_cv, &L->thumb, s_thumb_argb, 40, 32);
     psx_ui_text(&s_cv, L->thumb.x, L->thumb.y + L->thumb.h + px(4.0f) + psx_ui_font_ascent(fs), "duel", COL_DIM, fs);
     {
         const int lh = psx_ui_font_line_height(fs);
         int y = L->info_y;
-        const int iw = right - L->info_x;
+        const int iw = panel_right - L->info_x;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_art ? "Face art: yours" : "Face art: stock", s_edit.has_art ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_thumb ? "Duel thumbnail: yours" : "Duel thumbnail: stock", s_edit.has_thumb ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours (96x14)" : "Title strip: from the name (96x14)", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
@@ -1889,9 +2171,9 @@ static void draw_editor(void)
             int lines = 0, longest = 0, wide = 0;
             const int ok = psx_card_packs_desc_layout(txt, &lines, &longest, &wide);
             char w[160];
-            if (wide) snprintf(w, sizeof w, "Line %d is %d characters; the card shows 20 per line", wide, longest);
+            if (wide) snprintf(w, sizeof w, "Line %d is %d characters; the card shows %d per line", wide, longest, PSX_CARD_PACK_DESC_COLS);
             else if (lines > PSX_CARD_PACK_DESC_LINES) snprintf(w, sizeof w, "%d lines; the card shows %d", lines, PSX_CARD_PACK_DESC_LINES);
-            else snprintf(w, sizeof w, "%d of %d lines, longest %d of 20 characters", lines, PSX_CARD_PACK_DESC_LINES, longest);
+            else snprintf(w, sizeof w, "%d of %d lines, longest %d of %d characters", lines, PSX_CARD_PACK_DESC_LINES, longest, PSX_CARD_PACK_DESC_COLS);
             psx_ui_text_clip(&s_cv, v->x, v->y + v->h + px(2.0f) + psx_ui_font_ascent(fs), w, ok ? COL_DIM : COL_WARN, fs, right - v->x);
         }
         if (field_is_enum(f) && !no_steppers(f)) {
@@ -1920,11 +2202,34 @@ static void draw_editor(void)
             psx_ui_round_rect(&s_cv, c->x, c->y, c->w, c->h, c->h * 0.5f, COL_BTN); draw_cross(c, COL_TEXT);
             if (f != F_DESC && !is_rulef(f)) {
                 char st[PSX_CARD_PACK_DESC_MAX + 8]; field_text(f, 1, st, sizeof st);
-                char s2[PSX_CARD_PACK_DESC_MAX + 16]; snprintf(s2, sizeof s2, "stock: %s", st);
+                char s2[PSX_CARD_PACK_DESC_MAX + 32];
+                if (f == F_SELL_PRICE) {
+                    const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+                    int derived = psx_card_packs_derive_sell_price(purchase);
+                    int effective = psx_card_shop_effective_sell_price(s_sel, NULL);
+                    if (derived < 0) derived = 0;
+                    if (effective >= 0 && effective < s_edit.sell_price)
+                        snprintf(s2, sizeof s2, "override; shop cap: %d", effective);
+                    else
+                        snprintf(s2, sizeof s2, "override; derived: %d", derived);
+                } else
+                    snprintf(s2, sizeof s2, "stock: %s", st);
                 const int sx = c->x + c->w + px(8.0f);
                 const int lim = right;
                 if (lim - sx > px(30.0f)) psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs), s2, COL_DIM, fs, lim - sx);
             }
+        } else if (f == F_SELL_PRICE) {
+            const int sx = v->x + v->w + px(8.0f);
+            char note[96];
+            const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+            const int derived = psx_card_packs_derive_sell_price(purchase);
+            const int effective = psx_card_shop_effective_sell_price(s_sel, NULL);
+            if (effective >= 0 && effective < derived)
+                snprintf(note, sizeof note, "derived; shop cap: %d", effective);
+            else
+                snprintf(note, sizeof note, "derived: floor(Price / 8)");
+            psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs),
+                             note, COL_DIM, fs, right - sx);
         }
     }
     if (L->fx_note_y) {
@@ -1940,14 +2245,18 @@ static void draw_editor(void)
             for (char *q = fx; *q; q++) if (*q == '|') *q = ' ';
             int lines = 0, longest = 0, wide = 0;
             const int fits = psx_card_packs_desc_layout(fx, &lines, &longest, &wide);
-            char head[96]; snprintf(head, sizeof head, fits ? "Card text (%d of 6 lines):" : "Card text: %d lines, the card shows 6 (trim the description or the rules):", lines);
+            char head[128];
+            snprintf(head, sizeof head,
+                     fits ? "Card text (%d of %d lines):" :
+                            "Card text: %d lines, the card shows %d (trim the description or the rules):",
+                     lines, PSX_CARD_PACK_DESC_LINES);
             psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), head, fits ? COL_DIM : COL_WARN, fs);
             draw_wrapped(ex, L->preview_y + psx_ui_font_line_height(fs), right - ex, fx, COL_TEXT, fs, 3);
         } else psx_ui_text(&s_cv, ex, L->preview_y + psx_ui_font_ascent(fs), "Card text: none yet.", COL_DIM, fs);
     }
     for (int b = 0; b < B_COUNT; b++)
         if (L->btn[b].w) draw_button_face(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b,
-                         b >= B_BAR_FIRST ? face_small() : face_bold());
+                         face_bold());
     /* status + help, wrapped to the panel */
     {
         int y = L->status_y;
@@ -2055,6 +2364,87 @@ static void draw_dropdown(void)
     }
 }
 
+static void draw_target_picker(void)
+{
+    const Layout *L = &s_L;
+    const PsxUiFace *fb = face_body(), *fs = face_small(), *ft = face_title();
+    psx_ui_fill(&s_cv, 0, 0, s_w, s_h, 0xB8000000u);
+    psx_ui_round_rect_shadow(&s_cv, L->target_modal.x, L->target_modal.y,
+                             L->target_modal.w, L->target_modal.h,
+                             (float)px(U_R_PANEL), COL_PANEL, px(6.0f));
+    psx_ui_round_rect(&s_cv, L->target_modal.x, L->target_modal.y,
+                      L->target_modal.w, L->target_modal.h,
+                      (float)px(U_R_PANEL), COL_PANEL);
+    char head[160];
+    snprintf(head, sizeof head, "Affected creatures  -  %d selected",
+             s_target_selected_n);
+    psx_ui_text(&s_cv, L->target_modal.x + px(14.0f),
+                L->target_modal.y + px(10.0f) + psx_ui_font_ascent(ft),
+                head, COL_ACCENT, ft);
+    psx_ui_round_rect(&s_cv, L->target_search.x, L->target_search.y,
+                      L->target_search.w, L->target_search.h,
+                      (float)px(U_R_BOX), COL_EDIT_BG);
+    psx_ui_round_rect_line(&s_cv, L->target_search.x, L->target_search.y,
+                           L->target_search.w, L->target_search.h,
+                           (float)px(U_R_BOX), COL_ACCENT, 1.0f);
+    char search[80];
+    if (s_target_search[0])
+        snprintf(search, sizeof search, "%s%s  (%d matches)", s_target_search,
+                 s_caret_on ? "|" : "", s_target_n);
+    else snprintf(search, sizeof search,
+                  "Type a card name, ID, type or attribute to filter...");
+    text_in(&L->target_search, px(7.0f), search,
+            s_target_search[0] ? COL_TEXT : COL_DIM, fs);
+
+    const int vis = target_visible_rows();
+    for (int i = 0; i < vis && s_target_scroll + i < s_target_n; i++) {
+        const int row = s_target_scroll + i;
+        const int id = s_target_order[row];
+        const int y = L->target_rows.y + i * L->row_h;
+        Rect rr = { L->target_rows.x, y, L->target_rows.w, L->row_h };
+        if (row == s_target_hover)
+            psx_ui_round_rect(&s_cv, rr.x, rr.y, rr.w, rr.h,
+                              rr.h * 0.5f, COL_HOVER);
+        const int box = px(11.0f), bx = rr.x + px(6.0f), by = y + (rr.h - box) / 2;
+        psx_ui_round_rect_line(&s_cv, bx, by, box, box, (float)px(2.0f),
+                               s_target_selected[id] ? COL_ACCENT : COL_DIM, 1.0f);
+        if (s_target_selected[id])
+            psx_ui_fill(&s_cv, bx + px(2.0f), by + px(2.0f),
+                        box - px(4.0f), box - px(4.0f), COL_ACCENT);
+        char label[120];
+        snprintf(label, sizeof label, "%03d  %s", id,
+                 psx_card_packs_display_name(id));
+        psx_ui_text_clip(&s_cv, bx + box + px(7.0f),
+                         psx_ui_baseline_in(y, rr.h, fb), label, COL_TEXT, fb,
+                         rr.w - box - px(155.0f));
+        char kind[80];
+        snprintf(kind, sizeof kind, "%s / %s",
+                 psx_card_packs_type_name(target_card_type(id)),
+                 psx_card_packs_attribute_name(target_card_attr(id)));
+        const int kw = psx_ui_font_text_w(fs, kind);
+        psx_ui_text(&s_cv, rr.x + rr.w - px(7.0f) - kw,
+                    psx_ui_baseline_in(y, rr.h, fs), kind, COL_DIM, fs);
+    }
+    if (!s_target_n) {
+        Rect row = { L->target_rows.x + px(6.0f), L->target_rows.y,
+                     L->target_rows.w, L->row_h };
+        text_in(&row, 0, "No creatures match this filter", COL_DIM, fb);
+    }
+    if (s_target_n > vis) {
+        int th = L->target_sb.h * vis / s_target_n;
+        if (th < px(12.0f)) th = px(12.0f);
+        const int max = s_target_n - vis;
+        const int ty = L->target_sb.y + (L->target_sb.h - th) * s_target_scroll / max;
+        psx_ui_round_rect(&s_cv, L->target_sb.x, ty, L->target_sb.w, th,
+                          L->target_sb.w * 0.5f, COL_THUMB);
+    }
+    draw_button(&L->target_select, "Select filtered", 0, 0);
+    draw_button(&L->target_remove, "Remove filtered", 0, 0);
+    draw_button(&L->target_clear, "Clear all", 0, 0);
+    draw_button(&L->target_cancel, "Cancel", 0, 0);
+    draw_button(&L->target_apply, "Apply", 1, 0);
+}
+
 static void draw_modal(void)
 {
     const Layout *L = &s_L;
@@ -2116,8 +2506,11 @@ static void draw(void)
     draw_bar();
     draw_list();
     draw_editor();
-    draw_dropdown();
-    if (s_modal) draw_modal();
+    if (s_target_open) draw_target_picker();
+    else {
+        draw_dropdown();
+        if (s_modal) draw_modal();
+    }
 }
 
 /* --- input -------------------------------------------------------------------- */
@@ -2140,6 +2533,23 @@ static void click(int x, int y, int button, int clicks)
 {
     layout_compute();
     const Layout *L = &s_L;
+    if (s_target_open) {
+        if (in_rect(&L->target_select, x, y)) target_picker_filtered(1);
+        else if (in_rect(&L->target_remove, x, y)) target_picker_filtered(0);
+        else if (in_rect(&L->target_clear, x, y)) target_picker_clear();
+        else if (in_rect(&L->target_cancel, x, y)) { s_target_open = 0; s_dirty = 1; }
+        else if (in_rect(&L->target_apply, x, y)) target_picker_apply();
+        else if (in_rect(&L->target_rows, x, y)) {
+            const int row = s_target_scroll + (y - L->target_rows.y) / L->row_h;
+            if (row >= 0 && row < s_target_n) {
+                const int id = s_target_order[row];
+                s_target_selected[id] ^= 1u;
+                s_target_selected_n += s_target_selected[id] ? 1 : -1;
+                s_dirty = 1;
+            }
+        }
+        return;
+    }
     if (s_modal) {
         if (in_rect(&L->modal_ok, x, y)) finish_import(1);
         else if (in_rect(&L->modal_cancel, x, y)) finish_import(0);
@@ -2192,7 +2602,8 @@ static void click(int x, int y, int button, int clicks)
     for (int f = 0; f < F_COUNT; f++) {
         if (!field_applies(f)) continue;
         if (in_rect(&L->value[f], x, y)) {
-            if (field_is_enum(f)) {
+            if (f == F_FIELD_TARGETS) target_picker_open();
+            else if (field_is_enum(f)) {
                 if (button == 3 && !no_steppers(f)) field_step(f, -1);
                 else drop_open(f);
             } else { focus_begin(f); s_car = text_index_at(x, y); s_anchor = -1; s_drag_text = 1; }
@@ -2249,14 +2660,18 @@ static void to_canvas(float wx, float wy, int *cx, int *cy)
 {
     int ww = 0, wh = 0;
     SDL_GetWindowSize(s_win, &ww, &wh);
+    wh = psx_fm_editor_content_height(wh);
     *cx = (ww > 0 && s_w > 0) ? (int)(wx * (float)s_w / (float)ww + 0.5f) : (int)wx;
     *cy = (wh > 0 && s_h > 0) ? (int)(wy * (float)s_h / (float)wh + 0.5f) : (int)wy;
 }
 
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_CARDS, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN:
@@ -2271,6 +2686,15 @@ static int on_event(const void *evp)
     case SDL_MOUSEMOTION: {
         if (ev->motion.windowID != id) return 0;
         int x, y; to_canvas((float)ev->motion.x, (float)ev->motion.y, &x, &y);
+        if (s_target_open) {
+            int hover = -1;
+            if (in_rect(&s_L.target_rows, x, y)) {
+                hover = s_target_scroll + (y - s_L.target_rows.y) / s_L.row_h;
+                if (hover >= s_target_n) hover = -1;
+            }
+            if (hover != s_target_hover) { s_target_hover = hover; s_dirty = 1; }
+            return 1;
+        }
         if (s_sb_drag) { set_scroll_from_thumb(y); return 1; }
         if (s_drag_text && s_focus >= 0) {
             /* dragging selects */
@@ -2303,8 +2727,15 @@ static int on_event(const void *evp)
 #if defined(PSX_SDL3)
         const int mx = (int)ev->wheel.mouse_x;
 #else
-        int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+        int mx = 0; SDL_GetMouseState(&mx, NULL);
 #endif
+        if (s_target_open) {
+            s_target_scroll += ev->wheel.y > 0 ? -3 : 3;
+            target_clamp_scroll();
+            s_target_hover = s_target_n ? s_target_scroll : -1;
+            s_dirty = 1;
+            return 1;
+        }
         if (s_drop >= 0) {
             const int mxs = drop_items() - DROP_ROWS;
             s_drop_scroll += ev->wheel.y > 0 ? -2 : 2;
@@ -2325,6 +2756,45 @@ static int on_event(const void *evp)
 #else
         const int key = (int)ev->key.keysym.sym;
 #endif
+        if (s_target_open) {
+            const int ctrl = (KEY_MOD(ev) & (KMOD_CTRL | KMOD_GUI)) != 0;
+            if (key == SDLK_ESCAPE) { s_target_open = 0; s_dirty = 1; }
+            else if (ctrl && key == 'a') target_picker_filtered(1);
+            else if (key == SDLK_DELETE) target_picker_filtered(0);
+            else if (key == SDLK_BACKSPACE) {
+                const size_t n = strlen(s_target_search);
+                if (n) { s_target_search[n - 1] = 0; s_target_scroll = 0; target_rebuild(); }
+            } else if (key == SDLK_PAGEUP || key == SDLK_PAGEDOWN) {
+                s_target_scroll += key == SDLK_PAGEUP ? -target_visible_rows() : target_visible_rows();
+                target_clamp_scroll();
+                s_target_hover = s_target_n ? s_target_scroll : -1;
+                s_dirty = 1;
+            } else if (key == SDLK_HOME || key == SDLK_END) {
+                s_target_scroll = key == SDLK_HOME ? 0 : s_target_n - target_visible_rows();
+                target_clamp_scroll();
+                s_target_hover = s_target_n ? (key == SDLK_HOME ? 0 : s_target_n - 1) : -1;
+                s_dirty = 1;
+            } else if (key == SDLK_DOWN || key == SDLK_UP) {
+                int h = s_target_hover;
+                if (h < 0) h = s_target_scroll;
+                else h += key == SDLK_DOWN ? 1 : -1;
+                if (h < 0) h = 0;
+                if (h >= s_target_n) h = s_target_n - 1;
+                s_target_hover = s_target_n ? h : -1;
+                if (h < s_target_scroll) s_target_scroll = h;
+                if (h >= s_target_scroll + target_visible_rows())
+                    s_target_scroll = h - target_visible_rows() + 1;
+                target_clamp_scroll();
+                s_dirty = 1;
+            } else if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) &&
+                       s_target_hover >= 0 && s_target_hover < s_target_n) {
+                const int id = s_target_order[s_target_hover];
+                s_target_selected[id] ^= 1u;
+                s_target_selected_n += s_target_selected[id] ? 1 : -1;
+                s_dirty = 1;
+            }
+            return 1;
+        }
         if (s_modal) {
             if (key == SDLK_ESCAPE) finish_import(0);
             else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) finish_import(1);
@@ -2362,7 +2832,7 @@ static int on_event(const void *evp)
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER) focus_commit();
             else if (key == SDLK_ESCAPE) { s_focus = -1; s_dirty = 1; }
             else if (text_key(key, (int)KEY_MOD(ev))) {}
-            else if (key == SDLK_TAB) { const int f = s_focus; focus_commit(); int nf = f + 1; while (nf < F_COUNT && (field_is_enum(nf) || !field_applies(nf))) nf++; if (nf < F_COUNT) focus_begin(nf); }
+            else if (key == SDLK_TAB) { const int f = s_focus; focus_commit(); int nf = f + 1; while (nf < F_COUNT && (nf == F_FIELD_TARGETS || field_is_enum(nf) || !field_applies(nf))) nf++; if (nf < F_COUNT) focus_begin(nf); }
             return 1;
         }
         if (key == SDLK_ESCAPE) {
@@ -2391,7 +2861,13 @@ static int on_event(const void *evp)
         for (const char *p = ev->text.text; *p; p++) {
             const unsigned char ch = (unsigned char)*p;
             if (ch < 32u || ch >= 127u) continue;
-            if (s_drop >= 0) {
+            if (s_target_open) {
+                const size_t n = strlen(s_target_search);
+                if (n + 1 < sizeof s_target_search) {
+                    s_target_search[n] = (char)ch; s_target_search[n + 1] = 0;
+                    s_target_scroll = 0; target_rebuild();
+                }
+            } else if (s_drop >= 0) {
                 const size_t l = strlen(s_drop_filter);
                 if (l + 1 < sizeof s_drop_filter) { s_drop_filter[l] = (char)ch; s_drop_filter[l + 1] = 0; s_drop_scroll = 0; s_drop_hover = -1; }
             } else if (s_focus >= 0) {
@@ -2426,10 +2902,9 @@ static void gl_capture(void)
     s_gl_win = SDL_GL_GetCurrentWindow();
     s_gl_ctx = SDL_GL_GetCurrentContext();
 }
-static int s_ren_software;      /* the window draws through its own surface: no context to put back */
+static int s_ren_software;
 static void gl_restore(void)
 {
-    if (s_ren_software) return;
     if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx)
         SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
 }
@@ -2446,7 +2921,10 @@ static int ensure_canvas(int w, int h)
     if (!s_tex) { free(s_px); s_px = NULL; s_w = s_h = 0; return 0; }
     s_w = w; s_h = h;
     s_u_base = (float)h / 480.0f;
-    if (s_u_base < 1.0f) s_u_base = 1.0f;
+    /* A 1080p desktop has only 540 logical pixels at 200%. The canvas is
+     * already density-scaled there, so permit smaller design units to keep
+     * every field, action and status line reachable at the minimum size. */
+    if (s_u_base < 0.60f) s_u_base = 0.60f;
     if (s_u_base > 8.0f) s_u_base = 8.0f;
     s_u = s_u_base;
     s_dirty = 1;
@@ -2480,8 +2958,9 @@ static void present_canvas(void)
 void psx_card_manager_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("Card Manager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    const int resume = s_suspended;
+    s_suspended = 0;
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_CARDS, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Card manager: no window", 2000); return; }
     gl_capture();
     /* The software renderer first: it draws through the window's own surface
@@ -2494,28 +2973,38 @@ void psx_card_manager_open(void)
     gl_restore();
     s_present_fail = 0;
     if (!s_ren) {
-        SDL_DestroyWindow(s_win); s_win = NULL;
+        psx_fm_editor_release(PSX_FM_PAGE_CARDS); s_win = NULL;
         host_osd_push("Card manager: no renderer", 2000);
         return;
     }
     if (!ensure_canvas(WIN_W, WIN_H)) { psx_card_manager_close(); return; }
-    rebuild_order();
-    load_editor();
+    if (!resume) {
+        rebuild_order();
+        load_editor();
+    } else {
+        /* Selection, search, edit buffer/caret, modal and unsaved fields stay
+         * authoritative while another FM Editor page is visible. */
+        s_dirty = 1;
+    }
     SDL_StartTextInput(s_win);
 }
 
 void psx_card_manager_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_CARDS); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) { s_suspended = 1; return; }
+    s_suspended = 0;
     s_hover_row = -1;
     s_hover_btn = -1;
     s_focus = -1;
+    s_target_open = 0;
     s_sb_drag = 0;
 }
 
@@ -2534,11 +3023,13 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) {
         if (!ensure_canvas(w, h)) { psx_card_manager_close(); return; }
     }
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; s_dirty = 1; }
     }
     if (s_pick_err[0]) {
@@ -2604,18 +3095,23 @@ int psx_card_manager_state_json(char *out, unsigned cap)
 {
     static char t[F_COUNT][FTEXT];
     for (int f = 0; f < F_COUNT; f++) field_text(f, 0, t[f], sizeof t[f]);
+    int effective_source = 0;
+    const int effective_sell = psx_card_shop_effective_sell_price(s_sel, &effective_source);
     if (s_win) layout_compute();
     unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"card\":%d,\"edited\":%d,\"changed\":%d,\"focus\":%d,\"buf\":\"%s\","
         "\"search\":\"%s\",\"rows\":%d,\"scroll\":%d,\"w\":%d,\"h\":%d,\"unit\":%.2f,\"msg\":\"%s\","
         "\"name\":\"%s\",\"desc\":\"%s\",\"atk\":\"%s\",\"def\":\"%s\",\"star1\":\"%s\",\"star2\":\"%s\",\"type\":\"%s\","
-        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"password\":\"%s\","
-        "\"color\":\"%s\",\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"trap_max\":\"%s\","
-        "\"art\":%d,\"thumb\":%d,\"title\":%d,\"presents\":%u,\"modal\":%d,\"geom\":{",
+        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"sell_price\":\"%s\",\"sell_price_source\":\"%s\","
+        "\"effective_sell_price\":%d,\"effective_sell_source\":%d,\"password\":\"%s\","
+        "\"color\":\"%s\",\"name_color\":\"%s\",\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"field_targets\":\"%.200s\",\"trap_max\":\"%s\","
+        "\"art\":%d,\"thumb\":%d,\"title\":%d,\"presents\":%u,\"modal\":%d,\"field_picker\":{\"open\":%d,\"selected\":%d,\"matches\":%d,\"scroll\":%d,\"filter\":\"%s\"},\"geom\":{",
         s_win != NULL, s_sel, s_has_pack, s_changed, s_focus, s_buf, s_search, s_order_n, s_scroll,
         s_w, s_h, s_u, s_msg, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
-        t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20],
-        s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal);
+        field_is_set(F_SELL_PRICE) ? "override" : "derived",
+        effective_sell, effective_source, t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20], t[21], t[22], t[23],
+        s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal,
+        s_target_open, s_target_selected_n, s_target_n, s_target_scroll, s_target_search);
     {
         char tr[6][256], bo[256];
         for (int i = 0; i < 6; i++) psx_card_packs_format_trigger(trig_at(i), tr[i], sizeof tr[i]);
@@ -2643,6 +3139,17 @@ int psx_card_manager_state_json(char *out, unsigned cap)
         if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "],\"modal_ok\":[%d,%d],\"modal_cancel\":[%d,%d]",
                                              s_L.modal_ok.x + s_L.modal_ok.w / 2, s_L.modal_ok.y + s_L.modal_ok.h / 2,
                                              s_L.modal_cancel.x + s_L.modal_cancel.w / 2, s_L.modal_cancel.y + s_L.modal_cancel.h / 2);
+        if (n < cap) n += (unsigned)snprintf(out + n, cap - n,
+            ",\"field_picker\":{\"modal\":[%d,%d,%d,%d],\"search\":[%d,%d,%d,%d],\"rows\":[%d,%d,%d,%d],\"row_h\":%d,\"select\":[%d,%d],\"remove\":[%d,%d],\"clear\":[%d,%d],\"cancel\":[%d,%d],\"apply\":[%d,%d]}",
+            s_L.target_modal.x, s_L.target_modal.y, s_L.target_modal.w, s_L.target_modal.h,
+            s_L.target_search.x, s_L.target_search.y, s_L.target_search.w, s_L.target_search.h,
+            s_L.target_rows.x, s_L.target_rows.y, s_L.target_rows.w, s_L.target_rows.h,
+            s_L.row_h,
+            s_L.target_select.x + s_L.target_select.w / 2, s_L.target_select.y + s_L.target_select.h / 2,
+            s_L.target_remove.x + s_L.target_remove.w / 2, s_L.target_remove.y + s_L.target_remove.h / 2,
+            s_L.target_clear.x + s_L.target_clear.w / 2, s_L.target_clear.y + s_L.target_clear.h / 2,
+            s_L.target_cancel.x + s_L.target_cancel.w / 2, s_L.target_cancel.y + s_L.target_cancel.h / 2,
+            s_L.target_apply.x + s_L.target_apply.w / 2, s_L.target_apply.y + s_L.target_apply.h / 2);
     }
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "}");
     return n < cap;
@@ -2653,6 +3160,7 @@ static void from_canvas(int cx, int cy, int *wx, int *wy)
 {
     int ww = 0, wh = 0;
     SDL_GetWindowSize(s_win, &ww, &wh);
+    wh = psx_fm_editor_content_height(wh);
     *wx = (s_w > 0 && ww > 0) ? (int)((long)cx * ww / s_w) : cx;
     *wy = (s_h > 0 && wh > 0) ? (int)((long)cy * wh / s_h) : cy;
 }
@@ -2673,7 +3181,7 @@ static int inject_button(int x, int y, int button, int down)
 #endif
     ev.button.clicks = 1;
     ev.button.x = x;
-    ev.button.y = y;
+    ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2691,7 +3199,7 @@ int psx_card_manager_move(int x, int y)
     ev.motion.windowID = SDL_GetWindowID(s_win);
     from_canvas(x, y, &x, &y);
     ev.motion.x = x;
-    ev.motion.y = y;
+    ev.motion.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2776,13 +3284,8 @@ int psx_card_manager_shot(const char *path)
     return 1;
 }
 
-static void row_activate(void) { psx_card_manager_open(); }
-
 PSX_MOD_CONSTRUCTOR(psx_card_manager_install)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Card manager \xe2\x80\x94 experimental",
-                                    "EXPERIMENTAL, may have bugs. Change a card's name, description, art, frame color, stats, stars, effects, price and password; export or import them",
-                                    row_activate);
     (void)psx_game_add_frame_hook(tick);
     (void)psx_game_add_event_hook(on_event);
 }

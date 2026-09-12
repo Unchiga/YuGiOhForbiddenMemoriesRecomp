@@ -39,6 +39,7 @@
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
 #include "psx_drop_edits.h"
+#include "psx_cpu_data.h"
 #include "psx_drop_missing_table.h"
 
 #include <stdio.h>
@@ -50,6 +51,7 @@
 #include "psx_game_hooks.h"
 #include "psx_video_menu.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
+#include "psx_ygo_netplay.h"
 
 #define INI_NAME "drop_missing_cards.ini"
 #define MAX_ADDS 64
@@ -69,6 +71,7 @@ static int      g_throttle = 0;     /* frames until the next check */
 static char g_status[128] = "not started";
 static char g_ini_path[1024] = "";
 static uint32_t g_last_fp = 0;      /* observability: last fingerprint seen */
+static unsigned g_last_edit_gen;    /* hot manager/import changes this duel */
 /* The same three-tier fingerprint of every duelist's STOCK tables, from the
  * baked drop database, computed on first use. Two pairs of duelists share
  * identical drop tables (they differ only by deck), so a match can name two
@@ -258,14 +261,27 @@ int psx_drop_missing_transform(int duelist, int tier, uint16_t *w)
  * everything lands in the same write. Split from the arithmetic above so
  * nothing but this touches guest memory. edit_rc reports the edit layer's
  * result the way the transform reports its own. */
-static int apply_tier(int duelist, int tier, int *edit_rc)
+static int apply_tier(int duelist, int tier, int from_stock, int *edit_rc)
 {
     const int table = tier + 1;        /* table 0 is the deck pool */
     uint16_t w[PSX_DROP_CARDS];
-    for (unsigned i = 0; i < PSX_DROP_CARDS; i++)
-        w[i] = psx_mod_read_half(tbl_addr(table, i));
+    if (from_stock) {
+        memset(w, 0, sizeof w);
+        const PsxDropDbDuelist *db = &PSX_DROP_DB[duelist];
+        for (int i = 0; i < db->count[tier]; i++) {
+            const PsxDropWeight *e = &db->tier[tier][i];
+            if (e->card >= 1 && e->card <= PSX_DROP_CARDS)
+                w[e->card - 1] = e->weight;
+        }
+    } else {
+        for (unsigned i = 0; i < PSX_DROP_CARDS; i++)
+            w[i] = psx_mod_read_half(tbl_addr(table, i));
+    }
 
-    int changed = 0;
+    /* A hot rebuild writes all three safe underlying bands so removing an
+     * old edit restores stock. A pending empty returns -5 and deliberately
+     * leaves this stock/mod table standing. */
+    int changed = from_stock;
     int rc = -1;
     if (g_enabled) {
         rc = psx_drop_missing_transform(duelist, tier, w);
@@ -432,11 +448,14 @@ void psx_drop_missing_reload(void)
 
 void psx_drop_missing_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     /* The tick also carries the viewer's drop-table edits into the game (see
      * apply_tier), so it keeps watching when the mod row is off but edits
      * exist. */
-    if (!g_enabled && !psx_drop_edits_any()) return;
+    const unsigned edit_gen = psx_drop_edits_generation();
+    const int reconcile = g_matched >= 0 && edit_gen != g_last_edit_gen;
+    if (!g_enabled && !psx_drop_edits_any() && !reconcile) return;
     ensure_loaded();
 
     /* Poll the whole fingerprint on a throttle rather than sampling a few
@@ -449,24 +468,40 @@ void psx_drop_missing_tick(void)
     g_throttle = 30;
 
     const uint32_t fp = resident_fingerprint();
-    if (fp == g_last_fp) return;              /* nothing moved */
+    if (fp == g_last_fp) {
+        if (!reconcile) return;                /* nothing moved */
+        int ok = 0;
+        for (int t = 0; t < 3; t++) {
+            g_tier_ok[t] = apply_tier(g_matched, t, 1, &g_edit_ok[t]);
+            if (g_tier_ok[t] == 1) ok++;
+        }
+        g_last_edit_gen = edit_gen;
+        g_last_fp = resident_fingerprint();
+        if (ok) {
+            g_applied++;
+            g_last_duelist = g_matched;
+            snprintf(g_status, sizeof(g_status), "updated live");
+        }
+        return;
+    }
     g_last_fp = fp;
     g_matched = -1;
     for (int r = match_resident(fp); r >= 0 && r < 39; r = -1) {
         g_matched = r;
         int ok = 0;
         for (int t = 0; t < 3; t++) {
-            g_tier_ok[t] = apply_tier(r, t, &g_edit_ok[t]);
+            g_tier_ok[t] = apply_tier(r, t, 0, &g_edit_ok[t]);
             if (g_tier_ok[t] == 1) ok++;
         }
         if (ok) {
             g_applied++;
             g_last_duelist = r;
             g_last_fp = resident_fingerprint();  /* our own write is not a change */
-            snprintf(g_status, sizeof(g_status), "applied to %s", PSX_DROP_DUELISTS[r].name);
+            snprintf(g_status, sizeof(g_status), "applied");
         } else {
             g_last_duelist = r;
         }
+        g_last_edit_gen = edit_gen;
         return;
     }
     /* not a stock table: either already ours, or not a duel table at all */
@@ -477,6 +512,10 @@ int psx_drop_missing_enabled(void) { return g_enabled; }
 int psx_drop_missing_state_json(char *out, unsigned cap)
 {
     if (!out || cap < 160u) return 0;
+    char last_name[PSX_CPU_NAME_MAX * 2 + 8];
+    if (g_last_duelist >= 0)
+        (void)psx_cpu_display_name_json(g_last_duelist, last_name, sizeof last_name);
+    else snprintf(last_name, sizeof last_name, "-");
     return snprintf(out, cap,
         "\"enabled\":%d,\"loaded\":%d,\"from_ini\":%d,\"applied\":%d,"
         "\"fingerprint\":\"0x%08X\",\"matched\":%d,"
@@ -485,7 +524,7 @@ int psx_drop_missing_state_json(char *out, unsigned cap)
         g_enabled, g_loaded, g_from_ini, g_applied,
         g_last_fp, g_matched, g_tier_ok[0], g_tier_ok[1], g_tier_ok[2],
         g_edit_ok[0], g_edit_ok[1], g_edit_ok[2],
-        (g_last_duelist >= 0) ? PSX_DROP_DUELISTS[g_last_duelist].name : "-",
+        last_name,
         g_status);
 }
 

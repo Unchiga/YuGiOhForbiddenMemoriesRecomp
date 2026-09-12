@@ -38,7 +38,8 @@
  *     handler runs (D_8009B220 bit 0x8000), then put back;
  *   - an equip's type list is answered from an entry hook on
  *     equip_table_lookup: the rebuilt table starts with a scratch group
- *     {0xFFFE, 1, 0}, and when the pair is allowed the hook points that
+ *     {0xFFFE, 1, 0}, omits each overridden stock group, and when an explicit
+ *     id/type/attribute list allows the pair the hook points that scratch
  *     group at the pair, so the stock scan says yes. The hook also sets the
  *     bonus immediates for the equip being resolved.
  *   Immediates are written with psx_mod_write_code_word, which sends that
@@ -63,6 +64,7 @@
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
 #include "psx_lp_popup.h"
+#include "psx_ygo_netplay.h"
 
 #define CARD_COUNT 722
 #define SECTOR 2048
@@ -83,6 +85,7 @@
 #define KILL_TAB       0x80090A4Cu   /* u8[16] */
 #define CLASS_TAB      0x80090AD4u   /* u8[101] */
 #define FX_STATE       0x8009B220u   /* u16, bit 0x8000 = a handler is running */
+#define MODE_BYTE      0x8009B26Cu   /* 0xC3 = duel screen */
 #define MALUS_WORD     0x80025E60u   /* addiu v0,v0,-500  (Spellbinding Circle path) */
 #define EQ_WORD_TARGET 0x8001A7F8u   /* addiu v0,zero,500 */
 #define EQ_WORD_PEND   0x8001A494u   /* addiu v0,v0,500   pending bonus */
@@ -91,6 +94,12 @@
 #define HOOK_MAGIC     0x80026BA4u
 #define HOOK_EQUIP     0x80019A08u
 #define STATS_STOCK    0x801D4244u
+#define DUEL_ROWS      0x801A7AD8u
+#define DUEL_ROW_SIZE  0x1Cu
+#define DUEL_TERRAIN   0x8009B364u
+#define ROW_CARD       0x0Cu
+#define ROW_TERRAIN    0x14u
+#define ROW_FLAGS      0x16u
 
 #define SCRATCH_KEY    0xFFFEu
 
@@ -127,10 +136,23 @@ static struct {
 } s_hold;
 static int s_malus_dirty;
 static int s_hold_amount;
+static int s_hold_stalled, s_holds_stalled, s_holds_cancelled;
+static uint32_t s_rng = 0xA341316Cu;
+static uint32_t s_state_mem;
+
+#define CFX_STATE_MAGIC   0x43465853u /* CFXS */
+#define CFX_STATE_VERSION 1u
+#define CFX_STATE_WORDS   32u
 
 /* the equip bonus in force */
 static int s_eq_active, s_eq_dirty, s_eq_bonus, s_eq_card;
 static uint16_t s_scratch_key = SCRATCH_KEY;
+
+/* Optional explicit card-ID eligibility for the active field spell. The
+ * stock game keys gDuel_aTerrainBoost only by monster type; this is applied
+ * to the dedicated per-row terrain modifier, never permanent card stats. */
+static int s_field_filter_active, s_field_filter_terrain;
+static unsigned s_field_filter_writes;
 
 /* hook log for the debug server */
 typedef struct { unsigned frame; uint32_t at; int a, b, out; } Ev;
@@ -142,6 +164,13 @@ static void ev(uint32_t at, int a, int b, int out)
 {
     Ev *e = &s_ev[s_ev_n++ & 15u];
     e->frame = s_frame; e->at = at; e->a = a; e->b = b; e->out = out;
+}
+
+static uint32_t rng_next(void)
+{
+    uint32_t x = s_rng ? s_rng : 0xA341316Cu;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return s_rng = x;
 }
 
 /* ---- helpers -------------------------------------------------------------- */
@@ -165,6 +194,57 @@ static const Fx *fx_of(int id)
     if (id < 1 || id > CARD_COUNT) return NULL;
     const Fx *f = s_fx[id];
     return (f && f->present) ? f : NULL;
+}
+
+static int field_target_has(const PsxCardPack *c, int id)
+{
+    if (!c || !c->field_targets_set || id < 1 || id > CARD_COUNT) return 0;
+    for (int i = 0; i < c->field_target_n; i++)
+        if ((int)c->field_target_ids[i] == id) return 1;
+    return 0;
+}
+
+static void field_target_apply(int filtered)
+{
+    const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
+    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
+    const PsxCardPack *cfg = (f && f->cfg.field_targets_set) ? &f->cfg : NULL;
+    if (filtered && !cfg) return;
+    for (int side = 0; side < 2; side++) {
+        for (int slot = 0; slot < 5; slot++) {
+            const int row_index = side * 15 + 5 + slot;
+            const uint32_t row = DUEL_ROWS + (uint32_t)row_index * DUEL_ROW_SIZE;
+            if (!(psx_mod_read_half(row + ROW_FLAGS) & 0x8000u)) continue;
+            const int id = (int)(psx_mod_read_half(row + ROW_CARD) & 0x3FFu);
+            const int type = card_type(id);
+            int amount = 0;
+            if (terrain >= 1 && terrain <= 6 && type >= 0 && type < 20 &&
+                (!filtered || field_target_has(cfg, id)))
+                amount = (int)(int8_t)s_want_terrain[type * 6 + terrain - 1] * 10;
+            if ((int)(int16_t)psx_mod_read_half(row + ROW_TERRAIN) != amount) {
+                psx_mod_write_half(row + ROW_TERRAIN, (uint16_t)(int16_t)amount);
+                s_field_filter_writes++;
+                ev(0xF1E1Du, id, side, amount);
+            }
+        }
+    }
+    s_field_filter_terrain = terrain;
+}
+
+static void field_target_tick(void)
+{
+    const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
+    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
+    const int active = f && f->cfg.field_targets_set;
+    if (active) {
+        field_target_apply(1);
+        s_field_filter_active = 1;
+    } else if (s_field_filter_active) {
+        /* Removing an override while its terrain remains active must not leave
+         * zeroed rows stale. Restore the ordinary type result once. */
+        field_target_apply(0);
+        s_field_filter_active = 0;
+    }
 }
 
 static uint8_t clamp_u8(long v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
@@ -263,7 +343,7 @@ const char *psx_card_effects_note(int id, int type)
     if (type == 21) return (id >= 681 && id <= 686) ? "A trap that stops an attacker at or under its ATK ceiling."
                                                      : "This trap is pure code (Goblin Fan, Simochi, Reverse Trap, Fake Trap): nothing to set.";
     if (type == 22 && fx_index(id) >= 0) return "A ritual: three material ids on your field become the result.";
-    if (id >= 330 && id <= 335) return "A field card: each monster type's boost while this field is up.";
+    if (id >= 330 && id <= 335) return "A field card: set each type's boost, then optionally choose exact creature IDs. No list keeps stock type rules.";
     if (type == 20 || type == 22) return (fx_index(id) >= 0) ? "A magic card: pick what it does when played and how much."
                                                             : "Played as a spell: pick what it does and how much (a card born a monster cannot be a ritual or do nothing).";
     if (type < 20) return "Monster effects: how it fights, what it casts when summoned, destroyed, attacking or each turn, bonuses, immunities.";
@@ -274,7 +354,6 @@ const char *psx_card_effects_note(int id, int type)
 static void rebuild_equip_override(void)
 {
     static uint8_t stock[EQUIP_SECTORS * SECTOR], out[EQUIP_SECTORS * SECTOR];
-    static uint8_t seen[CARD_COUNT + 1];
     int any = 0;
     for (int id = 1; id <= CARD_COUNT; id++) {
         const Fx *f = fx_of(id);
@@ -290,7 +369,6 @@ static void rebuild_equip_override(void)
         for (int s = 0; s < EQUIP_SECTORS && ok; s++) ok = psx_mod_cd_read_stock_sector(EQUIP_LBA(k) + (uint32_t)s, stock + s * SECTOR);
         if (!ok) return;
         memset(out, 0xFF, sizeof out);
-        memset(seen, 0, sizeof seen);
         int o = 0, dropped = 0;
         #define PUT16(v) do { out[o++] = (uint8_t)(v); out[o++] = (uint8_t)((v) >> 8); } while (0)
         PUT16(SCRATCH_KEY); PUT16(1); PUT16(0);
@@ -302,26 +380,16 @@ static void rebuild_equip_override(void)
             const int cnt = stock[p + 2] | (stock[p + 3] << 8);
             const int glen = 4 + 2 * cnt;
             const Fx *f = (key >= 1 && key <= CARD_COUNT) ? fx_of(key) : NULL;
-            if (f && f->cfg.equips_set) {
-                seen[key] = 1;
-                if (f->cfg.equip_n > 0) {
-                    if (o + 4 + 2 * f->cfg.equip_n + 2 <= EQUIP_USED) {
-                        PUT16(key); PUT16(f->cfg.equip_n);
-                        for (int i = 0; i < f->cfg.equip_n; i++) PUT16(f->cfg.equip_ids[i]);
-                    } else dropped++;
-                }
+            if (f && (f->cfg.equips_set || f->cfg.equip_types)) {
+                /* The entry hook answers every overridden group through the
+                 * scratch record. Omitting it here is both exact for an empty
+                 * list and lets a 621-monster batch list fit: expanding that
+                 * list into the stock table can exceed the guest's fixed
+                 * 0x2100-byte buffer and used to drop an entire group. */
             } else if (o + glen + 2 <= EQUIP_USED) {
                 memcpy(out + o, stock + p, (size_t)glen); o += glen;
             } else dropped++;
             p += glen;
-        }
-        for (int id = 1; id <= CARD_COUNT; id++) {
-            const Fx *f = fx_of(id);
-            if (!f || !f->cfg.equips_set || seen[id] || f->cfg.equip_n <= 0) continue;
-            if (o + 4 + 2 * f->cfg.equip_n + 2 <= EQUIP_USED) {
-                PUT16(id); PUT16(f->cfg.equip_n);
-                for (int i = 0; i < f->cfg.equip_n; i++) PUT16(f->cfg.equip_ids[i]);
-            } else dropped++;
         }
         PUT16(0);
         #undef PUT16
@@ -408,7 +476,7 @@ static void rebuild(void)
         int present = 0;
         if (have) {
             present = c.effect >= 0 || c.amount >= 0 || c.equip_bonus >= 0 || c.equips_set || c.equip_types ||
-                      c.boost_set || c.trap_atk_max >= 0 || c.ritual_set;
+                      c.boost_set || c.field_targets_set || c.trap_atk_max >= 0 || c.ritual_set;
         }
         if (present) {
             if (!s_fx[id]) s_fx[id] = (Fx *)calloc(1, sizeof(Fx));
@@ -507,6 +575,7 @@ static void eq_apply(void)
 
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     s_frame++;
     take_stock();
@@ -517,10 +586,21 @@ static void tick(void)
     for (int i = 0; i < 120; i++) assert_byte(TERRAIN_TAB + (uint32_t)i, s_want_terrain[i]);
     for (int i = 0; i < 6; i++)   assert_byte(TRAP_TAB + (uint32_t)i, s_want_trap[i]);
     for (int i = 0; i < 101; i++) assert_byte(CLASS_TAB + (uint32_t)i, s_want_class[i]);
+    if (psx_mod_read_byte(MODE_BYTE) == 0xC3u) field_target_tick();
+    else s_field_filter_active = 0;
     if (s_hold.active) {
         const int done = s_frame > s_hold.since + 2 && !(psx_mod_read_half(FX_STATE) & 0x8000u);
-        if ((done && !lp_popup_live() && s_frame > s_hold.since + 6) || s_frame > s_hold.since + 900) hold_release();
-        else { hold_apply(); popup_fix(); }
+        if (psx_mod_read_byte(MODE_BYTE) != 0xC3) {
+            hold_release(); s_holds_cancelled++; ev(0xCA11u, s_hold.kind, 0, 0);
+        } else if (done && !lp_popup_live() && s_frame > s_hold.since + 6) {
+            hold_release();
+        } else {
+            if (!s_hold_stalled && s_frame > s_hold.since + 900) {
+                s_hold_stalled = 1; s_holds_stalled++;
+                ev(0x57A11u, s_hold.kind, psx_mod_read_half(FX_STATE), 0);
+            }
+            hold_apply(); popup_fix();
+        }
     }
     eq_apply();
 }
@@ -534,6 +614,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
 {
     int proxy = -1;
     memset(&s_hold, 0, sizeof s_hold);
+    s_hold_stalled = 0;
     switch (fx) {
     case PSX_CARD_FX_HEAL:         proxy = 338; s_hold.heal = clamp_u8((amount >= 0 ? amount : 500) / 100); s_hold_amount = s_hold.heal * 100; break;
     case PSX_CARD_FX_DAMAGE:       proxy = 343; s_hold.burn = clamp_u8((amount >= 0 ? amount : 500) / 10); s_hold_amount = s_hold.burn * 10; break;
@@ -586,7 +667,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
         const int lp = psx_mod_read_half(lpat);
         int loss = 0;
         if (fx == PSX_CARD_FX_LOSE_LP) loss = amount >= 0 ? amount : 500;
-        else if (((unsigned)rand() ^ s_frame) & 1u) loss = lp / 2;
+        else if (rng_next() & 1u) loss = lp / 2;
         if (loss > lp) loss = lp;
         if (loss > 0) { psx_mod_write_half(lpat, (uint16_t)(lp - loss)); psx_lp_popup_show(loss, 0); }
         ev(0x700u, fx, loss, side);
@@ -604,6 +685,7 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
 
 static void hook_magic(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_stock_ok) return;
     const int id = (int)(int16_t)cpu->gpr[4];
@@ -635,10 +717,15 @@ int psx_card_effects_equip_scratch(void) { return s_equip_override; }
 
 int psx_card_effects_equip_fits(int equip, int mon)
 {
-    const Fx *f = fx_of(equip);
-    if (!f || !(f->cfg.equips_set || f->cfg.equip_types)) return -1;
-    for (int i = 0; i < f->cfg.equip_n; i++) if (f->cfg.equip_ids[i] == mon) return 1;
-    const uint32_t m = f->cfg.equip_types;
+    /* Read the authoritative pack, not the per-frame effect snapshot. The
+     * FM Editor is usable before gameplay has reached psx_mod_game_started(),
+     * and Save reloads the pack synchronously; consulting s_fx here made the
+     * editor show the previous list until the intro finished. The guest hook
+     * and every editor view now answer from the same current data. */
+    PsxCardPack c;
+    if (!psx_card_packs_get(equip, &c) || !(c.equips_set || c.equip_types)) return -1;
+    for (int i = 0; i < c.equip_n; i++) if (c.equip_ids[i] == mon) return 1;
+    const uint32_t m = c.equip_types;
     if (!m) return 0;
     if (m & PSX_CARD_PACK_EQUIP_ALL) return 1;
     const int tb = card_type(mon);
@@ -650,6 +737,7 @@ int psx_card_effects_equip_fits(int equip, int mon)
 
 int psx_card_effects_cast(int fx, int amount, int target, int terrain)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!s_stock_ok) return 0;
     const int proxy = fx_prepare(fx, amount, target, terrain, 1);
     if (proxy < 0) return 0;
@@ -666,6 +754,7 @@ int psx_card_effects_cast(int fx, int amount, int target, int terrain)
  * the scratch group, and set the bonus for the equip being resolved. */
 static void hook_equip(struct CPUState *cpu, uint32_t address)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_stock_ok) return;
     const int a = (int)cpu->gpr[4], b = (int)cpu->gpr[5];
@@ -676,12 +765,8 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
     if (s_equip_override) {
         const uint16_t k0 = psx_mod_read_half(EQUIP_RAM), c0 = psx_mod_read_half(EQUIP_RAM + 2);
         if (c0 == 1 && (k0 == SCRATCH_KEY || k0 == s_scratch_key)) {
-            int yes = 0;
-            if (fa && tb >= 0 && tb < 20) {
-                const uint32_t m = fa->cfg.equip_types;
-                const int attr = psx_mod_read_byte(psx_card_extend_aux_base() + (uint32_t)b) >> 4;
-                yes = (m & PSX_CARD_PACK_EQUIP_ALL) || (m & (1u << tb)) || (attr < 6 && (m & PSX_CARD_PACK_EQUIP_ATTR_BIT(attr)));
-            }
+            const int yes = (fa && tb >= 0 && tb < 20 &&
+                             psx_card_effects_equip_fits(a, b) > 0);
             const uint16_t key = yes ? (uint16_t)a : SCRATCH_KEY;
             psx_mod_write_half(EQUIP_RAM, key);
             psx_mod_write_half(EQUIP_RAM + 4, yes ? (uint16_t)b : 0);
@@ -697,7 +782,7 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
     eq_apply();
 }
 
-/* Wrap `text` into "|"-separated lines of at most 20 columns, appended to out. */
+/* Wrap `text` into "|"-separated lines at the card description width. */
 static void wrap_append(char *out, unsigned cap, const char *text)
 {
     unsigned n = (unsigned)strlen(out);
@@ -709,7 +794,7 @@ static void wrap_append(char *out, unsigned cap, const char *text)
         if (!*p) break;
         const char *e = p; while (*e && *e != ' ') e++;
         const int wl = (int)(e - p);
-        if (col && col + 1 + wl > 20) { out[n++] = '|'; col = 0; }
+        if (col && col + 1 + wl > PSX_CARD_PACK_DESC_COLS) { out[n++] = '|'; col = 0; }
         else if (col) { out[n++] = ' '; col++; }
         for (const char *q = p; q < e && n + 1 < cap; q++) { out[n++] = *q; col++; }
         p = e;
@@ -798,6 +883,12 @@ static int psx_card_effects_describe_body(const PsxCardPack *c, char *out, unsig
         char e[560]; snprintf(e, sizeof e, "Field: %s.", list);
         wrap_append(out, cap, e);
     }
+    if (c->field_targets_set) {
+        char e[120];
+        snprintf(e, sizeof e, "Field affects only %d selected creature%s.",
+                 c->field_target_n, c->field_target_n == 1 ? "" : "s");
+        wrap_append(out, cap, e);
+    }
     /* monster effects */
     {
         static const char *const when[6] = { "When summoned face-up", "When flipped face-up", "When destroyed", "When it attacks", "Each of your turns", "Each of the opponent's turns" };
@@ -853,11 +944,15 @@ int psx_card_effects_state_json(char *out, unsigned cap)
     for (int id = 1; id <= CARD_COUNT; id++) if (fx_of(id)) n_fx++;
     unsigned n = (unsigned)snprintf(out, cap,
         "\"ready\":%d,\"cards\":%d,\"equip_override\":%d,\"equip_bytes\":%d,\"equip_dropped\":%d,"
-        "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u},"
+        "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u,\"stalled\":%d},"
+        "\"holds_stalled\":%d,\"holds_cancelled\":%d,"
         "\"equip_bonus\":{\"active\":%d,\"bonus\":%d,\"card\":%d,\"dirty\":%d},\"scratch_key\":%u,\"frame\":%u,"
+        "\"field_targets\":{\"active\":%d,\"terrain\":%d,\"writes\":%u},"
         "\"fx_state\":%u,\"events\":[",
         s_stock_ok, n_fx, s_equip_override, s_equip_bytes, s_equip_dropped, s_ritual_override, s_ritual_records,
-        s_hold.active, s_hold.kind, s_hold.since, s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
+        s_hold.active, s_hold.kind, s_hold.since, s_hold_stalled, s_holds_stalled, s_holds_cancelled,
+        s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
+        s_field_filter_active, s_field_filter_terrain, s_field_filter_writes,
         s_stock_ok ? psx_mod_read_half(FX_STATE) : 0);
     const unsigned first = s_ev_n > 16u ? s_ev_n - 16u : 0u;
     for (unsigned i = first; i < s_ev_n && n + 80 < cap; i++) {
@@ -871,8 +966,81 @@ int psx_card_effects_state_json(char *out, unsigned cap)
     return n < cap;
 }
 
+/* The effect parameters and rewritten instruction immediates are host mirrors
+ * of guest-visible state. Keep those mirrors on the common full-machine state
+ * path so disk loads, rewind, and rollback all resume the same effect. */
+static void card_state_put(unsigned *i, uint32_t v)
+{
+    if (s_state_mem && *i < CFX_STATE_WORDS)
+        psx_mod_write_word(s_state_mem + 4u * (*i)++, v);
+}
+
+static uint32_t card_state_get(unsigned *i)
+{
+    if (!s_state_mem || *i >= CFX_STATE_WORDS) return 0;
+    return psx_mod_read_word(s_state_mem + 4u * (*i)++);
+}
+
+static void state_before_save(void)
+{
+    unsigned i = 0;
+    if (!s_state_mem) return;
+    for (unsigned j = 0; j < CFX_STATE_WORDS; j++)
+        psx_mod_write_word(s_state_mem + 4u * j, 0);
+    card_state_put(&i, CFX_STATE_MAGIC); card_state_put(&i, CFX_STATE_VERSION);
+    card_state_put(&i, s_frame); card_state_put(&i, s_rng);
+    card_state_put(&i, (uint32_t)s_hold.active); card_state_put(&i, s_hold.since);
+    card_state_put(&i, (uint32_t)s_hold.kind); card_state_put(&i, s_hold.heal);
+    card_state_put(&i, s_hold.burn); card_state_put(&i, s_hold.kill_id);
+    card_state_put(&i, s_hold.kill_arg); card_state_put(&i, s_hold.malus);
+    card_state_put(&i, (uint32_t)s_malus_dirty); card_state_put(&i, (uint32_t)s_hold_amount);
+    card_state_put(&i, (uint32_t)s_hold_stalled); card_state_put(&i, (uint32_t)s_holds_stalled);
+    card_state_put(&i, (uint32_t)s_holds_cancelled);
+    card_state_put(&i, (uint32_t)s_eq_active); card_state_put(&i, (uint32_t)s_eq_dirty);
+    card_state_put(&i, (uint32_t)s_eq_bonus); card_state_put(&i, (uint32_t)s_eq_card);
+    card_state_put(&i, s_scratch_key);
+    card_state_put(&i, (uint32_t)s_field_filter_active);
+    card_state_put(&i, (uint32_t)s_field_filter_terrain);
+}
+
+static void state_after_load(void)
+{
+    unsigned i = 0;
+    const uint32_t magic = card_state_get(&i), version = card_state_get(&i);
+    memset(&s_hold, 0, sizeof s_hold);
+    s_malus_dirty = s_hold_amount = s_hold_stalled = 0;
+    s_holds_stalled = s_holds_cancelled = 0;
+    s_eq_active = s_eq_dirty = s_eq_bonus = s_eq_card = 0;
+    s_field_filter_active = 0;
+    s_field_filter_terrain = 0;
+    s_field_filter_writes = 0;
+    s_scratch_key = SCRATCH_KEY; s_ev_n = 0;
+    if (magic != CFX_STATE_MAGIC || version != CFX_STATE_VERSION) {
+        s_frame = 0; s_rng = 0xA341316Cu;
+        return;
+    }
+    s_frame = card_state_get(&i); s_rng = card_state_get(&i);
+    s_hold.active = (int)card_state_get(&i); s_hold.since = card_state_get(&i);
+    s_hold.kind = (int)card_state_get(&i); s_hold.heal = (uint8_t)card_state_get(&i);
+    s_hold.burn = (uint8_t)card_state_get(&i); s_hold.kill_id = (uint8_t)card_state_get(&i);
+    s_hold.kill_arg = (uint8_t)card_state_get(&i); s_hold.malus = card_state_get(&i);
+    s_malus_dirty = (int)card_state_get(&i); s_hold_amount = (int)card_state_get(&i);
+    s_hold_stalled = (int)card_state_get(&i); s_holds_stalled = (int)card_state_get(&i);
+    s_holds_cancelled = (int)card_state_get(&i);
+    s_eq_active = (int)card_state_get(&i); s_eq_dirty = (int)card_state_get(&i);
+    s_eq_bonus = (int)card_state_get(&i); s_eq_card = (int)card_state_get(&i);
+    s_scratch_key = (uint16_t)card_state_get(&i);
+    /* These were trailing zeroes in older v1 snapshots. If the saved state
+     * had a filter but the package no longer does, the next tick restores the
+     * stock type result; an old snapshot with no filter remains untouched. */
+    s_field_filter_active = (int)card_state_get(&i);
+    s_field_filter_terrain = (int)card_state_get(&i);
+}
+
 PSX_MOD_CONSTRUCTOR(psx_card_effects_install)
 {
+    s_state_mem = psx_mod_alloc_guest_memory(CFX_STATE_WORDS * 4u, 4u);
+    (void)psx_mod_register_state_plugin("card_effects_state", state_before_save, state_after_load);
     (void)psx_mod_register_function_entry_plugin("card_effects_magic", HOOK_MAGIC, hook_magic);
     (void)psx_mod_register_function_entry_plugin("card_effects_equip", HOOK_EQUIP, hook_equip);
     (void)psx_game_add_frame_hook(tick);

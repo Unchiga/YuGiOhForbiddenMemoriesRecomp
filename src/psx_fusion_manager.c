@@ -272,7 +272,7 @@ static char s_ed_partner[8], s_ed_result[8];
  * someone who knows the card ids; this is the one for everybody else, and it
  * is what makes "delete this" and "add one" findable at all. */
 enum { CMA_NONE = 0, CMA_GOTO, CMA_CHANGE, CMA_DELETE, CMA_ADD, CMA_CLEARCARD, CMA_CLEARALL, CMA_SEP,
-       CMA_EQUIP_DEL, CMA_EQUIP_ADD, CMA_EQUIP_STOCK };
+       CMA_EQUIP_DEL, CMA_EQUIP_ADD, CMA_EQUIP_BATCH, CMA_EQUIP_STOCK };
 enum { CM_MAX = 12 };
 typedef struct { char label[96]; uint8_t action; uint16_t a, b; } CmItem;
 static CmItem s_cm[CM_MAX];
@@ -284,24 +284,29 @@ static int    s_cm_open;
  * only ever fills in what this would have. */
 enum { PICK_NONE = 0, PICK_PARTNER = 1, PICK_RESULT = 2,
        PICK_EQUIP_MON = 3,      /* a monster for the equip in s_pick_a */
-       PICK_EQUIP_EQ = 4 };     /* an equip for the monster in s_pick_a */
+       PICK_EQUIP_EQ = 4,       /* an equip for the monster in s_pick_a */
+       PICK_EQUIP_BATCH = 5 };  /* pending complete monster list for one equip */
 static int  s_pick_mode;
 static int  s_pick_a, s_pick_b;      /* the pair being built */
 static char s_pick_search[48];
 static int  s_pick_order[MAXID + 1];
 static int  s_pick_n, s_pick_scroll, s_pick_hover = -1;
+static uint8_t s_pick_selected[MAXID + 1];
+static int     s_pick_selected_n;
 /* PICK_RESULT offers "makes nothing" as a row above the cards, so deleting a
  * fusion is the same gesture as changing one. */
 #define PICK_NOTHING (-1)
 
-enum { BTN_BYCARD = 0, BTN_RECIPES, BTN_IMPORT, BTN_EXPORT, BTN_CLEAR, BTN_RESTORE, BTN_COUNT };
-static const char *const BTN_LABEL[BTN_COUNT] = { "By card", "Recipes", "Import" S_ELLIP, "Export" S_ELLIP, "Delete all" S_ELLIP, "Restore stock" S_ELLIP };
+enum { BTN_BYCARD = 0, BTN_RECIPES, BTN_IMPORT, BTN_EXPORT, BTN_CLEAR, BTN_CLEAR_EQUIPS, BTN_RESTORE, BTN_COUNT };
+static const char *const BTN_LABEL[BTN_COUNT] = { "By card", "Recipes", "Import" S_ELLIP, "Export" S_ELLIP,
+                                                  "Clear fusions" S_ELLIP, "Clear equips" S_ELLIP, "Restore stock" S_ELLIP };
 
 /* A modal ask, for the one action that cannot be undone from inside the
  * window. Everything else here is additive or reversible; throwing away a
  * whole edit set on a misclick is not, so it gets a dialog and a backup
  * file rather than one of the two. */
-enum { DLG_NONE = 0, DLG_RESTORE = 1, DLG_CLEAR = 2, DLG_CLEARCARD = 3 };
+enum { DLG_NONE = 0, DLG_RESTORE = 1, DLG_CLEAR = 2, DLG_CLEARCARD = 3,
+       DLG_CLEAR_EQUIPS = 4 };
 static int s_dlg_card;             /* which card DLG_CLEARCARD is about */
 static int s_dlg;
 static int s_hover_dlg = -1;       /* 0 cancel, 1 confirm */
@@ -318,6 +323,7 @@ enum { PANE_LIST = 0, PANE_MK = 1, PANE_FR = 2, PANE_COUNT = 3 };
 typedef struct {
     Rect cm;                                   /* the right-click menu */
     Rect pick, pick_search, pick_rows, pick_sb;
+    Rect pick_select, pick_remove, pick_clear, pick_cancel, pick_apply;
     Rect dlg, dlg_ok, dlg_cancel;
     Rect bar, search, btn[BTN_COUNT];
     Rect list, list_hdr, list_rows, list_sb;
@@ -525,6 +531,18 @@ static int card_type(int id)
 static int is_monster_id(int id) { const int t = card_type(id); return t >= 0 && t < 20; }
 static int is_equip_id(int id)   { return card_type(id) == 23; }
 
+/* A stock equip remains an equip-list authoring target even if the same
+ * card.ini also changes its displayed type. Clear-all must preserve that
+ * unrelated type edit while still clearing the disc's recipe group. */
+static int is_stock_equip_id(int id)
+{
+    int n = 0, groups = 0;
+    const PsxFusionEquip *eq = psx_fusion_table_equips(&n, &groups);
+    (void)groups;
+    for (int i = 0; eq && i < n; i++) if (eq[i].equip == id) return 1;
+    return 0;
+}
+
 /* Does this pack's equip list take monster m? (ids, type bits, attribute
  * bits, or every monster), the same test hook_equip in psx_card_effects.c
  * answers the game with. */
@@ -705,14 +723,29 @@ static void layout_compute(void)
         L->ed_result = (Rect){ bx + bw + px(8.0f) + tw(face_small(), "makes") + px(8.0f), by, bw, px(U_BTN_H) };
     }
 
-    {   /* the card chooser, centred, tall enough to be worth scrolling */
-        const int pw = px(430.0f), ph = px(330.0f);
+    {   /* the card chooser, centred, tall enough to be worth scrolling.
+         * Equip batch mode reserves a real action row: selection stays
+         * pending until Apply, so Clear/Remove can still be cancelled. */
+        const int pw = px(470.0f), ph = px(360.0f);
         L->pick = (Rect){ (s_w - pw) / 2, (s_h - ph) / 2, pw, ph };
         const int pad2 = px(12.0f), sbw2 = px(U_SB_W);
         L->pick_search = (Rect){ L->pick.x + pad2, L->pick.y + px(30.0f), pw - pad2 * 2, px(U_BTN_H) };
         const int ry = L->pick_search.y + L->pick_search.h + px(8.0f);
-        L->pick_rows = (Rect){ L->pick.x + pad2, ry, pw - pad2 * 2 - sbw2 - px(4.0f), L->pick.y + ph - pad2 - ry };
+        const int action_h = s_pick_mode == PICK_EQUIP_BATCH ? px(30.0f) : 0;
+        L->pick_rows = (Rect){ L->pick.x + pad2, ry, pw - pad2 * 2 - sbw2 - px(4.0f), L->pick.y + ph - pad2 - action_h - ry };
         L->pick_sb = (Rect){ L->pick.x + pw - pad2 - sbw2, ry, sbw2, L->pick_rows.h };
+        const int by2 = L->pick.y + ph - pad2 - px(20.0f), bg = px(6.0f);
+        int bx2 = L->pick.x + pad2;
+        int bw2 = tw(face_body(), "Select filtered") + px(16.0f);
+        L->pick_select = (Rect){ bx2, by2, bw2, px(20.0f) }; bx2 += bw2 + bg;
+        bw2 = tw(face_body(), "Remove filtered") + px(16.0f);
+        L->pick_remove = (Rect){ bx2, by2, bw2, px(20.0f) }; bx2 += bw2 + bg;
+        bw2 = tw(face_body(), "Clear all") + px(16.0f);
+        L->pick_clear = (Rect){ bx2, by2, bw2, px(20.0f) };
+        bw2 = tw(face_body(), "Apply") + px(18.0f);
+        L->pick_apply = (Rect){ L->pick.x + pw - pad2 - bw2, by2, bw2, px(20.0f) };
+        bw2 = tw(face_body(), "Cancel") + px(16.0f);
+        L->pick_cancel = (Rect){ L->pick_apply.x - bg - bw2, by2, bw2, px(20.0f) };
     }
     {   /* the right-click menu, at the pointer, nudged to stay on screen */
         const int iw = px(150.0f);
@@ -1222,6 +1255,8 @@ static void draw_footer(void)
 
 static int pick_extra(void);
 static int equip_pair_set(int equip, int mon, int on, char *err, unsigned cap);
+static int equip_list_save(int equip, const uint8_t selected[MAXID + 1],
+                           char *err, unsigned cap);
 static int equip_stock(int equip, char *err, unsigned cap);
 
 static void pick_rebuild(void)
@@ -1229,7 +1264,7 @@ static void pick_rebuild(void)
     s_pick_n = 0;
     for (int id = 1; id <= MAXID; id++) {
         if (!card_matches(id, s_pick_search)) continue;
-        if (s_pick_mode == PICK_EQUIP_MON && !is_monster_id(id)) continue;
+        if ((s_pick_mode == PICK_EQUIP_MON || s_pick_mode == PICK_EQUIP_BATCH) && !is_monster_id(id)) continue;
         if (s_pick_mode == PICK_EQUIP_EQ && !is_equip_id(id)) continue;
         s_pick_order[s_pick_n++] = id;
     }
@@ -1250,6 +1285,17 @@ static void pick_open(int mode, int a, int b)
     s_pick_b = b;
     s_pick_search[0] = 0;
     s_pick_scroll = 0;
+    if (mode == PICK_EQUIP_BATCH) {
+        memset(s_pick_selected, 0, sizeof s_pick_selected);
+        s_pick_selected_n = 0;
+        refresh_index(0);
+        for (int i = 0; i < s_eq_n; i++) {
+            const int mon = s_eq[i].mon;
+            if (s_eq[i].equip != a || mon < 1 || mon > MAXID || s_pick_selected[mon]) continue;
+            s_pick_selected[mon] = 1;
+            s_pick_selected_n++;
+        }
+    }
     pick_rebuild();
 }
 
@@ -1275,6 +1321,13 @@ static void pick_choose(int row)
         const int i = row - extra;
         if (i < 0 || i >= s_pick_n) return;
         id = s_pick_order[i];
+    }
+    if (s_pick_mode == PICK_EQUIP_BATCH) {
+        if (id < 1 || id > MAXID) return;
+        if (s_pick_selected[id]) { s_pick_selected[id] = 0; s_pick_selected_n--; }
+        else                     { s_pick_selected[id] = 1; s_pick_selected_n++; }
+        s_dirty = 1;
+        return;
     }
     if (s_pick_mode == PICK_PARTNER) {
         if (id == PICK_NOTHING) return;
@@ -1302,6 +1355,36 @@ static void pick_choose(int row)
     }
 }
 
+static void pick_batch_filtered(int on)
+{
+    if (s_pick_mode != PICK_EQUIP_BATCH) return;
+    for (int i = 0; i < s_pick_n; i++) {
+        const int id = s_pick_order[i];
+        if (!!s_pick_selected[id] == !!on) continue;
+        s_pick_selected[id] = on ? 1 : 0;
+        s_pick_selected_n += on ? 1 : -1;
+    }
+    s_dirty = 1;
+}
+
+static void pick_batch_clear(void)
+{
+    if (s_pick_mode != PICK_EQUIP_BATCH) return;
+    memset(s_pick_selected, 0, sizeof s_pick_selected);
+    s_pick_selected_n = 0;
+    s_dirty = 1;
+}
+
+static void pick_batch_apply(void)
+{
+    if (s_pick_mode != PICK_EQUIP_BATCH) return;
+    char err[512];
+    const int equip = s_pick_a;
+    if (!equip_list_save(equip, s_pick_selected, err, sizeof err)) { say(err); return; }
+    pick_close();
+    say(err);
+}
+
 static void draw_picker(void)
 {
     const Layout *L = &s_L;
@@ -1315,6 +1398,7 @@ static void draw_picker(void)
     if (s_pick_mode == PICK_PARTNER)        snprintf(head, sizeof head, "What does %s fuse with?", nm(s_pick_a));
     else if (s_pick_mode == PICK_EQUIP_MON) snprintf(head, sizeof head, "Which monster does %s fit?", nm(s_pick_a));
     else if (s_pick_mode == PICK_EQUIP_EQ)  snprintf(head, sizeof head, "Which equip fits %s?", nm(s_pick_a));
+    else if (s_pick_mode == PICK_EQUIP_BATCH) snprintf(head, sizeof head, "%s usable monsters  %s  %d selected", nm(s_pick_a), S_DASH, s_pick_selected_n);
     else                                    snprintf(head, sizeof head, "%s + %s makes" S_ELLIP, nm(s_pick_a), nm(s_pick_b));
     Rect t = { L->pick.x + px(12.0f), L->pick.y + px(8.0f), L->pick.w - px(24.0f), px(18.0f) };
     text_in(&t, 0, head, COL_TEXT, face_title());
@@ -1345,9 +1429,18 @@ static void draw_picker(void)
         const int base = psx_ui_baseline_in(y, L->row_h, fb);
         char idb[8];
         snprintf(idb, sizeof idb, "%03d", id);
-        psx_ui_text(&s_cv, L->pick_rows.x + px(6.0f), base, idb, COL_DIM, fb);
-        psx_ui_text_clip(&s_cv, L->pick_rows.x + px(38.0f), base, nm(id), COL_TEXT, fb,
-                         L->pick_rows.w - px(160.0f));
+        int tx = L->pick_rows.x + px(6.0f);
+        if (s_pick_mode == PICK_EQUIP_BATCH) {
+            const int bs = px(8.0f), by = y + (L->row_h - bs) / 2;
+            psx_ui_round_rect_line(&s_cv, tx, by, bs, bs, px(1.5f),
+                                   s_pick_selected[id] ? COL_ACCENT : COL_DIM, 1.0f * s_u);
+            if (s_pick_selected[id]) psx_ui_fill(&s_cv, tx + px(2.0f), by + px(2.0f),
+                                                 bs - px(4.0f), bs - px(4.0f), COL_ACCENT);
+            tx += px(14.0f);
+        }
+        psx_ui_text(&s_cv, tx, base, idb, COL_DIM, fb);
+        psx_ui_text_clip(&s_cv, tx + px(32.0f), base, nm(id), COL_TEXT, fb,
+                         L->pick_rows.x + L->pick_rows.w - (tx + px(32.0f)) - px(116.0f));
         char st[48];
         snprintf(st, sizeof st, "%d / %d", s_atk[id] < 0 ? 0 : s_atk[id], s_def[id] < 0 ? 0 : s_def[id]);
         text_right(L->pick_rows.x + L->pick_rows.w - px(6.0f), base, st, COL_DIM, face_small());
@@ -1357,6 +1450,13 @@ static void draw_picker(void)
         text_in(&r, 0, "No card matches that", COL_DIM, fb);
     }
     draw_scrollbar(SB_PICK);
+    if (s_pick_mode == PICK_EQUIP_BATCH) {
+        draw_button(&L->pick_select, "Select filtered", 0, 0);
+        draw_button(&L->pick_remove, "Remove filtered", 0, 0);
+        draw_button(&L->pick_clear, "Clear all", 0, 0);
+        draw_button(&L->pick_cancel, "Cancel", 0, 0);
+        draw_button(&L->pick_apply, "Apply", 1, 0);
+    }
 }
 
 /* --- the right-click menu -------------------------------------------------- */
@@ -1392,7 +1492,10 @@ static int cm_at(int x, int y)
     return -1;
 }
 
-static void dialog_open(int kind);   /* the confirm two of these items raise */
+static void dialog_open(int kind);   /* the confirm these destructive items raise */
+static int equip_clear_all_now(char *err, unsigned cap);
+static int equip_override_count(void);
+static int equip_restore_all_now(char *err, unsigned cap);
 
 static void cm_run(int i)
 {
@@ -1404,6 +1507,7 @@ static void cm_run(int i)
     case CMA_ADD:    if (it.a >= 1) { select_card(it.a, 1); pick_open(PICK_PARTNER, it.a, 0); } break;
     case CMA_CHANGE: pick_open(PICK_RESULT, it.a, it.b); break;
     case CMA_EQUIP_ADD: if (it.a >= 1) { select_card(it.a, 1); pick_open(is_equip_id(it.a) ? PICK_EQUIP_MON : PICK_EQUIP_EQ, it.a, 0); } break;
+    case CMA_EQUIP_BATCH: if (it.a >= 1 && is_equip_id(it.a)) { select_card(it.a, 1); pick_open(PICK_EQUIP_BATCH, it.a, 0); } break;
     case CMA_EQUIP_DEL: { char err[256]; (void)equip_pair_set(it.a, it.b, 0, err, sizeof err); say(err); break; }
     case CMA_EQUIP_STOCK: { char err[256]; (void)equip_stock(it.a, err, sizeof err); say(err); break; }
     case CMA_CLEARCARD: s_dlg_card = it.a; dialog_open(DLG_CLEARCARD); break;
@@ -1472,6 +1576,7 @@ static void right_click(int x, int y)
         }
         cm_add("Add a fusion" S_ELLIP, CMA_ADD, s_sel, 0);
         if (is_equip_id(s_sel)) {
+            cm_add("Batch edit usable monsters" S_ELLIP, CMA_EQUIP_BATCH, s_sel, 0);
             snprintf(buf, sizeof buf, "Add a monster %.30s fits" S_ELLIP, nm(s_sel));
             cm_add(buf, CMA_EQUIP_ADD, s_sel, 0);
             PsxCardPack pk;
@@ -1518,6 +1623,7 @@ static void right_click(int x, int y)
         snprintf(buf, sizeof buf, "Add a fusion for %.40s" S_ELLIP, nm(id));
         cm_add(buf, CMA_ADD, id, 0);
         if (is_equip_id(id)) {
+            cm_add("Batch edit usable monsters" S_ELLIP, CMA_EQUIP_BATCH, id, 0);
             snprintf(buf, sizeof buf, "Add a monster %.30s fits" S_ELLIP, nm(id));
             cm_add(buf, CMA_EQUIP_ADD, id, 0);
         } else if (is_monster_id(id)) {
@@ -1532,6 +1638,8 @@ static void right_click(int x, int y)
         cm_add("Delete every fusion in the game" S_ELLIP, CMA_CLEARALL, 0, 0);
     } else if (s_sel >= 1 && (in_rect(&L->mk, x, y) || in_rect(&L->mk_edit, x, y))) {
         cm_add("Add a fusion" S_ELLIP, CMA_ADD, s_sel, 0);
+        if (is_equip_id(s_sel))
+            cm_add("Batch edit usable monsters" S_ELLIP, CMA_EQUIP_BATCH, s_sel, 0);
         cm_add("Delete every fusion in the game" S_ELLIP, CMA_CLEARALL, 0, 0);
     } else {
         return;                          /* nothing sensible to offer here */
@@ -1569,14 +1677,23 @@ static void draw_dialog(void)
         snprintf(l1, sizeof l1, "%d recipe%s this card takes part in will be removed.",
                  s_mk_n, s_mk_n == 1 ? "" : "s");
         snprintf(l2, sizeof l2, "Equips are not affected, and Restore stock still undoes the lot.");
+    } else if (s_dlg == DLG_CLEAR_EQUIPS) {
+        okl = "Clear equips";
+        snprintf(head, sizeof head, "Clear every standard equip recipe?");
+        snprintf(l1, sizeof l1, "Every Equip card will explicitly fit zero monsters.");
+        snprintf(l2, sizeof l2, "Fusion recipes and other card edits stay; each equip's batch editor can restore or replace its list.");
     } else {
-        snprintf(head, sizeof head, "Restore the game's own fusion table?");
-        if (n || psx_fusion_table_cleared()) {
-            snprintf(l1, sizeof l1, "%d edit%s will be dropped and MODS " S_ARROW " Fusion edits switched off.",
-                     n, n == 1 ? "" : "s");
-            snprintf(l2, sizeof l2, "They are copied to fusion_edits_backup.txt first " S_DASH " Import brings them back.");
+        const int equips = equip_override_count();
+        snprintf(head, sizeof head, "Restore the game's fusion and Equip recipes?");
+        if (n || psx_fusion_table_cleared() || equips) {
+            snprintf(l1, sizeof l1, "%d fusion edit%s and %d Equip override%s will be removed.",
+                     n, n == 1 ? "" : "s", equips, equips == 1 ? "" : "s");
+            if (n || psx_fusion_table_cleared())
+                snprintf(l2, sizeof l2, "Fusion edits are backed up first; Equip cards return to their disc lists.");
+            else
+                snprintf(l2, sizeof l2, "Every edited Equip card returns to its disc usable-monster list.");
         } else {
-            snprintf(l1, sizeof l1, "There are no edits. This only switches the override off.");
+            snprintf(l1, sizeof l1, "There are no fusion or Equip recipe overrides to restore.");
             l2[0] = 0;
         }
     }
@@ -1618,37 +1735,133 @@ static void draw(void)
  * or taken out, written back as explicit ids. A list the pack spells as
  * types or "all" is expanded first, and a list past the pack's capacity is
  * refused rather than cut. Nothing here touches the fusion table. */
+static void equip_pack_load_or_init(int equip, PsxCardPack *pk)
+{
+    if (psx_card_packs_get(equip, pk)) return;
+    memset(pk, 0, sizeof *pk);
+    pk->id = equip;
+    pk->attack = pk->defense = pk->star1 = pk->star2 = pk->type =
+        pk->level = pk->attribute = pk->price = -1;
+    psx_card_packs_effects_reset(pk);
+}
+
+/* Save a COMPLETE explicit card-id list. This is the single mutation used by
+ * the batch dialog, pair-at-a-time compatibility API, and clear-all action.
+ * A byte selection makes duplicate ids unrepresentable; ids are written in
+ * stable numeric order for deterministic exports and diffs. */
+static int equip_list_save(int equip, const uint8_t selected[MAXID + 1],
+                           char *err, unsigned cap)
+{
+    if (!is_equip_id(equip) && !is_stock_equip_id(equip)) {
+        snprintf(err, cap, "%s is not an Equip card", nm(equip));
+        return 0;
+    }
+    PsxCardPack pk;
+    equip_pack_load_or_init(equip, &pk);
+    pk.equips_set = 1;
+    pk.equip_types = 0;
+    pk.equip_n = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        if (!selected[id]) continue;
+        if (!is_monster_id(id)) {
+            snprintf(err, cap, "%s is not a monster", nm(id));
+            return 0;
+        }
+        if (pk.equip_n >= PSX_CARD_PACK_EQUIP_MAX) {
+            snprintf(err, cap, "An equip list holds at most %d monsters", PSX_CARD_PACK_EQUIP_MAX);
+            return 0;
+        }
+        pk.equip_ids[pk.equip_n++] = (uint16_t)id;
+    }
+    if (!psx_card_packs_save(&pk)) {
+        snprintf(err, cap, "Could not write cards/%d/card.ini", equip);
+        return 0;
+    }
+    refresh_index(1);
+    rebuild_sel();
+    snprintf(err, cap, "%s now fits %d monster%s. Kept in cards/%d/card.ini",
+             nm(equip), pk.equip_n, pk.equip_n == 1 ? "" : "s", equip);
+    return 1;
+}
+
 static int equip_pair_set(int equip, int mon, int on, char *err, unsigned cap)
 {
     if (!is_equip_id(equip)) { snprintf(err, cap, "%s is not an Equip card", nm(equip)); return 0; }
     if (!is_monster_id(mon)) { snprintf(err, cap, "%s is not a monster", nm(mon)); return 0; }
-    PsxCardPack pk;
-    if (!psx_card_packs_get(equip, &pk)) {
-        memset(&pk, 0, sizeof pk);
-        pk.id = equip;
-        pk.attack = pk.defense = pk.star1 = pk.star2 = pk.type = pk.level = pk.attribute = pk.price = -1;
-        psx_card_packs_effects_reset(&pk);
-    }
-    uint16_t ids[PSX_CARD_PACK_EQUIP_MAX];
-    int n = 0, had = 0, over = 0;
+    uint8_t selected[MAXID + 1];
+    memset(selected, 0, sizeof selected);
+    int n = 0, had = 0;
     for (int i = 0; i < s_eq_n; i++) {
         if (s_eq[i].equip != equip) continue;
-        if (s_eq[i].mon == mon) { had = 1; if (!on) continue; }
-        if (n < PSX_CARD_PACK_EQUIP_MAX) ids[n++] = s_eq[i].mon; else over++;
+        if (s_eq[i].mon >= 1 && s_eq[i].mon <= MAXID && !selected[s_eq[i].mon]) {
+            selected[s_eq[i].mon] = 1;
+            n++;
+        }
     }
+    had = selected[mon] != 0;
     if (on && had)   { snprintf(err, cap, "%s already fits %s", nm(equip), nm(mon)); return 0; }
     if (!on && !had) { snprintf(err, cap, "%s does not fit %s", nm(equip), nm(mon)); return 0; }
-    if (on && !had) { if (n < PSX_CARD_PACK_EQUIP_MAX) ids[n++] = (uint16_t)mon; else over++; }
-    if (over) { snprintf(err, cap, "%s fits %d monsters; a card.ini list holds %d. Edit it as types in the Card Manager", nm(equip), n + over, PSX_CARD_PACK_EQUIP_MAX); return 0; }
-    pk.equips_set = 1;
-    pk.equip_types = 0;
-    pk.equip_n = n;
-    memcpy(pk.equip_ids, ids, sizeof(uint16_t) * (size_t)n);
-    if (!psx_card_packs_save(&pk)) { snprintf(err, cap, "Could not write cards/%d/card.ini", equip); return 0; }
-    refresh_index(1);
-    rebuild_sel();
+    selected[mon] = on ? 1 : 0;
+    if (!equip_list_save(equip, selected, err, cap)) return 0;
+    n += on ? 1 : -1;
     if (on) snprintf(err, cap, "%s now fits %s (%d monsters). Kept in cards/%d/card.ini", nm(equip), nm(mon), n, equip);
     else    snprintf(err, cap, "%s no longer fits %s (%d monsters). Kept in cards/%d/card.ini", nm(equip), nm(mon), n, equip);
+    return 1;
+}
+
+static int equip_clear_all_now(char *err, unsigned cap)
+{
+    uint8_t none[MAXID + 1];
+    memset(none, 0, sizeof none);
+    int changed = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        if (!is_equip_id(id) && !is_stock_equip_id(id)) continue;
+        char one[160];
+        if (!equip_list_save(id, none, one, sizeof one)) {
+            snprintf(err, cap, "Cleared %d Equip card%s, then failed: %s",
+                     changed, changed == 1 ? "" : "s", one);
+            return 0;
+        }
+        changed++;
+    }
+    refresh_index(1);
+    rebuild_sel();
+    snprintf(err, cap, "Cleared every usable-monster list on %d Equip cards. Fusion recipes and other card edits were preserved.", changed);
+    return changed > 0;
+}
+
+static int equip_override_count(void)
+{
+    int count = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        PsxCardPack pk;
+        if (psx_card_packs_get(id, &pk) &&
+            (pk.equips_set || pk.equip_types)) count++;
+    }
+    return count;
+}
+
+static int equip_restore_all_now(char *err, unsigned cap)
+{
+    int changed = 0;
+    for (int id = 1; id <= MAXID; id++) {
+        PsxCardPack pk;
+        if (!psx_card_packs_get(id, &pk) ||
+            !(pk.equips_set || pk.equip_types)) continue;
+        pk.equips_set = 0;
+        pk.equip_types = 0;
+        pk.equip_n = 0;
+        if (!psx_card_packs_save(&pk)) {
+            snprintf(err, cap, "Restored %d Equip card%s, then could not write cards/%d/card.ini",
+                     changed, changed == 1 ? "" : "s", id);
+            return 0;
+        }
+        changed++;
+    }
+    refresh_index(1);
+    rebuild_sel();
+    snprintf(err, cap, changed ? "Restored the disc's usable-monster lists on %d Equip cards."
+                                : "Every Equip card already uses the disc's list.", changed);
     return 1;
 }
 
@@ -1670,6 +1883,58 @@ int psx_fusion_manager_equip_set(int equip, int mon, int on, char *err, unsigned
     char buf[256];
     refresh_index(0);
     const int ok = equip_pair_set(equip, mon, on, buf, sizeof buf);
+    if (err && errcap) snprintf(err, errcap, "%s", buf);
+    if (s_win) say(buf);
+    return ok;
+}
+
+int psx_fusion_manager_equip_replace(int equip, const int *monsters, int count,
+                                     char *err, unsigned errcap)
+{
+    uint8_t selected[MAXID + 1];
+    char buf[512];
+    memset(selected, 0, sizeof selected);
+    refresh_index(0);
+    if (count < 0 || count > PSX_CARD_PACK_EQUIP_MAX || (count && !monsters)) {
+        snprintf(buf, sizeof buf, "An equip list holds 0 to %d monster IDs", PSX_CARD_PACK_EQUIP_MAX);
+        if (err && errcap) snprintf(err, errcap, "%s", buf);
+        return 0;
+    }
+    for (int i = 0; i < count; i++) {
+        const int mon = monsters[i];
+        if (mon < 1 || mon > MAXID || !is_monster_id(mon)) {
+            snprintf(buf, sizeof buf, "Card %d is not a monster", mon);
+            if (err && errcap) snprintf(err, errcap, "%s", buf);
+            return 0;
+        }
+        if (selected[mon]) {
+            snprintf(buf, sizeof buf, "Monster %d appears more than once", mon);
+            if (err && errcap) snprintf(err, errcap, "%s", buf);
+            return 0;
+        }
+        selected[mon] = 1;
+    }
+    const int ok = equip_list_save(equip, selected, buf, sizeof buf);
+    if (err && errcap) snprintf(err, errcap, "%s", buf);
+    if (s_win) say(buf);
+    return ok;
+}
+
+int psx_fusion_manager_equip_clear_all(char *err, unsigned errcap)
+{
+    char buf[512];
+    refresh_index(0);
+    const int ok = equip_clear_all_now(buf, sizeof buf);
+    if (err && errcap) snprintf(err, errcap, "%s", buf);
+    if (s_win) say(buf);
+    return ok;
+}
+
+int psx_fusion_manager_equip_restore_all(char *err, unsigned errcap)
+{
+    char buf[512];
+    refresh_index(0);
+    const int ok = equip_restore_all_now(buf, sizeof buf);
     if (err && errcap) snprintf(err, errcap, "%s", buf);
     if (s_win) say(buf);
     return ok;
@@ -1717,10 +1982,21 @@ static void ed_commit(void)
 
 static void restore_stock_now(void)
 {
-    char msg[512];
-    psx_fusion_table_restore_stock(msg, sizeof msg);
+    char msg[512], fusion[384], equips[256];
+    const int equip_count = equip_override_count();
+    if (!equip_restore_all_now(equips, sizeof equips)) {
+        say(equips);
+        return;
+    }
+    psx_fusion_table_restore_stock(fusion, sizeof fusion);
     refresh_index(1);
     rebuild_sel();
+    if (equip_count)
+        snprintf(msg, sizeof msg, "%.330s Restored %d Equip card%s to the disc's usable-monster list%s.",
+                 fusion, equip_count, equip_count == 1 ? "" : "s",
+                 equip_count == 1 ? "" : "s");
+    else
+        snprintf(msg, sizeof msg, "%.380s Every Equip card already uses its disc list.", fusion);
     say(msg);
 }
 
@@ -1737,6 +2013,8 @@ static void dialog_confirm(void)
         if (!psx_fusion_table_clear_all(msg, sizeof msg)) { say(msg); return; }
     } else if (kind == DLG_CLEARCARD) {
         if (!psx_fusion_table_clear_card(card, msg, sizeof msg)) { say(msg); return; }
+    } else if (kind == DLG_CLEAR_EQUIPS) {
+        if (!equip_clear_all_now(msg, sizeof msg)) { say(msg); return; }
     } else {
         return;
     }
@@ -1835,6 +2113,7 @@ static void run_button(int b)
     case BTN_IMPORT:  do_import(); break;
     case BTN_EXPORT:  do_export(); break;
     case BTN_CLEAR:   dialog_open(DLG_CLEAR); break;
+    case BTN_CLEAR_EQUIPS: dialog_open(DLG_CLEAR_EQUIPS); break;
     case BTN_RESTORE: dialog_open(DLG_RESTORE); break;
     default: break;
     }
@@ -1851,7 +2130,17 @@ static void click(int x, int y, int clicks)
         return;
     }
     if (s_pick_mode) {
-        if (in_rect(&L->pick_rows, x, y)) {
+        if (s_pick_mode == PICK_EQUIP_BATCH && in_rect(&L->pick_select, x, y)) {
+            pick_batch_filtered(1);
+        } else if (s_pick_mode == PICK_EQUIP_BATCH && in_rect(&L->pick_remove, x, y)) {
+            pick_batch_filtered(0);
+        } else if (s_pick_mode == PICK_EQUIP_BATCH && in_rect(&L->pick_clear, x, y)) {
+            pick_batch_clear();
+        } else if (s_pick_mode == PICK_EQUIP_BATCH && in_rect(&L->pick_cancel, x, y)) {
+            pick_close();
+        } else if (s_pick_mode == PICK_EQUIP_BATCH && in_rect(&L->pick_apply, x, y)) {
+            pick_batch_apply();
+        } else if (in_rect(&L->pick_rows, x, y)) {
             pick_choose(s_pick_scroll + (y - L->pick_rows.y) / L->row_h);
         } else if (!in_rect(&L->pick, x, y)) {
             pick_close();
@@ -1929,8 +2218,11 @@ static void select_step(int d)
 
 static int on_event(const void *evp)
 {
-    const SDL_Event *ev = (const SDL_Event *)evp;
+    const SDL_Event *raw = (const SDL_Event *)evp;
+    SDL_Event adjusted;
     if (!s_win) return 0;
+    if (psx_fm_editor_filter_event(PSX_FM_PAGE_FUSIONS, raw, &adjusted)) return 1;
+    const SDL_Event *ev = &adjusted;
     const Uint32 id = SDL_GetWindowID(s_win);
     switch (ev->type) {
     case SDL_MOUSEBUTTONDOWN:
@@ -2032,6 +2324,11 @@ static int on_event(const void *evp)
         }
         if (s_pick_mode) {
             if (key == SDLK_ESCAPE) pick_close();
+            else if (s_pick_mode == PICK_EQUIP_BATCH && ctrl && key == SDLK_a) {
+                pick_batch_filtered(1);
+            } else if (s_pick_mode == PICK_EQUIP_BATCH && key == SDLK_DELETE) {
+                pick_batch_filtered(0);
+            }
             else if (key == SDLK_BACKSPACE) {
                 const size_t n = strlen(s_pick_search);
                 if (n) { s_pick_search[n - 1] = 0; s_pick_scroll = 0; pick_rebuild(); }
@@ -2160,7 +2457,6 @@ static int           s_ren_software;
 static void gl_capture(void) { s_gl_win = SDL_GL_GetCurrentWindow(); s_gl_ctx = SDL_GL_GetCurrentContext(); }
 static void gl_restore(void)
 {
-    if (s_ren_software) return;
     if (s_gl_ctx && s_gl_win && SDL_GL_GetCurrentContext() != s_gl_ctx) SDL_GL_MakeCurrent(s_gl_win, s_gl_ctx);
 }
 
@@ -2210,18 +2506,19 @@ static void present_canvas(void)
 void psx_fusion_manager_open(void)
 {
     if (s_win) { SDL_RaiseWindow(s_win); return; }
-    s_win = SDL_CreateWindow("Fusion Manager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
+    s_win = psx_fm_editor_acquire(PSX_FM_PAGE_FUSIONS, WIN_W, WIN_H);
     if (!s_win) { host_osd_push("Fusion manager: no window", 2000); return; }
-    /* Four tables side by side stop being readable well before they stop
-     * being drawable, and a window dragged down to nothing would leave the
-     * panels with negative heights. */
-    (void)SDL_SetWindowMinimumSize(s_win, 720, 420);
+    /* The shared editor owns the minimum. Its normal 720x458 floor keeps the
+     * four panes readable, but on a tightly scaled desktop it may lower that
+     * floor by a few pixels so the complete decorated window still fits.
+     * Reasserting 720x458 here used to undo that adaptive fit for this page
+     * and every tab opened after it. */
     gl_capture();
     s_ren = psx_tool_renderer_create(s_win, "Fusion Manager", -1, &s_ren_software);
     gl_restore();
     s_present_fail = 0;
     if (!s_ren) {
-        SDL_DestroyWindow(s_win); s_win = NULL;
+        psx_fm_editor_release(PSX_FM_PAGE_FUSIONS); s_win = NULL;
         host_osd_push("Fusion manager: no renderer", 2000);
         return;
     }
@@ -2238,13 +2535,15 @@ void psx_fusion_manager_open(void)
 
 void psx_fusion_manager_close(void)
 {
+    const int preserve = psx_fm_editor_is_switching();
     if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
     if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
-    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
+    if (s_win) { psx_fm_editor_release(PSX_FM_PAGE_FUSIONS); s_win = NULL; }
     gl_restore();
     s_ren_software = 0;
     free(s_px); s_px = NULL;
     s_w = s_h = 0;
+    if (preserve) return;
     s_hover_pane = s_hover_row = s_hover_btn = -1;
     s_ed_focus = ED_NONE;
     s_dlg = DLG_NONE;
@@ -2298,6 +2597,7 @@ static void tick(void)
     if (!s_win) return;
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(s_ren, &w, &h);
+    h = psx_fm_editor_content_height(h);
     if (w > 0 && h > 0 && (w != s_w || h != s_h)) { if (!ensure_canvas(w, h)) { psx_fusion_manager_close(); return; } }
     layout_compute();
     /* the table module reads the disc on the first frame it can, so the
@@ -2319,7 +2619,8 @@ static void tick(void)
         rebuild_all();
     }
     {
-        const int on = ((SDL_GetTicks() / 530u) & 1u) == 0u;
+        const int on = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_INPUT_FOCUS) &&
+                       ((SDL_GetTicks() / 530u) & 1u) == 0u;
         if (on != s_caret_on) { s_caret_on = on; if (s_search[0] || s_ed_focus) s_dirty = 1; }
     }
     if (s_msg[0] && SDL_GetTicks() >= s_msg_until) { s_msg[0] = 0; s_dirty = 1; }
@@ -2328,13 +2629,9 @@ static void tick(void)
 
 /* --- the row ------------------------------------------------------------- */
 
-static void row_activate(void) { psx_fusion_manager_open(); }
-
 void psx_fusion_manager_register_menu(void)
 {
-    (void)psx_video_menu_add_action(PSX_VM_MENU_VIEW, "Fusion manager \xe2\x80\x94 experimental",
-        "EXPERIMENTAL, may have bugs. Every fusion in the game, both ways round " S_DASH " and change any of them",
-        row_activate);
+    /* Kept for source compatibility; FM Editor owns the single VIEW action. */
 }
 
 /* --- debug side ---------------------------------------------------------- */
@@ -2399,6 +2696,22 @@ void psx_fusion_manager_confirm_restore(int ask)
     else dialog_close();
 }
 
+void psx_fusion_manager_confirm_clear_equips(int ask)
+{
+    if (ask == 1) dialog_open(DLG_CLEAR_EQUIPS);
+    else if (ask == 2 && s_dlg == DLG_CLEAR_EQUIPS) dialog_confirm();
+    else dialog_close();
+}
+
+int psx_fusion_manager_equip_batch_open(int equip)
+{
+    if (!s_win || (!is_equip_id(equip) && !is_stock_equip_id(equip))) return 0;
+    select_card(equip, 1);
+    pick_open(PICK_EQUIP_BATCH, equip, 0);
+    s_dirty = 1;
+    return 1;
+}
+
 static int inject_button(int x, int y, int button, int down, int clicks)
 {
     SDL_Event ev;
@@ -2413,7 +2726,7 @@ static int inject_button(int x, int y, int button, int down, int clicks)
     ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
 #endif
     ev.button.clicks = (Uint8)clicks;
-    ev.button.x = x; ev.button.y = y;
+    ev.button.x = x; ev.button.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2455,7 +2768,7 @@ int psx_fusion_manager_move(int x, int y)
     SDL_zero(ev);
     ev.type = SDL_MOUSEMOTION;
     ev.motion.windowID = SDL_GetWindowID(s_win);
-    ev.motion.x = x; ev.motion.y = y;
+    ev.motion.x = x; ev.motion.y = psx_fm_editor_window_y(y);
     return SDL_PushEvent(&ev) == 1;
 }
 
@@ -2552,14 +2865,14 @@ int psx_fusion_manager_state_json(char *out, unsigned cap)
         "\"edits\":%d,\"cleared\":%d,\"applied\":%d,\"bytes\":%d,\"bytes_max\":%d,\"packed_pairs\":%d,"
         "\"view\":%d,\"search\":\"%s\",\"listed\":%d,\"scroll\":%d,\"sel\":%d,\"sel_name\":\"%s\","
         "\"makes\":%d,\"made_from\":%d,\"sort\":%d,\"desc\":%d,\"rsort\":%d,\"rdesc\":%d,"
-        "\"ed_focus\":%d,\"ed_partner\":\"%s\",\"ed_result\":\"%s\",\"dialog\":%d,\"menu\":%d,\"picker\":%d,\"pick_listed\":%d,\"pick_search\":\"%s\","
+        "\"ed_focus\":%d,\"ed_partner\":\"%s\",\"ed_result\":\"%s\",\"dialog\":%d,\"menu\":%d,\"picker\":%d,\"pick_listed\":%d,\"pick_selected\":%d,\"pick_search\":\"%s\","
         "\"canvas\":[%d,%d],\"unit\":%.3f,\"list_rows\":%d,\"hover_pane\":%d,\"hover_row\":%d,\"hover_btn\":%d,\"msg\":\"%s\","
         "\"mk_scroll\":%d,\"fr_scroll\":%d,\"pick_scroll\":%d,\"sb_drag\":%d",
         s_win != NULL, psx_fusion_table_ready(), psx_fusion_db_ready(), s_rec_n, s_eq_groups, s_eq_n,
         psx_fusion_table_edit_count(), psx_fusion_table_cleared(), psx_fusion_table_applied(), used, bcap, pairs,
         s_view, s_search, list_count(), s_scroll, s_sel, nm(s_sel),
         s_mk_n, s_fr_n, s_sort, s_desc, s_rsort, s_rdesc,
-        s_ed_focus, s_ed_partner, s_ed_result, s_dlg, s_cm_open ? s_cm_n : 0, s_pick_mode, pick_total(), s_pick_search,
+        s_ed_focus, s_ed_partner, s_ed_result, s_dlg, s_cm_open ? s_cm_n : 0, s_pick_mode, pick_total(), s_pick_selected_n, s_pick_search,
         s_w, s_h, s_u, s_win ? pane_visible(PANE_LIST) : 0, s_hover_pane, s_hover_row, s_hover_btn, s_msg,
         s_mk_scroll, s_fr_scroll, s_pick_scroll, s_sb_drag);
     if (!s_win || n >= cap) return n < cap;
@@ -2585,6 +2898,14 @@ int psx_fusion_manager_state_json(char *out, unsigned cap)
         n += (unsigned)snprintf(out + n, cap - n, ",\"cm\":[%d,%d,%d,%d],\"pick_rows\":[%d,%d,%d,%d]",
             L->cm.x, L->cm.y, L->cm.w, L->cm.h,
             L->pick_rows.x, L->pick_rows.y, L->pick_rows.w, L->pick_rows.h);
+    if (n < cap)
+        n += (unsigned)snprintf(out + n, cap - n,
+            ",\"pick_select\":[%d,%d,%d,%d],\"pick_remove\":[%d,%d,%d,%d],\"pick_clear\":[%d,%d,%d,%d],\"pick_cancel\":[%d,%d,%d,%d],\"pick_apply\":[%d,%d,%d,%d]",
+            L->pick_select.x, L->pick_select.y, L->pick_select.w, L->pick_select.h,
+            L->pick_remove.x, L->pick_remove.y, L->pick_remove.w, L->pick_remove.h,
+            L->pick_clear.x, L->pick_clear.y, L->pick_clear.w, L->pick_clear.h,
+            L->pick_cancel.x, L->pick_cancel.y, L->pick_cancel.w, L->pick_cancel.h,
+            L->pick_apply.x, L->pick_apply.y, L->pick_apply.w, L->pick_apply.h);
     /* The scrollbars, so a script can drag a thumb the way a mouse does. */
     if (n < cap)
         n += (unsigned)snprintf(out + n, cap - n,

@@ -18,8 +18,9 @@ extern "C" {
 #endif
 
 #define PSX_CARD_PACK_NAME_MAX 40
-#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 6 x 20 */
+#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 21 columns otherwise; the card shows 8 x 21 */
 #define PSX_CARD_PACK_EQUIP_MAX   722   /* every monster, by id: the biggest stock groups hold 292 and 621 */
+#define PSX_CARD_PACK_FIELD_TARGET_MAX 722 /* explicit creature ids for one field spell */
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
 #define PSX_CARD_PACK_EQUIP_ALL   (1u << 31)
 #define PSX_CARD_PACK_FILTER_TYPE 1000
@@ -59,6 +60,7 @@ typedef struct {
     int  level;                           /* 0..12 */
     int  attribute;                       /* 0..7 */
     int  price;                           /* 0..999999 */
+    int  sell_price;                      /* 0..999999; -1 = derive from effective price */
     char password[9];                     /* 8 digits, or "" */
     int  has_art, has_thumb, has_title;   /* which PNGs exist */
 
@@ -77,6 +79,9 @@ typedef struct {
     uint16_t equip_ids[PSX_CARD_PACK_EQUIP_MAX];
     int  boost_set;                       /* the 20 boosts below apply (field cards 330..335) */
     int  boost[20];                       /* per monster type, -1280..1270, x10; PSX_CARD_PACK_BOOST_UNSET = stock */
+    int  field_targets_set;               /* explicit allow-list replaces type eligibility; absent = exact stock */
+    int  field_target_n;
+    uint16_t field_target_ids[PSX_CARD_PACK_FIELD_TARGET_MAX];
     int  trap_atk_max;                    /* 0..25500; -1 = stock (traps 681..686) */
     int  ritual_set;
     int  ritual_mat[3], ritual_result;    /* card ids */
@@ -194,19 +199,38 @@ int  psx_card_packs_parse_effect(const char *v);
  * Return 1 on success and describe a problem in err when given. */
 int  psx_card_packs_parse_equips(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 int  psx_card_packs_parse_boost(const char *v, PsxCardPack *c, char *err, unsigned errcap);
+/* Comma-separated stable card ids, or "none" for an explicit empty list. */
+int  psx_card_packs_parse_field_targets(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 int  psx_card_packs_parse_ritual(const char *v, PsxCardPack *c, char *err, unsigned errcap);
 void psx_card_packs_format_equips(const PsxCardPack *c, char *out, unsigned cap);
 void psx_card_packs_format_boost(const PsxCardPack *c, char *out, unsigned cap);
+void psx_card_packs_format_field_targets(const PsxCardPack *c, char *out, unsigned cap);
 void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap);
 /* Set every effect field of a pack to unset. */
 void psx_card_packs_effects_reset(PsxCardPack *c);
 
 /* How the game will lay a description out: the number of lines (auto-wrapped
- * at 20 columns, or as broken by "|"), the longest line, and the first line
- * (1-based) longer than 20 columns, 0 when none. The game shows 6 lines. */
-#define PSX_CARD_PACK_DESC_COLS  20
-#define PSX_CARD_PACK_DESC_LINES 6
+ * at 21 columns, or as broken by "|", a newline, or a literal "\\n"), the
+ * longest line, and the first line (1-based) longer than 21 columns, 0 when
+ * none. The game shows 8 lines. */
+#define PSX_CARD_PACK_DESC_COLS  21
+#define PSX_CARD_PACK_DESC_LINES 8
+/* Combined exact capacity of the stock string bank and the proven overflow
+ * arena, excluding the four-byte layout marker. psx_card_extend's relocated
+ * tables sit between the two ranges and are never touched. */
+#define PSX_CARD_PACK_DESC_ARENA_BYTES 0xDDA7
 int  psx_card_packs_desc_layout(const char *text, int *lines, int *longest, int *first_wide);
+/* Validate the complete description write contract (length, glyphs and
+ * layout). On success, description_bytes returns its encoded RAM size,
+ * including line controls and terminator. */
+int  psx_card_packs_validate_description(const char *text, char *err, unsigned errcap);
+int  psx_card_packs_description_bytes(const char *text);
+/* Validate a complete replacement plan. sizes[1..722] contains an encoded
+ * custom size or zero to retain that card's exact stock byte string. */
+int  psx_card_packs_validate_description_sizes(const int *sizes, char *err, unsigned errcap);
+/* Also checks that this candidate, every already-loaded custom description,
+ * and the exact stock strings for all remaining cards fit together. */
+int  psx_card_packs_validate(const PsxCardPack *pack, char *err, unsigned errcap);
 
 /* The stock values of a card, read from the game's own tables. Valid once
  * psx_card_db_ready(). */
@@ -252,6 +276,17 @@ int  psx_card_packs_get(int id, PsxCardPack *out);
  * it, else the game's own. psx_card_db_name() stays the stock name, which is
  * what "back to stock" and the stock snapshots need. */
 const char *psx_card_packs_display_name(int id);
+/* Effective password-screen starchip price: a loaded card.ini override when
+ * present, otherwise the disc value. Returns -1 before the card DB is ready. */
+int psx_card_packs_price(int id);
+/* Deterministic sale value for an effective password cost: floor(cost / 8),
+ * and 500 for the 999999 sentinel. */
+int psx_card_packs_derive_sell_price(int purchase_price);
+/* Effective shop sell price. An explicit card.ini `sell_price` wins;
+ * otherwise floor(effective password cost / 3) is used, except the stock
+ * sentinel purchase cost 999999 is capped to 1000. `overridden`, when non-NULL,
+ * says which source was selected. Returns -1 before card data is ready. */
+int psx_card_packs_sell_price(int id, int *overridden);
 /* The two string arenas in the free tail of the game's name blob. The blob's
  * last stock string ends at 0x801D8C66 and 0x801D916F..0x801DA000 is zero in
  * the SLUS and in every state sampled (psx_card_extend.c); 0x801DA000 is NOT

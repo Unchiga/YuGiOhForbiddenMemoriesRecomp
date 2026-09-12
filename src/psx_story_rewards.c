@@ -75,8 +75,10 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
+#include "psx_cpu_data.h"
 #include "psx_drop_db.h"
 #include "psx_drop_edits.h"
+#include "psx_ygo_netplay.h"
 
 #define NDUEL         PSX_DROP_DB_DUELISTS      /* 39 */
 #define NCARDS        PSX_DROP_DB_CARDS         /* 722 */
@@ -128,21 +130,28 @@ int psx_story_rewards_set(int duelist, int card, int every)
     return psx_drop_edits_reward_set(duelist, card, every);
 }
 
-void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
+int psx_story_rewards_select(void)
 {
-    (void)cpu;
+    if (psx_ygo_netplay_session()) return 0; /* netplay: peers must stay bit-identical */
     g_last_card = 0;
-    if (tier >= TIER_N) return;
 
     const int id = (int)psx_mod_read_byte(OPPONENT_ID);
     g_last_opponent = id;
     g_last_free_duel = in_free_duel();
     g_last_beaten = already_beaten(id);
-    if (g_last_free_duel) return;          /* Free Duel: the story is not here */
+    if (g_last_free_duel) return 0;        /* Free Duel: the story is not here */
     int every = 0;
     const int card = psx_drop_edits_reward(id - 1, &every);
-    if (!card) return;
-    if (!every && g_last_beaten != 0) return;   /* beaten before: roll as stock */
+    if (!card) return 0;
+    if (!every && g_last_beaten != 0) return 0; /* beaten before: roll as stock */
+    g_last_card = card;
+    return card;
+}
+
+void psx_story_rewards_steer_card(CPUState *cpu, unsigned tier, int card)
+{
+    if (psx_ygo_netplay_session() || tier >= TIER_N || card < 1 || card > NCARDS) return;
+    (void)cpu;
 
     /* Snapshot the whole tier row, then leave one card holding all 2048. */
     const uint32_t base = DROP_TABLE + tier * TIER_STRIDE;
@@ -157,8 +166,16 @@ void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
     g_fired++;
 }
 
+void psx_story_rewards_steer_roll(CPUState *cpu, unsigned tier)
+{
+    if (tier >= TIER_N) return;
+    const int card = psx_story_rewards_select();
+    if (card) psx_story_rewards_steer_card(cpu, tier, card);
+}
+
 void psx_story_rewards_restore_table(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!g_steered) return;
     g_steered = 0;
     for (int i = 0; i < NCARDS; i++)
@@ -187,9 +204,11 @@ int psx_story_rewards_state_json(char *out, unsigned cap)
         int every = 0;
         const int card = psx_drop_edits_reward(d, &every);
         if (!card) continue;
+        char name[PSX_CPU_NAME_MAX * 2 + 8];
+        (void)psx_cpu_display_name_json(d, name, sizeof name);
         n += (unsigned)snprintf(out + n, cap - n,
             "%s{\"duelist\":%d,\"id\":%d,\"name\":\"%s\",\"card\":%d,\"every\":%d}",
-            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name, card, every);
+            first ? "" : ",", d, d + 1, name, card, every);
         first = 0;
     }
     n += (unsigned)snprintf(out + n, cap - n, "]");

@@ -20,10 +20,19 @@
 #include "cpu_state.h"
 #include "host_osd.h"
 #include "mod_plugins.h"
+#include "psx_card_inventory.h"
 #include "psx_cd_overlay.h"
+#include "psx_drop_edits.h"
 #include "psx_game_hooks.h"
 #include "psx_story_rewards.h"
 #include "psx_video_menu.h"
+#include "psx_ygo_netplay.h"
+
+/* Small present-only message used when an authored zero count or exhausted
+ * Smart pool suppresses the in-flight award. Keeping this out of guest text
+ * memory avoids inventing a card id or leaving string-table state behind
+ * after RESULTS OF DUEL closes. */
+#include "psx_ui_font8.inc"
 
 /* ---- MODS > CARD DROPS ----------------------------------------------------
  *
@@ -68,10 +77,13 @@
  * register, so this does not depend on having observed the game's own call.
  *
  * Hooked at func_80021894's ENTRY, filtered to the duel-drop call site by $ra.
- * The extra cards are awarded BEFORE the game's own (order is irrelevant — the
- * total is what matters), which keeps this a pure prologue: we never have to
- * interfere with the call already in flight. */
+ * Normal bonus cards are awarded from this prologue. A guaranteed campaign
+ * reward is deliberately awarded first; the visible stock roll is steered to
+ * that card so SPOILS remains truthful, then its eventual award argument is
+ * changed to the previewed final normal card. This preserves both visible and
+ * banked award order without changing the RNG stream. */
 static int g_card_drops = PSX_VM_CARD_DROPS_DEFAULT;
+static int s_card_drops_row = -1;
 
 #define PSX_DROP_ROLL_FN    0x80021810u
 #define PSX_DROP_AWARD_FN   0x80021894u
@@ -91,6 +103,9 @@ static int g_card_drops = PSX_VM_CARD_DROPS_DEFAULT;
  * final card; see the long comment in the on_roll hook for why (and for the
  * results-screen paging bug the patched first version caused). */
 #define PSX_RNG_SEED_ADDR        0x800FE6F8u
+#define PSX_DROP_TABLE_ADDR      0x8017878Cu
+#define PSX_DROP_TIER_STRIDE     1460u
+#define PSX_DROP_TIER_COUNT      3u
 
 static uint32_t cd_lcg_advance(uint32_t s, int n) {
     while (n--) s = s * 0x41C64E6Du + 0x3039u;
@@ -141,19 +156,6 @@ static uint32_t cd_lcg_advance(uint32_t s, int n) {
 #define PSX_DROP_CHEST_SORT_SITE1   0x800325E4u
 #define PSX_DROP_CHEST_SORT_SITE2   0x80032710u
 #define PSX_DROP_NEWFLAG_BASE       0x8010606Au /* + card_id */
-/* Live trunk counts, index = card_id - 1, so the byte for `id` is base + id.
- * The two mirrors (0x801D3250, 0x80105D98) only matter for a bulk EDIT; this
- * is a read of the authoritative copy. */
-#define PSX_DROP_TRUNK_BASE         0x801D024Fu /* + card_id */
-/* The 40-card DECK, at the head of the same save struct the trunk sits in
- * (trunk is that struct + 0x50, which is why the two bases differ by 0x50).
- * One u16 card id per slot. Owning a card in the deck does NOT show up in the
- * trunk count: building a deck MOVES copies out of the trunk, so a card you
- * play with and hold no spares of reads trunk 0. See psx_ygo_cheats.c, which
- * documents the same struct and uses this array's shape to tell a live save
- * from boot-time garbage. */
-#define PSX_DROP_DECK_BASE          0x801D0200u
-#define PSX_DROP_DECK_N             40u
 #define PSX_DROP_CARD_ID_MAX        722
 
 /* Observability for the hook, queryable as `card_drops_state`. Without it the
@@ -183,6 +185,14 @@ static int      s_cd_new_distinct; /* nonzero entries above */
 static uint8_t  s_cd_copies_this_duel[PSX_DROP_CARD_ID_MAX + 1];
 static uint8_t  s_cd_was_new_this_duel[PSX_DROP_CARD_ID_MAX + 1];
 static int      s_cd_awarded_total;  /* sum of s_cd_copies_this_duel */
+static uint16_t s_cd_award_order[PSX_VM_CARD_DROPS_MAX];
+static uint8_t  s_cd_order_committed[PSX_VM_CARD_DROPS_MAX];
+static int      s_cd_order_n;
+static uint32_t s_cd_pending_card;   /* previewed final stock-table award */
+static int      s_cd_pending_order = -1;
+static int      s_cd_rewrite_award;  /* visible roll is story; bank pending */
+static int      s_cd_award_is_story;
+static uint8_t  s_cd_order_story[PSX_VM_CARD_DROPS_MAX];
 static int      s_cd_chest_builds; /* chest-builder hook invocations */
 static int      s_cd_chest_armed;  /* builder seen, overlay not yet written */
 /* A real duel drop has been observed this session, so s_cd_new_this_duel is
@@ -201,6 +211,36 @@ static int      s_cd_have_duel;
  * duel's cards on the drops page. */
 static int      s_cd_page_duel;
 static int      s_cd_overlays;     /* overlay passes actually written */
+
+/* Card Drops = 0 is an intentional no-normal-award mode. The game still
+ * performs its one stock roll (one RNG call), because the result routine owns
+ * that call and uses the returned card to construct its summary. The award
+ * entry is skipped instead. An eligible guaranteed campaign reward remains a
+ * separate award and uses that in-flight stock roll as its carrier.
+ *
+ * Smart exhaustion shares the presentation when there is no truthful story
+ * reward in SPOILS. Without the present-only cover the stock summary would
+ * announce the rolled card even though it was deliberately not banked. This
+ * panel covers only the card-number/name strip below SPOILS and says what
+ * actually happened. */
+#define PSX_DROP_NO_CARD_X 12
+#define PSX_DROP_NO_CARD_Y 200
+#define PSX_DROP_NO_CARD_W 296
+#define PSX_DROP_NO_CARD_H 34
+static uint32_t s_cd_no_card_canvas[PSX_DROP_NO_CARD_W * PSX_DROP_NO_CARD_H];
+static int      s_cd_no_card_canvas_reason;
+static int      s_cd_no_card_reason;
+static unsigned s_cd_zero_duels;
+static unsigned s_cd_zero_story_duels;
+static unsigned s_cd_suppressed_awards;
+static unsigned s_cd_zero_suppressed;
+static unsigned s_cd_zero_rng_calls_last;
+static uint32_t s_cd_zero_seed_before;
+static uint32_t s_cd_zero_seed_after;
+static int      s_cd_zero_seed_pending;
+static int      s_cd_zero_rng_exact;
+static int      s_cd_no_card_present_hold;
+static int      s_cd_no_card_placement[10];
 
 void psx_card_drops_debug(int *setting, int *calls, uint32_t *last_ra,
                                      int *last_tier, int *granted, int *bails,
@@ -230,20 +270,34 @@ int psx_card_drops_list_json(char *out, unsigned cap, int *out_total) {
     unsigned n = 0;
     int distinct = 0;
     n += (unsigned)snprintf(out + n, cap - n, "[");
-    for (int pass = 0; pass < 2 && n + 64u < cap; pass++) {
-        for (uint32_t id = 1; id <= PSX_DROP_CARD_ID_MAX && n + 64u < cap; id++) {
-            if (!s_cd_copies_this_duel[id]) continue;
-            const int is_new = s_cd_was_new_this_duel[id] ? 1 : 0;
-            if (is_new != (pass == 0)) continue;   /* new cards first */
-            n += (unsigned)snprintf(out + n, cap - n,
-                                         "%s{\"id\":%u,\"n\":%u,\"new\":%d}",
-                                         distinct ? "," : "", id,
-                                         s_cd_copies_this_duel[id], is_new);
-            distinct++;
-        }
+    uint8_t seen[PSX_DROP_CARD_ID_MAX + 1]; memset(seen, 0, sizeof seen);
+    for (int i = 0; i < s_cd_order_n && n + 80u < cap; i++) {
+        const uint32_t id = s_cd_award_order[i];
+        if (!id || seen[id]) continue;
+        seen[id] = 1;
+        n += (unsigned)snprintf(out + n, cap - n,
+                               "%s{\"id\":%u,\"n\":%u,\"new\":%d,\"first\":%d}",
+                               distinct ? "," : "", id,
+                               s_cd_copies_this_duel[id],
+                               s_cd_was_new_this_duel[id] ? 1 : 0, i);
+        distinct++;
     }
     snprintf(out + n, cap - n, "]");
     return distinct;
+}
+
+int psx_card_drops_order_json(char *out, unsigned cap)
+{
+    if (!out || cap < 8u) return 0;
+    unsigned n = (unsigned)snprintf(out, cap, "[");
+    for (int i = 0; i < s_cd_order_n && n + 48u < cap; i++)
+        n += (unsigned)snprintf(out + n, cap - n,
+                               "%s{\"id\":%u,\"kind\":\"%s\",\"committed\":%s}", i ? "," : "",
+                               (unsigned)s_cd_award_order[i],
+                               s_cd_order_story[i] ? "story" : "normal",
+                               s_cd_order_committed[i] ? "true" : "false");
+    snprintf(out + n, cap - n, "]");
+    return s_cd_order_n;
 }
 
 /* ---- name-stream probe ----------------------------------------------------
@@ -331,6 +385,182 @@ int psx_name_probe_json(char *out, unsigned cap) {
 /* Guards the hook against the rolls and awards we drive ourselves. */
 static int s_cd_busy;
 
+/* ---- smart normal drops -------------------------------------------------
+ *
+ * The resident row is already the fully composed table for this opponent and
+ * rank (stock + editor + missing-card transforms). Before EVERY normal award,
+ * remove weighted cards already owned at three copies and scale the survivors
+ * back to the guest's exact 2048 total. Each early bonus award increments the
+ * trunk before the next filter is built, so later rolls include cards already
+ * earned in this duel and can never push a card beyond three total copies.
+ * The table is restored byte-for-byte after each roll. */
+static uint16_t s_smart_saved[PSX_DROP_CARD_ID_MAX];
+static uint32_t s_smart_addr;
+static int s_smart_active;
+static unsigned s_smart_attempts;
+static unsigned s_smart_applied;
+static unsigned s_smart_unchanged;
+static unsigned s_smart_fallbacks;
+static unsigned s_smart_restores;
+static unsigned s_smart_skipped;
+static unsigned s_smart_skipped_duel;
+static int s_smart_last_tier = -1;
+static int s_smart_last_eligible;
+static int s_smart_last_excluded;
+static int s_smart_last_capacity;
+static uint32_t s_smart_last_eligible_weight;
+static uint32_t s_smart_last_card;
+enum {
+    CD_SUPPRESS_NONE = 0,
+    CD_SUPPRESS_SMART_EXHAUSTED,
+    CD_SUPPRESS_ZERO_NORMAL,
+};
+static int s_cd_suppress_award;
+
+static uint32_t cd_table_addr(unsigned tier)
+{
+    return PSX_DROP_TABLE_ADDR + tier * PSX_DROP_TIER_STRIDE;
+}
+
+/* Build the filtered row without touching the guest. Stable card-ID tie
+ * breaking in the largest-remainder pass makes the integer redistribution
+ * deterministic. Since the source total is 2048, scaling after removals is
+ * upward and every surviving nonzero card keeps at least one unit. */
+static int cd_smart_build(unsigned tier,
+                          uint16_t original[PSX_DROP_CARD_ID_MAX],
+                          uint16_t filtered[PSX_DROP_CARD_ID_MAX],
+                          int *eligible, int *excluded,
+                          uint32_t *eligible_weight, int *capacity,
+                          int *fallback)
+{
+    if (tier >= PSX_DROP_TIER_COUNT) return 0;
+    PsxCardInventorySnapshot inv;
+    if (!psx_card_inventory_snapshot(&inv)) return 0;
+
+    const uint32_t base = cd_table_addr(tier);
+    uint32_t sum = 0, keep_sum = 0;
+    int keep_n = 0, cut_n = 0, slots = 0;
+    for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++) {
+        const uint16_t w = psx_mod_read_half(base + (uint32_t)i * 2u);
+        original[i] = w;
+        filtered[i] = 0;
+        sum += w;
+        if (!w) continue;
+        const unsigned owned = (unsigned)inv.deck[i] + (unsigned)inv.trunk[i];
+        if (owned < PSX_CARD_INVENTORY_KEEP) {
+            keep_sum += w;
+            keep_n++;
+            slots += PSX_CARD_INVENTORY_KEEP - (int)owned;
+        } else {
+            cut_n++;
+        }
+    }
+    if (eligible) *eligible = keep_n;
+    if (excluded) *excluded = cut_n;
+    if (eligible_weight) *eligible_weight = keep_sum;
+    if (capacity) *capacity = slots;
+    if (fallback) *fallback = keep_sum == 0;
+    if (!sum) return 0;
+    if (!keep_sum) return 1;
+
+    uint32_t remainder[PSX_DROP_CARD_ID_MAX];
+    uint8_t used[PSX_DROP_CARD_ID_MAX];
+    memset(remainder, 0, sizeof remainder);
+    memset(used, 0, sizeof used);
+    uint32_t got = 0;
+    for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++) {
+        if (!original[i] ||
+            (unsigned)inv.deck[i] + (unsigned)inv.trunk[i] >=
+                PSX_CARD_INVENTORY_KEEP)
+            continue;
+        const uint32_t product = (uint32_t)original[i] * 2048u;
+        filtered[i] = (uint16_t)(product / keep_sum);
+        remainder[i] = product % keep_sum;
+        got += filtered[i];
+    }
+    while (got < 2048u) {
+        int best = -1;
+        uint32_t best_rem = 0;
+        for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++) {
+            if (used[i] || !filtered[i]) continue;
+            if (best < 0 || remainder[i] > best_rem) {
+                best = i;
+                best_rem = remainder[i];
+            }
+        }
+        if (best < 0) return 0;
+        used[best] = 1;
+        filtered[best]++;
+        got++;
+    }
+    return got == 2048u;
+}
+
+static void cd_smart_restore(void)
+{
+    if (!s_smart_active) return;
+    s_smart_active = 0;
+    for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++)
+        psx_mod_write_half(s_smart_addr + (uint32_t)i * 2u,
+                           s_smart_saved[i]);
+    s_smart_restores++;
+}
+
+/* Returns 1 when the attempt has at least one eligible card, -1 when every
+ * weighted card is already owned at three copies, and 0 for an invalid source
+ * row. s_smart_active means the caller must restore after its roll (or let the
+ * real award hook restore an in-flight final roll). */
+static int cd_smart_prepare(unsigned tier)
+{
+    uint16_t filtered[PSX_DROP_CARD_ID_MAX];
+    int eligible = 0, excluded = 0, capacity = 0, fallback = 0;
+    uint32_t eligible_weight = 0;
+    s_smart_attempts++;
+    s_smart_last_tier = (int)tier;
+    s_smart_last_card = 0;
+    if (!cd_smart_build(tier, s_smart_saved, filtered,
+                        &eligible, &excluded, &eligible_weight, &capacity,
+                        &fallback)) {
+        s_smart_last_eligible = 0;
+        s_smart_last_excluded = 0;
+        s_smart_last_capacity = 0;
+        s_smart_last_eligible_weight = 0;
+        s_smart_fallbacks++;
+        return 0;
+    }
+    s_smart_last_eligible = eligible;
+    s_smart_last_excluded = excluded;
+    s_smart_last_capacity = capacity;
+    s_smart_last_eligible_weight = eligible_weight;
+    if (fallback) {
+        s_smart_fallbacks++;
+        return -1;
+    }
+    if (!excluded) {
+        s_smart_unchanged++;
+        return 1;
+    }
+    s_smart_addr = cd_table_addr(tier);
+    for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++)
+        psx_mod_write_half(s_smart_addr + (uint32_t)i * 2u, filtered[i]);
+    s_smart_active = 1;
+    s_smart_applied++;
+    return 1;
+}
+
+static int cd_smart_configured(void)
+{
+    return psx_drop_edits_smart_drop();
+}
+
+static int cd_smart_effective(void)
+{
+    /* The preference remains saved at zero so raising Card Drops later needs
+     * no second edit, but there is no normal award for it to filter now. */
+    return g_card_drops > 0 && cd_smart_configured() &&
+           !psx_ygo_netplay_session();
+}
+
 /* Hooked on the ROLL, not the award.
  *
  * The award looked like the natural place, but the tier is not recoverable
@@ -346,9 +576,10 @@ static int s_cd_busy;
  * carry and nothing to reconstruct. func_80021810 has exactly ONE caller in the
  * whole game — the duel reward — so every invocation here is a real drop.
  *
- * The extras are granted BEFORE the game's own roll runs; order does not matter
- * because only the total lands in the trunk, and doing it as a prologue means
- * never disturbing the call already in flight. */
+ * Bonus awards are normally granted before the game's own roll. Guaranteed
+ * story rewards are the ordering exception documented in the file header: the
+ * reward is granted first and the in-flight award becomes the final normal
+ * card after its visible SPOILS panel has shown the reward. */
 /* The two nested-call primitives. The hook and the test command both go
  * through these, so validating the command validates the shipping path.
  *
@@ -378,6 +609,53 @@ static void cd_award_one(CPUState *cpu, uint32_t card, int *bail) {
     if (bail) *bail = (g_psx_call_bail || cpu->pc != 0);
 }
 
+static uint32_t cd_preview_roll(CPUState *cpu, uint32_t tier, int *bail)
+{
+    const uint32_t seed = psx_mod_read_word(PSX_RNG_SEED_ADDR);
+    CPUState saved = *cpu;
+    const uint32_t card = cd_roll_one(cpu, tier, bail);
+    psx_mod_write_word(PSX_RNG_SEED_ADDR, seed);
+    *cpu = saved;
+    return card;
+}
+
+static void cd_track(uint32_t id, int committed, int story)
+{
+    if (id < 1 || id > PSX_DROP_CARD_ID_MAX) return;
+    if (!s_cd_new_this_duel[id]) {
+        s_cd_new_this_duel[id] = 1;
+        s_cd_new_distinct++;
+        s_cd_was_new_this_duel[id] =
+            psx_card_inventory_owned((int)id) == 0 ? 1u : 0u;
+    }
+    if (s_cd_copies_this_duel[id] < 255u) s_cd_copies_this_duel[id]++;
+    s_cd_awarded_total++;
+    if (s_cd_order_n < PSX_VM_CARD_DROPS_MAX) {
+        const int at = s_cd_order_n++;
+        s_cd_award_order[at] = (uint16_t)id;
+        s_cd_order_committed[at] = committed ? 1u : 0u;
+        s_cd_order_story[at] = story ? 1u : 0u;
+        if (!committed) { s_cd_pending_card = id; s_cd_pending_order = at; }
+    }
+}
+
+static void cd_discard_pending(void)
+{
+    if (s_cd_pending_order < 0 || s_cd_pending_order != s_cd_order_n - 1) return;
+    const uint32_t id = s_cd_pending_card;
+    s_cd_order_n--;
+    if (id >= 1 && id <= PSX_DROP_CARD_ID_MAX) {
+        if (s_cd_copies_this_duel[id]) s_cd_copies_this_duel[id]--;
+        if (s_cd_awarded_total) s_cd_awarded_total--;
+        if (!s_cd_copies_this_duel[id]) {
+            s_cd_new_this_duel[id] = 0;
+            s_cd_was_new_this_duel[id] = 0;
+            if (s_cd_new_distinct) s_cd_new_distinct--;
+        }
+    }
+    s_cd_pending_card = 0; s_cd_pending_order = -1;
+}
+
 /* Simulate one duel drop END TO END, exercising the REAL hook.
  *
  * The roll is dispatched WITHOUT the busy guard, so func_80021810's entry fires
@@ -392,11 +670,14 @@ static void cd_award_one(CPUState *cpu, uint32_t card, int *bail) {
  * real path. `drops` temporarily overrides the setting for one simulation. */
 int psx_card_drops_simulate(CPUState *cpu, int tier, int drops,
                                        uint32_t *out_card, int *out_granted,
-                                       int *out_bail) {
+                                       int *out_bail,
+                                       uint32_t *out_seed_before,
+                                       uint32_t *out_seed_after) {
     if (!cpu) return 0;
     const int saved_setting = g_card_drops;
-    if (drops >= 1) g_card_drops = drops;
+    if (drops >= 0 && drops <= PSX_VM_CARD_DROPS_MAX) g_card_drops = drops;
     const int granted_before = s_cd_granted;
+    const uint32_t seed_before = psx_mod_read_word(PSX_RNG_SEED_ADDR);
 
     CPUState saved = *cpu;
     int bail = 0;
@@ -416,6 +697,9 @@ int psx_card_drops_simulate(CPUState *cpu, int tier, int drops,
     if (out_card)    *out_card    = card;
     if (out_granted) *out_granted = s_cd_granted - granted_before;
     if (out_bail)    *out_bail    = bail;
+    if (out_seed_before) *out_seed_before = seed_before;
+    if (out_seed_after)  *out_seed_after =
+        psx_mod_read_word(PSX_RNG_SEED_ADDR);
     g_card_drops = saved_setting;
     return 1;
 }
@@ -441,10 +725,16 @@ int psx_card_drops_test_roll(CPUState *cpu, int tier, int do_award,
 }
 
 void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_ROLL_FN || s_cd_busy) return;
     s_cd_calls++;
     s_cd_last_ra = cpu->gpr[31];
     if (cpu->gpr[31] != PSX_DROP_ROLL_SITE) return;   /* not the duel drop */
+
+    /* A previous final roll should have restored at its award. Recover here
+     * as well so a debug interruption cannot leak a filtered row into a new
+     * duel. */
+    cd_smart_restore();
 
     /* A fresh duel drop: from here on "New!" means THIS duel. Cleared before
      * the extra<=0 return so the set tracks the single stock card too — the
@@ -452,37 +742,99 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
     memset(s_cd_new_this_duel, 0, sizeof s_cd_new_this_duel);
     memset(s_cd_copies_this_duel, 0, sizeof s_cd_copies_this_duel);
     memset(s_cd_was_new_this_duel, 0, sizeof s_cd_was_new_this_duel);
+    memset(s_cd_award_order, 0, sizeof s_cd_award_order);
+    memset(s_cd_order_committed, 0, sizeof s_cd_order_committed);
+    memset(s_cd_order_story, 0, sizeof s_cd_order_story);
     s_cd_new_distinct = 0;
     s_cd_awarded_total = 0;
+    s_cd_order_n = 0;
+    s_cd_pending_card = 0;
+    s_cd_pending_order = -1;
+    s_cd_rewrite_award = 0;
+    s_cd_award_is_story = 0;
+    s_cd_suppress_award = CD_SUPPRESS_NONE;
+    s_smart_skipped_duel = 0;
+    s_cd_no_card_reason = CD_SUPPRESS_NONE;
+    s_cd_zero_rng_calls_last = 0;
+    s_cd_zero_seed_before = 0;
+    s_cd_zero_seed_after = 0;
+    s_cd_zero_seed_pending = 0;
+    s_cd_zero_rng_exact = 0;
     s_cd_have_duel = 1;
     s_cd_page_duel = 1;
 
-    /* MODS > STORY REWARDS steers the game's own in-flight roll onto a fixed
-     * card. It goes LAST, so the extras below roll from the stock table and
-     * only the game's own drop -- the one the results screen announces -- is
-     * the scripted one. psx_story_rewards.c puts the table back on the award
-     * that follows this call. */
-    if (g_card_drops < 2) {           /* 1 = the stock game, untouched */
-        psx_story_rewards_steer_roll(cpu, cpu->gpr[4] & 0xFFu);
+    const uint32_t tier = cpu->gpr[4] & 0xFFu;
+    s_cd_last_tier = (int)tier;
+
+    /* At zero, a guaranteed campaign reward remains separate and is carried
+     * by the game's in-flight roll. With no eligible story reward, the stock
+     * roll still consumes its ordinary one RNG call, but its later award is
+     * skipped and the summary's misleading card strip is covered. */
+    if (g_card_drops == 0) {
+        const int story = tier < 3 ? psx_story_rewards_select() : 0;
+        s_cd_zero_duels++;
+        s_cd_zero_seed_before = psx_mod_read_word(PSX_RNG_SEED_ADDR);
+        s_cd_zero_seed_pending = 1;
+        if (story) {
+            s_cd_zero_story_duels++;
+            cd_track((uint32_t)story, 0, 1);
+            psx_story_rewards_steer_card(cpu, tier, story);
+        } else {
+            s_cd_no_card_reason = CD_SUPPRESS_ZERO_NORMAL;
+            s_cd_no_card_present_hold = 3;
+            s_cd_suppress_award = CD_SUPPRESS_ZERO_NORMAL;
+        }
+        return;
+    }
+
+    /* With one drop, the in-flight stock roll is the only award. Preview it
+     * for exact-order evidence, or steer it directly to an eligible story
+     * reward. psx_story_rewards.c restores the table at the award hook. */
+    if (g_card_drops < 2) {
+        const int story = tier < 3 ? psx_story_rewards_select() : 0;
+        const int smart = !story && cd_smart_effective();
+        int bail = 0;
+        const int prepared = smart ? cd_smart_prepare(tier) : 1;
+        if (smart && prepared < 0) {
+            s_cd_suppress_award = CD_SUPPRESS_SMART_EXHAUSTED;
+            s_cd_no_card_reason = CD_SUPPRESS_SMART_EXHAUSTED;
+            return;
+        }
+        const uint32_t card = story ? (uint32_t)story : cd_preview_roll(cpu, tier, &bail);
+        if (smart) s_smart_last_card = card;
+        if (!bail && card >= 1 && card <= PSX_DROP_CARD_ID_MAX)
+            cd_track(card, 0, story != 0);
+        else {
+            cd_smart_restore();
+            if (bail) s_cd_bails++;
+        }
+        if (story) psx_story_rewards_steer_card(cpu, tier, story);
         return;
     }
     int count = g_card_drops;
     if (count > PSX_VM_CARD_DROPS_MAX) count = PSX_VM_CARD_DROPS_MAX;
-
-    const uint32_t tier = cpu->gpr[4] & 0xFFu;
-    s_cd_last_tier = (int)tier;
 
     /* A nested guest call clobbers caller-saved registers and walks the stack
      * below $sp, so snapshot everything the in-flight call still needs. The
      * MEMORY effects (trunk counts, RNG advance) are the point and stay. */
     CPUState saved = *cpu;
     int granted = 0;
+    const int story = tier < 3 ? psx_story_rewards_select() : 0;
     /* Call #1 of the community stream: the pattern's discarded stock roll,
      * applied as a pure seed advance. */
     psx_mod_write_word(PSX_RNG_SEED_ADDR,
                        cd_lcg_advance(psx_mod_read_word(PSX_RNG_SEED_ADDR),
                                       1));
-    /* Cards 1..N-1 are dispatched here, each at its exact stream position:
+    /* A scripted campaign reward is a real award at position one. The normal
+     * table then supplies N-1 cards. Without one, all N cards are normal. */
+    if (story) {
+        int bail = 0;
+        s_cd_award_is_story = 1;
+        cd_award_one(cpu, (uint32_t)story, &bail);
+        s_cd_award_is_story = 0;
+        if (bail) s_cd_bails++; else granted++;
+    }
+    /* Normal cards before the in-flight final one are dispatched here:
      * six burned calls, then the roll is call seven. Card N is NOT ours: its
      * six burns are applied below and the game's own in-flight roll -- the
      * one this hook is running in front of -- then lands on precisely the
@@ -498,12 +850,29 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
      * sub-page 0, so the results screen showed one card page no matter how
      * many cards dropped. Measured live 2026-08-31: RESULT[55] held 3 while
      * prev_page stayed 0. */
-    for (int i = 0; i < count - 1; i++) {
+    const int early_normals = count - 1 - (story ? 1 : 0);
+    for (int i = 0; i < early_normals; i++) {
         psx_mod_write_word(PSX_RNG_SEED_ADDR,
                            cd_lcg_advance(
                                psx_mod_read_word(PSX_RNG_SEED_ADDR), 6));
         int bail = 0;
+        const int smart = cd_smart_effective();
+        const int prepared = smart ? cd_smart_prepare(tier) : 1;
+        /* The game's own in-flight roll is the final award and cannot simply
+         * disappear from this caller. Preserve one remaining copy slot for
+         * it; skipped bonus positions still consume their exact RNG call. */
+        if (smart && (prepared < 0 || s_smart_last_capacity <= 1)) {
+            cd_smart_restore();
+            psx_mod_write_word(PSX_RNG_SEED_ADDR,
+                               cd_lcg_advance(
+                                   psx_mod_read_word(PSX_RNG_SEED_ADDR), 1));
+            s_smart_skipped++;
+            s_smart_skipped_duel++;
+            continue;
+        }
         const uint32_t card = cd_roll_one(cpu, tier, &bail);
+        if (smart) s_smart_last_card = card;
+        cd_smart_restore();
         if (bail) { s_cd_bails++; break; }
         if (card == 0 || card > 722) continue;        /* empty table roll */
         cd_award_one(cpu, card, &bail);
@@ -514,9 +883,42 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
     psx_mod_write_word(PSX_RNG_SEED_ADDR,
                        cd_lcg_advance(psx_mod_read_word(PSX_RNG_SEED_ADDR),
                                       6));
+    {
+        int bail = 0;
+        const int smart = cd_smart_effective();
+        const int prepared = smart ? cd_smart_prepare(tier) : 1;
+        if (smart && prepared < 0) {
+            s_cd_suppress_award = CD_SUPPRESS_SMART_EXHAUSTED;
+            s_smart_last_card = 0;
+            cd_smart_restore();
+            if (!story)
+                s_cd_no_card_reason = CD_SUPPRESS_SMART_EXHAUSTED;
+        } else {
+            const uint32_t final_normal = cd_preview_roll(cpu, tier, &bail);
+            if (smart) s_smart_last_card = final_normal;
+            /* A story roll must now own the row until its award. Its visible
+             * card is the guaranteed reward; the pending normal card is
+             * substituted at award entry. With no story, leave the smart row
+             * up for the actual in-flight roll and restore it from that award
+             * hook. */
+            if (story || bail || final_normal < 1 ||
+                final_normal > PSX_DROP_CARD_ID_MAX)
+                cd_smart_restore();
+            if (!bail && final_normal >= 1 &&
+                final_normal <= PSX_DROP_CARD_ID_MAX) {
+                cd_track(final_normal, 0, 0);
+                s_cd_rewrite_award = story != 0;
+            } else if (bail) {
+                s_cd_bails++;
+            }
+        }
+    }
     *cpu = saved;
     s_cd_granted += granted;
-    psx_story_rewards_steer_roll(cpu, tier);
+    /* Keep the stock SPOILS panel truthful about the special first card. Its
+     * later award argument is rewritten to the previewed final normal card. */
+    if (story && (s_cd_pending_card || s_cd_suppress_award))
+        psx_story_rewards_steer_card(cpu, tier, story);
 
     if (granted > 0) {
         char msg[48];
@@ -524,32 +926,13 @@ void psx_mod_card_drops_on_roll(CPUState *cpu, uint32_t address) {
                       granted, granted == 1 ? "" : "s");
         host_osd_push(msg, 1500);
     }
-}
-
-/* Does the player already hold this card in the DECK?
- *
- * The trunk count alone is not "do I own one". A deck slot holds a copy that
- * has been moved out of the trunk, so a card sitting in the deck with no
- * spares reads trunk 0 and looked brand new -- reported from a results page
- * marking Twin-headed Thunder Dragon New! while a copy was in the deck being
- * played with.
- *
- * Validated the way psx_ygo_cheats.c validates it: every one of the 40 slots
- * must be a real card id. On any screen where the save is not resident the
- * region is zeros, and a zero fails the range test, so an unreadable deck
- * answers "not found" and the trunk test decides alone -- the old behaviour,
- * which is the safe direction to fail. Marking a genuinely new card as owned
- * would silently hide it; the reverse is merely the bug we already had. */
-static int cd_owned_in_deck(uint32_t id)
-{
-    uint16_t slot[PSX_DROP_DECK_N];
-    for (uint32_t i = 0; i < PSX_DROP_DECK_N; i++) {
-        slot[i] = (uint16_t)psx_mod_read_half(PSX_DROP_DECK_BASE + i * 2u);
-        if (slot[i] < 1u || slot[i] > PSX_DROP_CARD_ID_MAX) return 0;
+    if (s_smart_skipped_duel > 0) {
+        char msg[72];
+        snprintf(msg, sizeof msg,
+                 "Smart drops: %u reward%s skipped (all eligible copies filled)",
+                 s_smart_skipped_duel, s_smart_skipped_duel == 1 ? "" : "s");
+        host_osd_push(msg, 2200);
     }
-    for (uint32_t i = 0; i < PSX_DROP_DECK_N; i++)
-        if (slot[i] == (uint16_t)id) return 1;
-    return 0;
 }
 
 /* Every award on the duel-drop path, recorded for the extended New! list.
@@ -558,27 +941,61 @@ static int cd_owned_in_deck(uint32_t id)
  * site), and they must count as New exactly like the game's own drop. The $ra
  * filter is what keeps password buys, starter decks, etc. out. */
 void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_AWARD_FN) return;
     if (cpu->gpr[31] != PSX_DROP_AWARD_SITE) return;  /* not the duel drop */
-    const uint32_t id = cpu->gpr[4] & 0xFFFFu;
-    if (id < 1 || id > PSX_DROP_CARD_ID_MAX) return;
-    if (!s_cd_new_this_duel[id]) {
-        s_cd_new_this_duel[id] = 1;
-        s_cd_new_distinct++;
-        /* Pre-award trunk byte: 0 means the player holds no SPARE of this
-         * card. Read HERE, at the entry hook, because the very next thing the
-         * guest does is increment it. A deck copy is not counted there, so ask
-         * the deck too -- New! means "you owned none of this", and a card you
-         * are actively playing with does not qualify. */
-        s_cd_was_new_this_duel[id] =
-            (psx_mod_read_byte(PSX_DROP_TRUNK_BASE + id) == 0 &&
-             !cd_owned_in_deck(id)) ? 1u : 0u;
+    if (s_cd_zero_seed_pending) {
+        s_cd_zero_seed_after = psx_mod_read_word(PSX_RNG_SEED_ADDR);
+        s_cd_zero_rng_exact =
+            s_cd_zero_seed_after == cd_lcg_advance(s_cd_zero_seed_before, 1);
+        s_cd_zero_rng_calls_last = s_cd_zero_rng_exact ? 1u : 0u;
+        s_cd_zero_seed_pending = 0;
     }
-    if (s_cd_copies_this_duel[id] < 255u) s_cd_copies_this_duel[id]++;
-    s_cd_awarded_total++;
+    if (s_cd_suppress_award) {
+        const int reason = s_cd_suppress_award;
+        s_cd_suppress_award = CD_SUPPRESS_NONE;
+        s_cd_rewrite_award = 0;
+        cd_discard_pending();
+        psx_story_rewards_restore_table();
+        cd_smart_restore();
+        s_cd_suppressed_awards++;
+        if (reason == CD_SUPPRESS_SMART_EXHAUSTED) {
+            s_smart_skipped++;
+            s_smart_skipped_duel++;
+            host_osd_push("Smart drops: no eligible card; nothing awarded", 2500);
+        } else {
+            s_cd_zero_suppressed++;
+            host_osd_push("Card drops: no normal card awarded", 1800);
+        }
+        psx_mod_skip_current_function(cpu);
+        return;
+    }
+    if (s_cd_rewrite_award && s_cd_pending_card)
+        cpu->gpr[4] = s_cd_pending_card;
+    const uint32_t id = cpu->gpr[4] & 0xFFFFu;
+    if (id < 1 || id > PSX_DROP_CARD_ID_MAX) {
+        /* A damaged/empty resident row must not leave either temporary table
+         * installed, even though a valid 2048-weight row cannot get here. */
+        psx_story_rewards_restore_table();
+        cd_smart_restore();
+        return;
+    }
+    if (s_cd_pending_card) {
+        if (id == s_cd_pending_card && s_cd_pending_order >= 0) {
+            s_cd_order_committed[s_cd_pending_order] = 1;
+            s_cd_pending_card = 0; s_cd_pending_order = -1;
+        } else {
+            cd_discard_pending();
+            cd_track(id, 1, s_cd_award_is_story);
+        }
+    } else {
+        cd_track(id, 1, s_cd_award_is_story);
+    }
+    s_cd_rewrite_award = 0;
     /* The game has read its card out of the steered table; put the table back
      * before anything else looks at it. */
     psx_story_rewards_restore_table();
+    cd_smart_restore();
 }
 
 /* Chest display-list builder entry: arm the overlay for this build.
@@ -593,6 +1010,7 @@ void psx_mod_card_drops_on_award(CPUState *cpu, uint32_t address) {
  * state, so nothing here reaches a save file. */
 void psx_mod_card_drops_on_chest_build(CPUState *cpu,
                                                   uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_CHEST_BUILD_FN) return;
     s_cd_chest_builds++;
     s_cd_chest_armed = s_cd_have_duel;
@@ -609,6 +1027,7 @@ void psx_mod_card_drops_on_chest_build(CPUState *cpu,
  * screen. */
 void psx_mod_card_drops_on_chest_sort(CPUState *cpu,
                                                  uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_CHEST_SORT_FN || !s_cd_chest_armed) return;
     if (cpu->gpr[31] != PSX_DROP_CHEST_SORT_SITE1 &&
         cpu->gpr[31] != PSX_DROP_CHEST_SORT_SITE2) return;
@@ -688,21 +1107,22 @@ static uint8_t  s_cd_p3_test[PSX_DROP_P3_SCRATCH_MAX];
 static int      s_cd_p3_test_len;
 static int      s_cd_p3_applies;      /* corrections taken (observability) */
 static int      s_cd_p3_overrides;    /* widget overrides taken */
+static int      s_cd_p3_stale;        /* host frames since results hook ran */
 
 static int cd_p3_gate(void) {
     return s_cd_page_duel && s_cd_awarded_total > 1;
 }
 
-/* The page's rows in display order: cards the player owned none of first,
- * then ascending id — the same order card_drops_list reports. */
+/* One row per distinct card, preserving first-award order. This keeps a
+ * scripted reward first even when a later normal card is newly owned. */
 static int cd_p3_row_ids(int *ids, int cap) {
     int n = 0;
-    for (int pass = 0; pass < 2; pass++)
-        for (int id = 1; id <= PSX_DROP_CARD_ID_MAX && n < cap; id++) {
-            if (!s_cd_copies_this_duel[id]) continue;
-            if ((s_cd_was_new_this_duel[id] ? 1 : 0) != (pass == 0)) continue;
-            ids[n++] = id;
-        }
+    uint8_t seen[PSX_DROP_CARD_ID_MAX + 1]; memset(seen, 0, sizeof seen);
+    for (int i = 0; i < s_cd_order_n && n < cap; i++) {
+        const int id = s_cd_award_order[i];
+        if (id < 1 || id > PSX_DROP_CARD_ID_MAX || seen[id]) continue;
+        seen[id] = 1; ids[n++] = id;
+    }
     return n;
 }
 
@@ -888,44 +1308,129 @@ static uint32_t cd_p3_publish_stream(int sub) {
  * call our hooks would see). */
 static uint32_t s_cd_p3_state_ticks;
 
+static void cd_no_card_draw_text(const char *text, int x, int y)
+{
+    for (; text && *text; text++, x += 8) {
+        unsigned c = (unsigned char)*text;
+        if (c < 32u || c > 126u) c = '?';
+        const unsigned char *glyph = FONT8[c - 32u];
+        for (int gy = 0; gy < 8; gy++) {
+            const unsigned bits = glyph[gy];
+            for (int gx = 0; gx < 8; gx++) {
+                if (!(bits & (1u << gx))) continue;
+                const int px = x + gx, py = y + gy;
+                if (px < 0 || px >= PSX_DROP_NO_CARD_W ||
+                    py < 0 || py >= PSX_DROP_NO_CARD_H) continue;
+                /* One-pixel black offset keeps the white bitmap readable over
+                 * the textured results art at every scaling mode. */
+                if (px + 1 < PSX_DROP_NO_CARD_W && py + 1 < PSX_DROP_NO_CARD_H)
+                    s_cd_no_card_canvas[(py + 1) * PSX_DROP_NO_CARD_W + px + 1] =
+                        0xFF000000u;
+                s_cd_no_card_canvas[py * PSX_DROP_NO_CARD_W + px] = 0xFFFFFFFFu;
+            }
+        }
+    }
+}
+
+static void cd_no_card_prepare_canvas(int reason)
+{
+    if (s_cd_no_card_canvas_reason == reason) return;
+    s_cd_no_card_canvas_reason = reason;
+    for (int y = 0; y < PSX_DROP_NO_CARD_H; y++) {
+        for (int x = 0; x < PSX_DROP_NO_CARD_W; x++) {
+            const int edge = y < 2 || y >= PSX_DROP_NO_CARD_H - 2 ||
+                             x < 2 || x >= PSX_DROP_NO_CARD_W - 2;
+            s_cd_no_card_canvas[y * PSX_DROP_NO_CARD_W + x] =
+                edge ? 0xFF808080u : 0xFF181818u;
+        }
+    }
+    const char *label = reason == CD_SUPPRESS_SMART_EXHAUSTED
+                            ? "NO ELIGIBLE CARD DROP"
+                            : "NO NORMAL CARD DROP";
+    cd_no_card_draw_text(label,
+        (PSX_DROP_NO_CARD_W - (int)strlen(label) * 8) / 2,
+        (PSX_DROP_NO_CARD_H - 8) / 2);
+}
+
+int psx_card_drops_no_card_image(const uint32_t **pixels, int *w, int *h)
+{
+    const uint32_t result = psx_mod_read_word(PSX_DROP_RESULT_PTR);
+    if (s_cd_no_card_reason == CD_SUPPRESS_NONE || !s_cd_page_duel ||
+        s_cd_p3_stale >= 8 ||
+        !result || psx_mod_read_byte(result + PSX_DROP_PAGE_OFF) != 0u ||
+        psx_mod_read_byte(result + 52u) != 68u ||
+        psx_mod_read_byte(result + 54u) != 69u ||
+        psx_ygo_netplay_session()) return 0;
+    cd_no_card_prepare_canvas(s_cd_no_card_reason);
+    if (pixels) *pixels = s_cd_no_card_canvas;
+    if (w) *w = PSX_DROP_NO_CARD_W;
+    if (h) *h = PSX_DROP_NO_CARD_H;
+    return 1;
+}
+
+void psx_card_drops_no_card_origin(int *x, int *y)
+{
+    if (x) *x = PSX_DROP_NO_CARD_X;
+    if (y) *y = PSX_DROP_NO_CARD_Y;
+}
+
+int psx_card_drops_no_card_needs_present(void)
+{
+    return s_cd_no_card_present_hold > 0;
+}
+
+void psx_card_drops_no_card_placed(const int *placement)
+{
+    if (placement)
+        memcpy(s_cd_no_card_placement, placement, sizeof s_cd_no_card_placement);
+}
+
 void psx_mod_card_drops_on_results_state(CPUState *cpu,
                                                     uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_RESULTS_STATE_FN) return;
     const uint32_t result = psx_mod_read_word(PSX_DROP_RESULT_PTR);
     if (result) s_cd_p3_prev_page = psx_mod_read_byte(result + PSX_DROP_PAGE_OFF);
     s_cd_p3_state_ticks++;
+    if (s_cd_no_card_reason != CD_SUPPRESS_NONE)
+        s_cd_no_card_present_hold = 3;
 }
 
 /* Host-frame update for the New! tag overlay: visible only while the CARD
  * DROPS page is the one on screen AND the results state function is still
  * running (staleness catches the Cross exit, which fires no page apply). */
 void psx_card_drops_tick(void) {
+    const int smart_allowed = !psx_ygo_netplay_session();
+    if (!smart_allowed) {
+        cd_smart_restore();
+        return;   /* netplay: per-machine layer, peers must stay bit-identical */
+    }
     static uint32_t last_ticks;
-    static int stale;
     if (s_cd_p3_state_ticks != last_ticks) {
         last_ticks = s_cd_p3_state_ticks;
-        stale = 0;
-    } else if (stale < 1000) {
-        stale++;
+        s_cd_p3_stale = 0;
+    } else if (s_cd_p3_stale < 1000) {
+        s_cd_p3_stale++;
         /* The results screen is gone: this duel's card record must not
          * survive into the next duel's results (see s_cd_page_duel). */
         /* Threshold, not equality: `stale` saturates at its cap, so a record
          * created while it already sat there (or any time the counter had
          * run past the mark) would never have been cleared. */
-        if (stale >= 64 && s_cd_page_duel) {
+        if (s_cd_p3_stale >= 64 && s_cd_page_duel) {
             s_cd_page_duel = 0;
-            s_cd_awarded_total = 0;
-            memset(s_cd_copies_this_duel, 0, sizeof s_cd_copies_this_duel);
-            memset(s_cd_was_new_this_duel, 0, sizeof s_cd_was_new_this_duel);
+            /* Keep the completed record queryable for regression evidence.
+             * The page gate is now closed, and the next real roll replaces
+             * every array before another results screen can use it. */
         }
     }
+    if (s_cd_no_card_present_hold > 0) s_cd_no_card_present_hold--;
     uint8_t rows[PSX_CD_OVERLAY_ROWS] = { 0 };
-    const int on = s_cd_p3_active && stale < 8;
+    const int on = s_cd_p3_active && s_cd_p3_stale < 8;
     /* Off the page (another page, a loaded state) or the results screen gone
      * for a second (Cross exit fires no apply): give string 0x8000 back to
      * the game. The 64-frame mark, not the overlay's 8, so a hitch on a slow
      * machine between the page turn and its draw cannot blank the page. */
-    if (!s_cd_p3_active || stale >= 64) cd_p3_unpublish();
+    if (!s_cd_p3_active || s_cd_p3_stale >= 64) cd_p3_unpublish();
     if (on) {
         int ids[PSX_DROP_CARD_ID_MAX];
         const int n = cd_p3_row_ids(ids, PSX_DROP_CARD_ID_MAX);
@@ -939,6 +1444,7 @@ void psx_card_drops_tick(void) {
 
 void psx_mod_card_drops_on_page_apply(CPUState *cpu,
                                                  uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_PAGE_APPLY_FN) return;
     /* Gate shut: also forget that the page was ever showing. Returning early
      * without clearing this left `active` true from a PREVIOUS duel's visit,
@@ -1002,6 +1508,7 @@ void psx_mod_card_drops_on_page_apply(CPUState *cpu,
 
 void psx_mod_card_drops_on_widget_draw(CPUState *cpu,
                                                   uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!cpu || address != PSX_DROP_WIDGET_DRAW_FN) return;
     if (!s_cd_p3_pending) return;
     if ((cpu->gpr[4] & 0xFFFFFFFFu) != PSX_DROP_WIDGET0) return;
@@ -1075,6 +1582,7 @@ void psx_card_drops_p3_state(int *active, int *sub, int *subs,
 void psx_card_drops_layout(int text_y, int split, int name_x,
                                       int num_x, int spr_x, int spr_y,
                                       int spr_dy) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (text_y != PSX_CD_OVERLAY_KEEP) s_cd_p3_text_y = text_y;
     if (split  != PSX_CD_OVERLAY_KEEP) s_cd_p3_split  = split;
     if (name_x != PSX_CD_OVERLAY_KEEP && name_x >= 0 && name_x <= 255)
@@ -1111,8 +1619,119 @@ void psx_card_drops_layout_get(int *text_y, int *split, int *name_x,
 /* Live setting override for the test loop: winning a real duel per slider
  * value is the only other way to exercise the gate. */
 int psx_card_drops_set(int drops) {
-    if (drops < 1 || drops > PSX_VM_CARD_DROPS_MAX) return 0;
+    if (drops < 0 || drops > PSX_VM_CARD_DROPS_MAX) return 0;
+    if (s_card_drops_row >= 0 &&
+        psx_video_menu_get_row(s_card_drops_row) != drops)
+        psx_video_menu_set_row(s_card_drops_row, drops);
     g_card_drops = drops;
+    return 1;
+}
+
+int psx_card_drops_smart_set(int enabled)
+{
+    const int value = enabled ? 1 : 0;
+    (void)psx_drop_edits_smart_drop_set(value);
+    if (!value) cd_smart_restore();
+    return 1;
+}
+
+int psx_card_drops_smart_state_json(char *out, unsigned cap)
+{
+    if (!out || cap < 256u) return 0;
+    const int n = snprintf(out, cap,
+        "\"configured\":%d,\"effective\":%d,\"normal_awards\":%d,"
+        "\"row_enabled\":%d,"
+        "\"toggle_enabled\":%d,"
+        "\"attempts\":%u,\"applied\":%u,\"unchanged\":%u,"
+        "\"fallbacks\":%u,\"restores\":%u,\"skipped\":%u,"
+        "\"skipped_duel\":%u,\"table_active\":%d,"
+        "\"last_tier\":%d,\"last_eligible\":%d,\"last_excluded\":%d,\"last_capacity\":%d,"
+        "\"last_eligible_weight\":%u,\"last_card\":%u",
+        cd_smart_configured(), cd_smart_effective(), g_card_drops,
+        !psx_ygo_netplay_session(), !psx_ygo_netplay_session(),
+        s_smart_attempts, s_smart_applied, s_smart_unchanged,
+        s_smart_fallbacks, s_smart_restores, s_smart_skipped,
+        s_smart_skipped_duel, s_smart_active,
+        s_smart_last_tier, s_smart_last_eligible, s_smart_last_excluded,
+        s_smart_last_capacity, s_smart_last_eligible_weight, s_smart_last_card);
+    return n > 0 && (unsigned)n < cap ? n : 0;
+}
+
+int psx_card_drops_suppression_state_json(char *out, unsigned cap)
+{
+    if (!out || cap < 320u) return 0;
+    const uint32_t result = psx_mod_read_word(PSX_DROP_RESULT_PTR);
+    const int page = result ?
+        (int)psx_mod_read_byte(result + PSX_DROP_PAGE_OFF) : -1;
+    const int visible = s_cd_no_card_reason != CD_SUPPRESS_NONE &&
+                        s_cd_page_duel &&
+                        s_cd_p3_stale < 8 && page == 0 &&
+                        !psx_ygo_netplay_session();
+    const char *reason = s_cd_no_card_reason == CD_SUPPRESS_ZERO_NORMAL
+                             ? "zero_normal"
+                             : s_cd_no_card_reason == CD_SUPPRESS_SMART_EXHAUSTED
+                                   ? "smart_exhausted" : "none";
+    const char *pending = s_cd_suppress_award == CD_SUPPRESS_ZERO_NORMAL
+                              ? "zero_normal"
+                              : s_cd_suppress_award == CD_SUPPRESS_SMART_EXHAUSTED
+                                    ? "smart_exhausted" : "none";
+    const int n = snprintf(out, cap,
+        "\"zero_configured\":%d,\"zero_effective\":%d,"
+        "\"reason\":\"%s\",\"pending_reason\":\"%s\","
+        "\"zero_duels\":%u,\"zero_story_duels\":%u,"
+        "\"suppressed_awards\":%u,\"zero_suppressed_awards\":%u,"
+        "\"rng_calls_last\":%u,\"rng_exact_one\":%d,"
+        "\"rng_seed_before\":%u,\"rng_seed_after\":%u,"
+        "\"rng_policy\":\"one in-flight stock roll; no retries\","
+        "\"page\":%d,\"visible\":%d,\"stale\":%d,"
+        "\"placement\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
+        g_card_drops == 0, g_card_drops == 0 && !psx_ygo_netplay_session(),
+        reason, pending,
+        s_cd_zero_duels, s_cd_zero_story_duels, s_cd_suppressed_awards,
+        s_cd_zero_suppressed,
+        s_cd_zero_rng_calls_last, s_cd_zero_rng_exact,
+        s_cd_zero_seed_before, s_cd_zero_seed_after,
+        page, visible, s_cd_p3_stale,
+        s_cd_no_card_placement[0], s_cd_no_card_placement[1],
+        s_cd_no_card_placement[2], s_cd_no_card_placement[3],
+        s_cd_no_card_placement[4], s_cd_no_card_placement[5],
+        s_cd_no_card_placement[6], s_cd_no_card_placement[7],
+        s_cd_no_card_placement[8], s_cd_no_card_placement[9]);
+    return n > 0 && (unsigned)n < cap ? n : 0;
+}
+
+int psx_card_drops_smart_distribution(
+    int tier, uint32_t seed, int rolls,
+    uint32_t counts[PSX_DROP_CARD_ID_MAX],
+    uint16_t weights[PSX_DROP_CARD_ID_MAX],
+    int *eligible, int *excluded, int *fallback, uint32_t *final_seed)
+{
+    if (!counts || !weights || tier < 0 ||
+        tier >= (int)PSX_DROP_TIER_COUNT || rolls < 1 || rolls > 1000000)
+        return 0;
+    uint16_t original[PSX_DROP_CARD_ID_MAX];
+    uint32_t eligible_weight = 0;
+    int fb = 0;
+    if (!cd_smart_build((unsigned)tier, original, weights,
+                        eligible, excluded, &eligible_weight, NULL, &fb))
+        return 0;
+    (void)eligible_weight;
+    if (fallback) *fallback = fb;
+    memset(counts, 0, sizeof(uint32_t) * PSX_DROP_CARD_ID_MAX);
+    uint32_t s = seed;
+    for (int r = 0; r < rolls; r++) {
+        s = cd_lcg_advance(s, 1);
+        const uint32_t roll = ((((s >> 16) & 0x7FFFu) & 0x7FFu) + 1u);
+        uint32_t cumulative = 0;
+        for (int i = 0; i < PSX_DROP_CARD_ID_MAX; i++) {
+            cumulative += weights[i];
+            if (roll <= cumulative) {
+                counts[i]++;
+                break;
+            }
+        }
+    }
+    if (final_seed) *final_seed = s;
     return 1;
 }
 
@@ -1141,11 +1760,12 @@ PSX_MOD_CONSTRUCTOR(psx_card_drops_install) {
 }
 
 void psx_card_drops_register_menu(void) {
-    (void)psx_video_menu_add_number(
+    s_card_drops_row = psx_video_menu_add_number(
         PSX_VM_MENU_MODS, "Card drops",
-        "1 is stock. 2+ deals N the 15-card-mod way",
-        1, PSX_VM_CARD_DROPS_MAX, /*slider*/1,
+        "0 skips normal cards; guaranteed story rewards stay separate",
+        0, PSX_VM_CARD_DROPS_MAX, /*slider*/1,
         "card_drops", PSX_VM_CARD_DROPS_DEFAULT, cd_row_changed);
+    psx_video_menu_set_row_mark(s_card_drops_row, PSX_VM_CARD_DROPS_DEFAULT);
 }
 
 void psx_card_drops_register_hooks(void) {

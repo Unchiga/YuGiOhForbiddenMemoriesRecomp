@@ -1,5 +1,123 @@
 # Release notes
 
+## 0.6.0
+
+Test release. Extract this over your existing install as usual. Your saves,
+save states and settings all carry over.
+
+This is the large FM Editor and netplay testing release. It combines the new
+authoring tools, package format, Card Shop and password-card improvements,
+effect fixes, and the latest two-player privacy work in one build.
+
+### FM Editor
+
+The separate tools are now one resizable **FM Editor**, with persistent tabs
+for Cards, Drop Tables, Fusions, Dialogue and CPU duelists. The shared strip
+and every manager scale properly on high-resolution and tight desktop layouts.
+
+Card Manager can edit names, descriptions, stats, Guardian Stars, type, level,
+attribute, password price, sell value, password, colors and artwork. It also
+authors spell/trap effects, summon and flip triggers, multiple effects on one
+monster, equip bonuses and eligibility recipes, field-spell creature lists,
+rituals and effect targets. Large face-art and duel-thumbnail previews are
+crisp integer-scaled images rather than filtered thumbnails.
+
+Descriptions use the game's actual eight-line, 21-character-per-line layout.
+Long descriptions use the extended safe arena, and the previous false warning
+on Melting Red Shadow's 21-character `melts into the earth,` line is gone.
+
+Drop Tables can safely clear a duelist, randomize, author guaranteed drops,
+Smart Drops and conditional duel StarChip rewards, or export all 117 complete
+rank tables for bulk editing. Dialogue editing reports its exact remaining
+bank capacity and imports longer, automatically wrapped translations
+transactionally. CPU names propagate to all title surfaces, and Free Duel
+completion can be viewed, edited or disabled.
+
+`Export MOD Package` and `Import MOD Package` carry the complete project in a
+single `.ygomods` file: cards and images, effects and equips, fusions,
+dialogue, CPU decks/AI/names/portraits, drops, StarChip rules, Card Shop data
+and mod settings. Imports are validated before replacing the current layer.
+
+### Password cards and Card Shop
+
+Card passwords are shown on the game's detail views, including the Library,
+chest viewer and password-purchase flow. Card Manager can edit both password
+and price, and those values follow the card through package export/import.
+
+Triangle in the Card Shop opens the safe Sell screen. Left/Right changes the
+quantity, L1/R1 skips ten cards, Square selects every copy, Start or R2 selects
+the trunk and L2 clears it, and Triangle views the card. A separate review
+screen prevents accidental sales; deck cards are never sold and stale save
+transactions are rejected.
+
+The Sell layout is cleaner and sharper, with redundant DECK, KEEP, custom
+price and repeated-credit labels removed. Values use clean downward shop
+denominations (266 / 66 / 26 become 250 / 60 / 25). Resale is capped by both
+the direct password price and the cheapest eligible pack, so neither a direct
+purchase nor every card in a pack can be resold for a profit. Card Manager
+shows the effective cap.
+
+Default rarity floors make 2500+ ATK monsters Rare or higher and 3000+ ATK
+monsters Legendary. Megamorph and Blue-eyes Ultimate Dragon are always
+Legendary, including after importing a partial Card Shop configuration.
+
+### Effects and duel results
+
+Monster-triggered effects now preserve and drain their complete queues.
+Previously dangerous combinations—including monsters carrying Dark Hole or
+Dragon Capture Jar behavior and monsters with multiple summon/flip effects—no
+longer crash, stall or discard the second effect.
+
+Custom StarChip rewards now have a one-pixel-taller opaque backing and remain
+composited for the two frames after leaving the summary, preventing the
+game's old one-to-five-StarChip sprites from flashing through during a page
+turn. Large six-digit rewards and cap arithmetic are displayed correctly.
+
+### Netplay
+
+Hidden-information two-player duels cover only information the remote player
+must not see. Opponent hand cards are covered from the first draw-slide frame,
+and the full-window private card viewer cover remains through its slide-out
+animation. The fusion assistant now follows the local seat, so it works for
+player two while remaining hidden on the opponent's turn.
+
+The new **GAME > Native-rate rendering** option is on by default. Above 1x,
+simulation, input and audio still run at the selected speed while expensive
+full-resolution presentation stays at the native 59.94 FPS. This keeps 2x-4x
+play and menu audio stable on high-resolution displays; it can be disabled on
+hardware that should render every accelerated frame.
+
+### Validation
+
+The stress package changes all 722 cards and mixes long descriptions,
+passwords, effects, equips, drops, dialogue, CPU data and reward rules. It was
+exported, imported and round-tripped without a changed member, then exercised
+in real Free Duels. The Card Shop's full 722-card economy audit found no direct
+or pack resale exploit, its 26-screen transaction suite passed, and the live
+description boundary/reload/restart suite passed with adjacent memory intact.
+
+### Fixed: first run stopped at "Failed to extract toolchain zip" / "tar exit 1"
+
+The setup host downloads a portable cmake/clang pack on a machine that has no
+compiler, then unpacks it. It used to hand that zip to the system's tar (and
+on Linux to unzip first), and judged success by the tool's exit code. GNU tar
+cannot read a zip, so a Linux box without unzip failed; on Windows only
+tar.exe was tried, and under Wine or Proton the stub PowerShell exits 0 having
+extracted nothing. The setup now unpacks the zip with its own built-in
+extractor first on every platform; tar, PowerShell and unzip are fallbacks
+only, and every attempt is judged by whether cmake actually landed. A download
+cut short is reported as an incomplete zip and leaves no half-installed
+directory, and the error names what was tried and how to unpack by hand and
+point the toolchain directory variable at it.
+
+### Also
+
+Audio at 2x stays fed on the software renderer; the app icon is the
+Millennium Puzzle at every size; the runtime moved onto the current upstream
+psxrecomp with the title's private layers carried over (plugin state in
+full-machine snapshots, an explicit quit lifecycle, and protected accelerated
+Form2 disc reads).
+
 ## 0.5.3
 
 Extract this over your existing install as usual. Your saves, save states and

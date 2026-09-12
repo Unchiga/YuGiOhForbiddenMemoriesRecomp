@@ -18,10 +18,25 @@ cmake --build build-dbg --target psx-runtime     # debug
 cmake --build build     --target psx-runtime     # release
 ```
 
+`build-dbg` is a RELEASE-typed build with the debug tools on (Play.sh's
+documented configure line: `-DCMAKE_BUILD_TYPE=Release -DPSX_REWIND=OFF
+-DPSX_DEBUG_TOOLS=ON`). Check `grep CMAKE_BUILD_TYPE build-dbg/CMakeCache.txt`
+before trusting any timing: on 2026-09-11 it had been reconfigured as `Debug`
+(no optimisation), and because Play.sh prefers build-dbg the player's intro
+FMV ran at 56 fps with the guest thread 93% busy and tens of thousands of
+audio underruns per interval, worse at 2x. Reconfigured back to Release the
+same movie holds 59.9 / 119.9 fps at 1x / 2x with zero underruns. Measure
+with `PSX_RUNTIME_PERF_DIAG=1 PSX_RUNTIME_PERF_DIAG_MS=2000`, whose stdout
+`runtime cadence` lines carry guest Hz, SPU Hz, underruns, and the guest /
+pacer split in ms per second; `audio_stats` on the debug port gives the same
+tap counters.
+
 Only one game holds the debug port. A second launch prints `debug server
-bind(4370) FAILED` and every query keeps going to the OLD process, so after a
-rebuild stop the old one first: `pkill -x Yu_Gi_Oh_Forbid` (the process name
-is cut to 15 characters; `pkill -f` on the full name kills your own shell too).
+bind(4370) FAILED` and every query keeps going to the OLD process. Verify the
+port before launch, record the exact PID/process handle returned by the test,
+and stop only that owned process. Never use a broad `pkill` pattern and never
+send a debug command until `card_packs.dir` proves the server belongs to the
+expected scratch profile.
 
 Player data lives in `~/Documents/My Games/Yu-Gi-Oh Forbidden Memories Recompiled/`
 (the runtime prints `psxrecomp: player data in ...` at start). Your own edited
@@ -111,6 +126,75 @@ next digit (6-frame holds, ~0.5 s apart), cross 12 confirms and shows the card
 (title strip, frame color, art) with CARD NUMBER and the starchip price,
 then an EXCHANGE / QUIT menu. down 6 + cross 12 quits without buying.
 
+CARD SHOP: from CAMPAIGN on the loaded-save menu, Cross enters the shopkeeper
+room. Dismiss `Hello there!`, select CARD SHOP, and dismiss `What are you
+looking for?` to open Buy Card Packs. Triangle opens Sell. The quantity editor
+is read-only: Up/Down browses, Left/Right changes one, L1/R1 changes ten,
+Square toggles the selected card's maximum, Start toggles the complete trunk,
+L2 clears every quantity, R2 selects every trunk copy, Triangle views the
+selected card, and Circle cancels the whole Sell visit (the pack panel then
+says `SELL CANCELLED. NOTHING SOLD.`). Cross opens a separate confirmation
+screen; only a second Cross commits, and Circle there is GO BACK: it returns
+to the editor with every quantity kept and the note `NOTHING SOLD. QUANTITIES
+KEPT.` (it used to fall through to the editor's Circle and cancel the visit).
+Every trunk copy can be selected, regardless of deck count, and the active
+deck is never changed.
+
+Layout (2026-09-11), all on the 304x230 panel at guest (8,5). The header box
+carries the title and the star readout of the CURRENT starchips. The body
+starts with three totals lines in plain words: `SALE VALUE` (gross, full
+width, up to twelve digits), `YOU GET` (the credited amount) with the right
+half of its line reading `SELLING n` copies, or the red `MAX IS 999999` once
+the limit makes YOU GET smaller than the sale value, then `YOU WILL HAVE`
+(the balance after the sale). Under a rule, the table header reads `CARD n
+OF m` (`n OF m` once that would touch the TRUNK tick) / `TRUNK` / `SELL` /
+`PRICE` with column ticks in the gutters, followed by six rows around the
+cursor (names cut with `...` at 113px; six-digit prices are 54px in this
+font and end at x=290; a stock-derived price is gold, a card.ini override is
+blue, a zero price is grey; the cursor row has a gold bar, a gold name, and a
+gold outline round its SELL cell). A two-pixel scrollbar on the right appears
+once the trunk has more than six cards. The two-line strip below spells out
+the selected card: the full name (only "Graveyard and the Hand of Invitation"
+is wider than the 276px line and is cut), then `No.NNN  DECK d  KEEP k`, with
+a blue `CUSTOM PRICE` appended only when the price is an override (the
+spacing tightens, then the tag shortens to `CUSTOM`, so KEEP 255 still fits).
+There is no key-prompt line any more: the bindings are unchanged, but the
+panel shows only the VIEW / REVIEW / CANCEL buttons. Any pending message
+(`SELECT AT LEAST ONE CARD`, `INVENTORY OR PRICES CHANGED - REVIEW AGAIN`,
+the GO BACK note `NOTHING SOLD. CHOICES KEPT.`) replaces that strip,
+word-wrapped and centred on its two lines, red for a refusal and grey for a
+note, until the next press.
+The confirmation screen keeps the same totals under a red `Confirm Sale`
+title, then a dark-red band `SELL n COPIES OF m CARDS?` / `THIS CANNOT BE
+UNDONE.`, a `CARD / SELL / VALUE` list of only the selected cards (four rows
+plus `AND n MORE CARDS`), one status line (`YOUR DECK IS NOT CHANGED.`,
+`THESE CARDS ARE WORTH NOTHING.` or `STARCHIPS STOP AT 999999.`),
+and only the SELL NOW / GO BACK buttons. An empty trunk shows `YOUR TRUNK IS
+EMPTY.` / `THERE IS NOTHING TO SELL.` / `CARDS IN YOUR DECK ARE NEVER SOLD.`
+with a BACK button. A completed sale returns to the pack panel with `SOLD n
+COPIES +c CHIPS` in green (wrapped onto two lines when wide); refusals there
+stay red. The raw `screenshot` never contains the panel; use `present_shot`
+(960x755 with the host menu bar, the game area is exactly 3x native).
+`python3 tools/sell_ui_capture.py --card <copy source> --output /tmp/<new>`
+walks every Sell state with controller presses plus a ydotool keyboard pass
+and writes both the composed and the native captures with hashes.
+
+After a sale, close the
+panel, move from CARD SHOP to SAVE, and
+confirm both SAVE? and OVERWRITE?; mounting/loading changes the memory-card
+mtime and is not proof that a save occurred. Restart with a new explicit
+portable `--memcard-dir` containing a copy of that saved card.
+
+For deterministic checks, debug command `card_shop_sell` takes `op` equal to
+`preview`, `set` (`card`, `quantity`), `all`, `clear`, `review`, `state`,
+`confirm`, or `cancel`. Preview and selection do not write. Confirm requires
+the review state and rechecks the snapshotted deck, trunk, starchips and listed
+sell prices, returning `INVENTORY OR PRICES CHANGED - REVIEW AGAIN` if any
+changed. Confirm is rejected during stock netplay. The inventory addresses are
+live deck `0x801D0200` (40
+u16 card IDs), live trunk `0x801D0250` (722 bytes), and live starchips
+`0x801D07E0` (u32); the save mirror is `+0x3000`. The title cap is 999,999.
+
 Free Duel and duels: `tools/goto_freeduel.py`, `tools/goto_duel.py`,
 `tools/duel_turns.py`. From the loaded-save menu: FREE DUEL, cross 20,
 cross 40 (clears the SELECT OPPONENT prompt) -> grid (mode 0xC6) with the
@@ -119,6 +203,15 @@ EMPTY tile under Build Deck, then three duelists; row 2 five duelists. DOWN
 from Build Deck lands on the empty tile (no label, cross does nothing); RIGHT
 twice (6 frames each) reaches the first duelist of row 1. cross 14 -> deck
 view (mode 0xC3), circle 12 starts the duel, the hand is dealt ~15 s later.
+
+`{"cmd":"free_duel_completion"}` reports pending cursor `[column,row]`,
+the stock grid's exact signed `scroll_y`, selected opponent/fraction and a
+`border_mask` of completed visible cells. Build Deck and unavailable cells
+must report `selected:-1` immediately. At a settled scroll, a global cell at
+row `r`, column `c` is framed at guest
+`[19 + round(c*56.25), 40 + r*52 - scroll_y]` while it intersects the
+40-through-187 grid viewport. `tools/free_duel_completion_regression.py`
+walks every row in both directions and checks the mask/placement.
 
 To control the hand, write the 40-card deck at 0x801D0200 (u16 little-endian
 ids) WHILE ON THE GRID, before cross: `{"cmd":"write_mem","addr":"801D0200",
@@ -172,7 +265,10 @@ g['btn'][i]            # button centres: 0 Save, 1 Restore stock, 2 Open folder,
                        # modal: modal_ok / modal_cancel), 13 Dev Card Effects
 g['value'][f]          # field rects [x,y,w,h]: 0 name, 1 description, 2 atk, 3 def,
                        # 4 star1, 5 star2, 6 type, 7 level, 8 attribute, 9 price,
-                       # 10 password, 11 color, then the effect fields
+                       # 10 sell price, 11 password, 12 frame, 13 name color,
+                       # 14 effect, 15 amount, 16 target, 17 terrain, 18 ritual,
+                       # 19 equip bonus, 20 equips, 21 boosts,
+                       # 22 field creatures, 23 trap ATK max
 g['modal_ok'], g['modal_cancel']                 # the confirm dialog buttons
 dbg.q({'cmd':'card_manager_set','card':1})       # select a card
 dbg.q({'cmd':'card_manager_set','search':'elf'})
@@ -187,6 +283,11 @@ dbg.q({'cmd':'card_manager_shot','path':'/tmp/cm.ppm'})
 Editing a text field: click its value rect, ctrl+a, type, return, then click
 Save (btn 0). The state json's `msg` is the status line; `edited` says whether
 the selected card has a pack; `name`, `desc`, `atk` ... are the editor's values.
+Sell price is additive: an absent `sell_price` derives
+`floor(effective password Price / 8)`; effective Price 999,999 is the one
+exception and derives 500. The Cards page labels the value `derived` or
+`override`, and Restore stock removes the override. Valid explicit values
+are 0 through 999,999.
 
 Packs without the window: `{"cmd":"card_packs"}` lists loaded packs and the
 live directory, `{"cmd":"card_packs_reload"}` re-reads them (add `"card":id`
@@ -194,6 +295,32 @@ for one). Hand-written `card.ini` files are picked up on their own within a
 second (known cards) or ten (new folders).
 
 Share files without the dialog: `{"cmd":"card_share","op":"export"|"import"|"inspect","path":...}`.
+
+FM Editor performance counters are returned by `{"cmd":"fm_editor"}` in
+`perf`: ticks, SDL events, presents, present time/max, tab rebuilds/uploads,
+and failures for every page. Use `{"cmd":"fm_editor","reset_profile":1}`
+before a measured interval. `tools/fm_editor_desktop_regression.py` records a
+closed interval and each open page at a requested 1x-4x speed.
+
+Card-view password presentation: `{"cmd":"card_password_view"}` reports the
+shared detail-view detector, selected card/effective password, incoming/outgoing
+visibility gate, guest origin/size, and the final renderer placement. Deck,
+chest, and duel detail views use origin `[280,205]`; the shorter Library view
+uses `[280,185]`. The canvas is `[31,5]`: eight compact white digits aligned to
+the description panel's lower-right, below a full seven-line description.
+`active:1,visible:0` is expected while an animated card front is flipping in;
+`visible` becomes 1 only at flip state `0xA0` and returns to 0 on Circle's very
+first outgoing frame. The raw `screenshot` command cannot contain a host guest
+overlay; use `present_shot` (and poll `present_shot_seq`) to verify the composed
+result. This now works on the software renderer as well as OpenGL. The overlay
+is present-only, registered below the face-down privacy cover, and disabled in
+stock netplay.
+
+The Cards editor accepts exactly eight decimal digits and retains leading
+zeros. The guest's duplicate lookup is first/lowest-ID-wins, so an interactive
+edit that matches another effective card password is refused with `Password
+already belongs to card NNN`. Old/imported duplicate files are still loaded;
+this validation affects new editor input only.
 
 `fusion_manager` also takes `press`:1 / `release`:1 beside `x`/`y` (with
 `move`:1 for the waypoints), which is how a scrollbar thumb gets dragged: press
@@ -216,9 +343,105 @@ pairing at once. Verified 2026-09-07 on Elegant Egotist (318): add, duplicate
 refused, remove, a stock pairing removed down to 0 monsters, and `card_effects`
 reported `equip_override` 1 with nothing dropped.
 
+The Fusions page now also exposes `Clear equips...`, explicitly meaning every
+Equip card, independently of `Clear fusions...`. The confirmation's first
+activation only opens the modal; cancel changes nothing, and confirm writes an
+explicit `equips = none` while preserving fusion recipes and every other field
+in the same `card.ini`. Right-click an Equip and choose `Batch edit usable
+monsters...`: its searchable checklist supports row toggles, Select filtered,
+Remove filtered, Clear all, Ctrl+A, Delete, Cancel and Apply. Nothing is written
+until Apply. `fusion_manager` mirrors these paths with `equip_batch`:E,
+`equip_ids`:"1,2,..." (empty means none), `clear_equips`, `restore_equips`, and
+`confirm_equips`:1/2/0; state includes `pick_selected` and every picker-button
+rectangle.
+
+`Restore stock...` is the single global way back: its two-step confirmation
+restores both ordinary fusion recipes and every Equip card's disc
+usable-monster list. Cancel preserves both kinds. The scripted
+`fusion_manager` `undo_all`/`confirm`:1,2 path uses the same implementation;
+`restore_equips` remains available for the narrower Equip-only diagnostic.
+
+Verified 2026-09-10 in a fresh portable software-rendered profile: Legendary
+Sword moved through stock 63, empty, 2 and all 621 monsters; a duplicate ID was
+rejected without changing the prior list; removing the 42 filtered `Dragon`
+matches stayed pending and Cancel retained all 621. Direct `.ygocards` and full
+`.ygomods` exported byte-identical 621-ID `cards/301/card.ini` files and both
+round-tripped. Clear-all produced zero links for all 34 stock equip cards and
+retained all 25,146 fusion recipes. The card-pack writer is field-preserving by
+construction, but this artifact's card 301 member contains only its equip list;
+do not treat it as independent proof for price/password/color preservation or
+a post-clear restart. Evidence and canvas captures are under
+`/tmp/ygofm-equip-bulk-final-Mp1v8d/`.
+
+The combined-restore regression is
+`/tmp/ygofm-equip-restore-fix-results/results.json`. It stages one normal
+fusion edit and an explicitly empty Legendary Sword list, proves cancel keeps
+both, then confirms Restore stock returns all 63 stock equip links and a
+byte-identical fusion-table export while retaining unrelated card fields.
+
+Large lists are served through the same entry-hook lookup as type and attribute
+rules rather than expanded into the guest's fixed 0x2100-byte equip buffer.
+The 621-ID case reports `equip_dropped: 0`. In a live Free Duel, a one-ID list
+resolved card 301 + included card 1 as equip kind 2, raised both stats by 500,
+and recorded hook event `{a:301,b:1,out:1}`; excluded card 2 resolved as no
+equip. An intentional all-empty override now remains a valid resident table for
+the Fusion Hint instead of making its readiness probe fail.
+
+Field spells 330 through 335 have a `Field creatures` row on the Cards page's
+Effects tab. Its picker is an explicit card-ID allow-list: search matches card
+ID, edited/display name, effective type, or effective attribute; rows toggle
+individually, while `Select filtered`, `Remove filtered`, `Clear all`, Ctrl+A,
+Delete, Cancel, and Apply support batch work. `card_manager.field_picker`
+reports open/selected/matches/scroll/filter, and
+`card_manager.geom.field_picker` reports the modal, search/list, and button
+geometry. Apply changes only the pending card edit; the ordinary Save button is
+the second step that writes it. The clear `x` on the row removes the override
+and returns to stock type rules.
+
+The canonical `card.ini` key is `field_targets = 1, 2, ...`; `none` is an
+intentional empty list. Old files with no key preserve exact stock behavior.
+Selection is by stable card ID, not a saved type or attribute query, so a later
+unrelated card edit cannot silently add other creatures. At runtime the list
+filters only the signed per-duel-row terrain modifier at `row + 0x14`, for both
+sides. It does not alter base stats, the ordinary modifier at `+0x12`, flags,
+ownership, the field visual, or another terrain. The configured field's normal
+type amount still determines both boosts and penalties; an allowed creature
+whose type has zero for that terrain still receives zero.
+
+Verified 2026-09-10 with a real Umi activation: the board changed to `SEA`;
+included Great White got +500 and Ancient Tool got -500 on both sides, while
+excluded same-type Rare Fish and Ground Attacker Bugroth got zero. Explicit
+empty zeroed all eight modifiers; removing the key live restored the stock
+`+500,+500,-500,-500` result on each side. Save-state removal reconciliation,
+software-rendered picker batch/cancel/empty/save/restart, direct `.ygocards`,
+full `.ygomods`, malformed/future rejection, and the old full-coverage fixture
+all pass. A 722-ID imported list remained fully reachable in the picker,
+cleared pending, and returned intact on Cancel; mixed `none, 60` was rejected
+before replacing it. Evidence is under
+`/tmp/ygofm-field-targets-ui2-ZmHSco/evidence/`.
+
 The Drop Table Manager's top bar is Save, Import, Export, Randomize and a
 view-dependent slot (`geom` rects `save`, `import`, `export`, `randomize`,
-`third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs).
+`third`; `hover_btn` numbers them 2, 3, 4, 6, 5 after the two tabs). In By
+Duelist the third button is `Clear...`: its menu clears POW, BCD, TEC, or all
+three for only the selected duelist, or restores that duelist to defaults.
+Choose the same Clear item twice within ten seconds. Debug automation uses
+`drop_viewer_set` with `duelist`, either `clear_band`:0..2 or
+`clear_all_bands`:1, and `confirm`:0 then 1. `drop_viewer_state` reports
+`empty_bands` and `clear_armed`.
+
+Empty bands are deliberately pending authoring state. They appear empty in the
+editor but are not written into guest RAM; Save and every export path refuse
+them until a card is added, Randomize is used, or defaults are restored. The
+first added card gets weight 2048. Current exports use drop-table `format = 3`
+and exact sparse keys (`pow_table`, `bcd_table`, `tec_table`); format 2 remains
+an accepted older sparse format, while unversioned files retain the original
+vector semantics. Exact lists must have unique IDs, positive weights and total
+2048. Evidence for the UI and real-duel award paths is under
+`/tmp/ygofm-clear-drop-live-zyg2yP/evidence/` and
+`/tmp/ygofm-clear-drop-duel-nT1Vp9/evidence/`; those retained artifacts do not
+independently prove a post-rebuild restart.
+
 Randomize is armed by one click and done by a second within ten seconds;
 `drop_viewer_set` with `randomize`:seed does it in one step, window open or
 closed, and answers `{ok, entries, msg}`. Seed 0 is a fixed seed, so a run
@@ -377,6 +600,18 @@ func_80036C14 writes, and eight bytes appear there the moment a save loads.
 The caption at the bottom of the grid is the check; the vertical strip on
 the right is decoration. Cells 1 and 2 (Simon, Teana) are empty on this
 box's save, so RIGHT from Build Deck shows no caption; RIGHT x3 is Jono.
+Accepted name glyphs are space, A-Z, a-z, 0-9 and
+`. ! ' , ? - # " & / : ( ) $ * > < + %`; names are at most 20 glyphs.
+Quoted names remain valid in old CPU ini/package fixtures and are JSON-escaped
+by the shared CPU-name backend for every debug response.
+
+The `managers` group in `tools/upstream_regression.py` renames Teana to a
+quoted name, asserts that CPU and Drop Tables state both update, and asserts a
+starchip rule still serializes `opponent = 2` rather than the display name.
+The `mods` group also proves the game-side table entry for Simon points at
+0x801D9CC0 before capturing the renamed FREE DUEL grid. The package round-trip
+test carries `Round "Trip"` through `cpu-duelists.ini`, Revert to Stock,
+inspect/import, and a second export.
 
 Export writes an .ini, or a .ygoduelists zip (cpu-duelists.ini plus
 duelists/<id>/portrait.png) once any portrait is edited. The right pane's
@@ -510,9 +745,184 @@ slots are 0..11.
 
 ## 15. Stopping
 
+Use `{"cmd":"quit_graceful"}` for an owned netplay peer so BYE, resource
+shutdown, and scratch-card carry-back run. For an owned offline test, request
+the normal File > Quit to Desktop path or send SIGTERM to the exact PID the
+harness launched. Confirm that PID's command line contains the expected
+explicit `--memcard-dir` before signaling it. Do not use `pidof`, `pkill`, or
+another process-wide pattern: the user may have a separate game open.
+
+## 8. Netplay: two instances on one box
+
+`tools/netplay_pair.py` launches the debug build twice in a LAN session
+(host seat 0 on debug port 4372, guest seat 1 on 4373; UDP 7777/7778) with
+scratch card dirs under `NETPAIR_DIR` (default `$CLAUDE_SCRATCHPAD/netpair`):
+`cards` requires an explicit `NETPAIR_SEED` and never falls back to personal
+player data. It copies that authorized scratch seed to host/card1.mcd and uses
+`tools/save_clone.py` for a different guest duelist code (2P refuses two cards
+with the same code); `NETPAIR_BLANK` may supply card 2. `start`, `menu` (title
+-> main menu, safe across the intro movie), `rules` (-> REGULATION OF 2P-DUEL
+RULES, mode 0xD0), `trade` (-> the trade screen, mode 0xCE), `shot TAG`.
+
+As a module each `Inst` has `press(btn, frames, settle)` on ITS OWN pad
+(host = pad 1, guest = pad 2; the other pad's presses arrive over the
+session), `shot` (present-time, overlays included), `shot_fb` (raw
+framebuffer, for screen detection), `burst(tag, seconds, interval)` for
+catching one-frame leaks, `b/h/w/rd` RAM reads.
+
+`tools/netplay_scenario.py [rollback] [latency_ms] [jitter_ms]` plays a whole
+session: LP 1 vs 1, three placements, an attack, the results screen and a
+TRADE right after, with state checks and screenshots at every step. The
+latency numbers turn on recomp-net's receive-side link simulator on both
+peers (added RTT is twice the number).
+
+Facts that cost time (2026-09-09): the main menu ignores nothing, so never
+call `menu()` from the menu (START selects the row). In a 2P duel a card must
+be played before START ends the turn, and a face-down placement leaves the
+game in phase 8 until one more X. The results screen is left by the WINNER's
+X. LP on the rules screen: LEFT on each pad steps its own value down by 500
+to 500, then 1. Duel state: phase `0x8009B23A & 0xF` (4 hand, 5 field cursor,
+6 magic zoom, 7 placement view, 8 placement confirm, 9 battle, 0xC/0xD
+results), substate `0x8009B174`, effect `0x8009B254` (2 = TRIANGLE card view).
+Under rollback or loss, do not direct placement with fixed sleeps: hand
+selection has stable phase-4 substates `0x81 -> 0x83 -> 0x84`, phase 7 can be
+transient, phase 8 is the stable placement confirmation, and phase 5 is the
+field cursor. `netplay_scenario.py` waits for each stable edge before sending
+the next input.
+
+Every link-simulator release line must say `overflow=0`. A nonzero overflow
+means some datagrams were delivered without the configured delay and the run
+does not qualify, even if gameplay completed. A 35 +/- 15 ms full duel exposed
+the former 256-entry capacity; the current 1024-entry burst table and
+`netsim_capacity_test` cover that regression.
+
+Let the scenario finish its `quit_graceful` requests. If a harness must be
+interrupted, use its recorded subprocess handles and then query each owned
+peer for `quit_graceful`; only use an exact recorded PID as the final fallback.
+SIGTERM skips netplay carry-back.
+
+## 16. Community-fix probes (2026-09-10)
+
+`fm_editor` is the general shared-window command. `page` is 0 Cards, 1 Drop
+Tables, 2 Fusions, 3 Dialogue, or 4 CPU; `click_tab` injects a mouse tab click
+and `key_tab` uses Ctrl+1 through Ctrl+5. Legacy manager commands remain
+compatible and select the matching page. FM Editor and every legacy entry
+return a netplay error online.
+
+The state is also the native-window geometry oracle. It reports logical client
+size/position, drawable pixels, raw and effective decoration borders, complete
+outer rectangle, minimum size, display bounds, usable work area, containment,
+maximize/minimize/resizable flags and fit counters. `x`, `y`, `w`, `h`,
+`restore`, `maximize`, and `fit` drive resize cases; `fit` clamps against the
+window's pre-resize display. On KWin Wayland, `borders_estimated` and
+`workarea_estimated` explain the conservative decoration/panel fallback used
+because the protocol does not expose those desktop extents.
+
+With the desired physical 1920x1080 mode and desktop scale already selected,
+the repeatable five-page/oversize check is:
+
 ```sh
-kill $(pidof Yu_Gi_Oh_Forbidden_Memories_Recompiled)
+python3 -B tools/fm_editor_desktop_regression.py \
+  --port 4370 --output /tmp/fm-editor-150 \
+  --expected-display 1280x720
 ```
 
-`pkill -f` with the binary name in the pattern also matches the shell that
-runs it; use `pidof`.
+Add `--native --kwin-script-object /Scripting/ScriptN` only after loading a
+KWin activation script for `FM Editor`; this lets Spectacle include the native
+title bar and border. The regression tool does **not** alter monitor modes,
+scale, placement, or priority. Always snapshot those separately before a
+physical scale matrix and restore/compare the snapshot when finished.
+
+`card_description_validate` runs the exact planner used by editor save and
+import. The capacity is eight lines by 21 columns. `|`, actual newlines, and a
+literal `\\n` are explicit breaks; unbroken text wraps automatically. A save
+must fail rather than clipping line 9 or an explicit 21-column row.
+
+`card_drops_list` reports each distinct result plus `first`, while
+`award_order` records every individual card, whether it is `story` or
+`normal`, and whether its trunk award committed. The story regression drives
+the copied authorized slot state and writes this evidence as JSON:
+
+```sh
+python3 -B tools/story_reward_regression.py --help
+```
+
+`card_drops_set` accepts `drops:0..99` and `smart:0|1`. Zero means no normal
+table award: the result routine still consumes its one in-flight stock RNG
+call, never retries, and the award entry is skipped. An eligible guaranteed
+campaign reward remains separate and uses that roll as its carrier. With no
+guaranteed reward, `card_drops_state.suppression.reason` is `zero_normal`, its
+present-only cover must say `NO NORMAL CARD DROP` over both the stock card
+number and name, and `card_drops_list` must remain empty before and after
+leaving results. The full 722-byte trunk, card-0 sentinel, and 32-byte
+recent-card ring must remain byte-identical.
+`tools/story_reward_regression.py` includes zero with first-win, every-win,
+no-reward, and Free Duel cases. Each live zero case asserts
+`suppression.rng_seed_before` to `rng_seed_after` is exactly one LCG advance
+at the award entry and `rng_exact_one` is true.
+
+The same truthful cover is used when Smart Drops exhausts the weighted pool
+before the final in-flight normal award: `suppression.reason` is
+`smart_exhausted`, the card strip says `NO ELIGIBLE CARD DROP`, and no fallback
+duplicate is banked. If a guaranteed story card was already awarded and is
+what SPOILS displays, it remains visible instead of being covered.
+
+`card_drops_state.smart` separates the Drop Table Manager's persisted
+`configured` choice from `effective`, then reports the configured normal-award
+count, attempts, applied/unchanged/exhausted counts, restores, skipped awards,
+active-table state, tier, eligible/excluded cards, remaining copy capacity,
+surviving source weight and selected card. Stock netplay must report configured
+1 / effective 0 / toggle-enabled 0 when an offline On table file was loaded,
+reject debug/editor mutation, and leave that file byte-identical.
+
+`card_drops_smart_sim` is the non-mutating distribution probe. It takes
+`tier`, `seed`, and `rolls` (1 through 1,000,000), snapshots the live deck and
+trunk, builds the same filtered resident row as gameplay, and returns each
+surviving card's exact rescaled weight and seeded count. Use it for large
+distribution checks instead of thousands of re-entrant guest calls. The
+shipping selection still uses the game's roll routine and one normal RNG call;
+the probe merely makes that probability calculation measurable.
+
+`tools/package_roundtrip.py` additionally builds intact-but-invalid and
+CRC-damaged late-member fixtures. It asserts that a later fusion-parser
+failure restores the complete pre-import package, that MOD and edited-card
+archives reject a damaged late member before mutation, and that malformed
+drop section/card/mode fields plus future drop formats leave the prior layer
+intact. It also covers transitional `smart_first_drop` migration and the rule
+that an embedded format-3 `smart_drop` key wins when both are present.
+
+Smart applies to **every normal reward**, rebuilding eligibility after each
+committed award. A guaranteed story reward stays separate at position zero and
+is never filtered; all normal positions after it are. Count deck plus trunk,
+with 0/1/2 total copies eligible and 3+ excluded. Earlier awards in the same
+duel immediately reduce the remaining capacity, so no card can finish above
+three copies. If all weighted cards are excluded, consume that position's
+ordinary RNG call but skip its award—never retry and never fall back to a
+duplicate. For multi-drop evidence, require the resident 1,444-byte band to be
+byte-identical before/after, every returned copy count to respect its initial
+capacity, and the configured RNG-position stream to be consumed even when a
+position is skipped.
+
+The old `card_drops_test` and `card_drops_sim` debug commands are intentionally
+refused. They recursively dispatched guest code from a debug callback and a
+live sweep proved they could consume interrupt/SIO event state and strand the
+BIOS. Use real-duel fixtures for award behavior and `card_drops_smart_sim` for
+the pure seeded distribution calculation.
+
+The Drop Tables page's Restore All Drops to Stock action is separate from
+MODS > Revert to Stock. It needs two activations in ten seconds, resets only
+the 39 x 3 x 722 drop weights, preserves story rewards and other editors, and
+requires Save for persistence.
+
+`netplay_privacy` reports the selected field record, owner, face-down flags,
+and whether the local present overlay covers the detail strip. The complete
+scenario asserts both ownership directions. `tools/netplay_stock_regression.py`
+starts an already-seeded hostile scratch pair, verifies both peers at stock
+1x, attacks all disabled menu/editor/debug paths, shuts both down gracefully,
+and compares all persistent fixture hashes.
+
+File menu layouts are intentionally different: a launcher session has Quit to
+Launcher and Quit to Desktop; `--no-launcher` has only Quit to Desktop. Quit to
+Launcher is a session teardown followed by the existing in-process launcher,
+not a renamed application exit. `build-dbg/menu_preview --selftest` checks
+keyboard/controller and mouse activation plus disabled-menu policy.

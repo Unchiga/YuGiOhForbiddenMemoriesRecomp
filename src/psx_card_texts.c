@@ -10,7 +10,7 @@
  *     [2] Mystical Elf
  *     ...
  * One block per card: "[id] Name" then the description with one file line
- * per line on the card (the card shows 6 lines of 20 characters). A block
+ * per line on the card (the card shows 8 lines of 21 characters). A block
  * ends at the next "[id]" line; blank lines before it are dropped. Lines
  * starting with ";" are comments.
  *

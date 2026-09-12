@@ -99,6 +99,7 @@
 #include "psx_game_hooks.h"
 #include "psx_textfile.h"
 #include "psx_ygo_cheats.h"      /* psx_ygo_save_is_live() */
+#include "psx_ygo_netplay.h"
 
 #define NDUEL      PSX_DROP_DB_DUELISTS      /* 39 */
 #define NCARDS     PSX_DROP_DB_CARDS         /* 722 */
@@ -517,6 +518,7 @@ static int portraits_install(void)
 
 int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned cap)
 {
+    if (psx_ygo_netplay_session()) { if (msg) snprintf(msg, cap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !png_path || !png_path[0]) {
         if (msg && cap) snprintf(msg, cap, "No picture to use");
@@ -562,13 +564,14 @@ int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned 
     g_gen++;
     if (msg && cap) {
         if (painted < 0) snprintf(msg, cap, "The portrait sectors could not be written");
-        else snprintf(msg, cap, "Portrait replaced for %.24s", PSX_DROP_DB[duelist].name);
+        else snprintf(msg, cap, "Portrait replaced for %.24s", psx_cpu_display_name(duelist));
     }
     return painted >= 0;
 }
 
 int psx_cpu_portrait_clear(int duelist)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
     char png[1200], dir[1024];
@@ -666,6 +669,28 @@ const char *psx_cpu_display_name(int duelist)
     return g_edit[duelist].name_set ? g_edit[duelist].name : PSX_DROP_DB[duelist].name;
 }
 
+int psx_cpu_display_name_json(int duelist, char *out, unsigned cap)
+{
+    if (!out || !cap) return 0;
+    const unsigned char *s = (const unsigned char *)psx_cpu_display_name(duelist);
+    unsigned n = 0;
+    while (*s) {
+        const unsigned need = (*s == '"' || *s == '\\') ? 2u
+                            : *s < 0x20u ? 6u : 1u;
+        if (n + need >= cap) { out[0] = 0; return 0; }
+        if (*s == '"' || *s == '\\') {
+            out[n++] = '\\'; out[n++] = (char)*s;
+        } else if (*s < 0x20u) {
+            static const char hex[] = "0123456789ABCDEF";
+            out[n++] = '\\'; out[n++] = 'u'; out[n++] = '0'; out[n++] = '0';
+            out[n++] = hex[*s >> 4]; out[n++] = hex[*s & 15u];
+        } else out[n++] = (char)*s;
+        s++;
+    }
+    out[n] = 0;
+    return 1;
+}
+
 /* Per frame: the edited strings and their table entries, the stock entries
  * for everyone else. Cheap: a handful of reads that match. */
 static void names_apply(void)
@@ -700,6 +725,7 @@ int psx_cpu_record(int duelist, int *wins, int *losses)
 
 int psx_cpu_record_set(int duelist, int wins, int losses)
 {
+    if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (duelist < 0 || duelist >= NDUEL || !psx_ygo_save_is_live()) return 0;
     if (wins < 0) wins = 0;
     if (losses < 0) losses = 0;
@@ -835,7 +861,7 @@ static int read_ini(const char *path)
         for (int c = 0; c < NCARDS; c++) distinct += g_edit[d].deck[c] != 0;
         if (distinct < 14) {
             g_edit[d].deck_set = 0;
-            psx_tool_log("CPU Manager: %s lists %d cards, a deck needs 14; the disc's pool stays", PSX_DROP_DB[d].name, distinct);
+            psx_tool_log("CPU Manager: %s lists %d cards, a deck needs 14; the disc's pool stays", psx_cpu_display_name(d), distinct);
         }
     }
     /* A hand-written pool that does not total 2048 is not loadable, so it is
@@ -886,8 +912,9 @@ static int write_to(const char *path)
 "; Written by the CPU Manager (VIEW > CPU MANAGER); hand-editing works too.\n"
 "; One section per duelist:\n"
 ";\n"
-";     name = Bakura                        what the FREE DUEL grid calls them (letters,\n"
-";                                          digits and . , ! ? ' - & / : ( ) only, %d at most)\n"
+";     name = Bakura                        what the FREE DUEL grid calls them (%d glyphs at most)\n"
+";                                          space, A-Z, a-z, 0-9 and\n"
+";                                          . ! ' , ? - # \" & / : ( ) $ * > < + %%\n"
 ";     ai = 5, 20, 10, 1, 1, 0, 0, 25, 50    the nine AI profile bytes\n"
 ";     <card id> = <weight>                  their deck pool, out of 2048\n"
 ";\n"
@@ -1038,6 +1065,7 @@ static void ensure_dir(const char *d)
 
 int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
 {
+    if (psx_ygo_netplay_session()) { if (msg) snprintf(msg, cap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
     psx_cpu_ensure_loaded();
     if (!path || !path[0]) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
     int with_portraits = 0, portraits_in = 0, bad = 0;
@@ -1152,6 +1180,7 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
  * the sector store keeps it until it is cleared. */
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static unsigned seen_gen;
     static int seen_ai_ready;
     if (!psx_mod_game_started()) return;
@@ -1195,11 +1224,13 @@ int psx_cpu_state_json(char *out, unsigned cap)
     for (int d = 0; d < NDUEL && n + 260u < cap; d++) {
         if (!g_edit[d].deck_set && !g_edit[d].ai_set && !g_edit[d].name_set) continue;
         uint8_t live[PSX_CPU_AI_BYTES] = {0};
+        char shown[PSX_CPU_NAME_MAX * 2 + 8];
+        (void)psx_cpu_display_name_json(d, shown, sizeof shown);
         psx_cpu_ai_live(d, live);
         n += (unsigned)snprintf(out + n, cap - n,
             "%s{\"d\":%d,\"id\":%d,\"name\":\"%s\",\"shown\":\"%s\",\"nameoff\":%u,\"deck\":%d,\"installed\":%d,\"ai_set\":%d,"
             "\"live\":[%d,%d,%d,%d,%d,%d,%d,%d,%d]}",
-            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name, psx_cpu_display_name(d),
+            first ? "" : ",", d, d + 1, PSX_DROP_DB[d].name, shown,
             psx_mod_game_started() ? psx_mod_read_half(nameoff_addr(d)) : 0u,
             g_edit[d].deck_set, g_edit[d].installed, g_edit[d].ai_set,
             live[0], live[1], live[2], live[3], live[4], live[5], live[6], live[7], live[8]);

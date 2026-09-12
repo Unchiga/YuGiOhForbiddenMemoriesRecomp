@@ -85,7 +85,8 @@ int  psx_cpu_portraits_count(void);
  * gText_aGlobalOffsets, measured 2026-09-06 against the SLUS). A rename is
  * asserted per frame like a card rename: the string goes to reclaimed RAM
  * and the table entry is repointed at it. The game's font has no accents,
- * so a name is ASCII; characters the font lacks are refused by
+ * so a name is ASCII. Accepted glyphs are space, A-Z, a-z, 0-9 and
+ * . ! ' , ? - # " & / : ( ) $ * > < + %. Everything else is refused by
  * psx_cpu_name_set. Empty clears. */
 #define PSX_CPU_NAME_MAX 20
 int  psx_cpu_name_set(int duelist, const char *name);
@@ -95,6 +96,9 @@ int  psx_cpu_name_edited(int duelist);
  * one, else the stock name. PSX_DROP_DB[d].name stays the stock name, which
  * is what the ini section headers and "back to stock" need. */
 const char *psx_cpu_display_name(int duelist);
+/* The same display name escaped for insertion between JSON quotes. Kept here
+ * so every debug surface handles the full accepted glyph set identically. */
+int psx_cpu_display_name_json(int duelist, char *out, unsigned cap);
 
 /* ---- persistence ---------------------------------------------------------
  * One file for the window, cpu_manager.ini, the same way the Drop Table

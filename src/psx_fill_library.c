@@ -69,6 +69,7 @@
 #include "psx_game_hooks.h"
 #include "psx_video_menu.h"
 #include "psx_ygo_cheats.h"      /* psx_ygo_save_is_live() */
+#include "psx_ygo_netplay.h"
 
 #define SAVE_LIVE     0x801D0200u
 #define DECK_N        40u              /* deck at +0x00, one u16 per slot */
@@ -216,6 +217,7 @@ static void revert(int write)
  * which is exactly as long as anything reads these bits. */
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!s_active && !s_on) return;
     if (!psx_ygo_save_is_live()) { if (s_active) revert(0); return; }
     if (s_on && in_library()) {

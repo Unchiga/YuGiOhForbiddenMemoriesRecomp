@@ -23,6 +23,9 @@ void psx_card_shop_register_menu(void);
 /* Re-read card_shop.ini after it was replaced (a MOD package import). */
 void psx_card_shop_reload_config(void);
 
+/* Actual resale after direct-purchase and pack-price anti-arbitrage caps. */
+int psx_card_shop_effective_sell_price(int card, int *source);
+
 /* Debug server read-back. */
 int  psx_card_shop_state_json(char *out, unsigned cap);
 
@@ -32,6 +35,17 @@ int  psx_card_shop_state_json(char *out, unsigned cap);
  * it shows up. Matching is by the game's own decoded name, so this also says
  * whether that name matched the config at all. */
 int  psx_card_shop_card_json(char *out, unsigned cap, const char *name);
+
+/* SELL flow used by the panel and live regression command. Preview is
+ * non-mutating and snapshots deck/trunk/prices; quantities are trunk-only;
+ * confirm refuses stale state, netplay, or a missing save. */
+int  psx_card_shop_sell_preview(char *msg, unsigned cap);
+int  psx_card_shop_sell_review(char *msg, unsigned cap);
+int  psx_card_shop_sell_confirm(char *msg, unsigned cap);
+int  psx_card_shop_sell_set_quantity(int card, int quantity, char *msg, unsigned cap);
+int  psx_card_shop_sell_select_all(int selected, char *msg, unsigned cap);
+void psx_card_shop_sell_cancel(void);
+int  psx_card_shop_sell_state_json(char *out, unsigned cap);
 
 #ifdef __cplusplus
 }

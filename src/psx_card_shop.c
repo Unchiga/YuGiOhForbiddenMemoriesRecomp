@@ -45,6 +45,7 @@
 
 #include "psx_card_shop.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,6 +53,8 @@
 #include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_card_db.h"
+#include "psx_card_inventory.h"
+#include "psx_card_packs.h"
 #include "psx_drop_db.h"
 #include "psx_fusion_font.h"
 #include "gpu_render.h"
@@ -60,6 +63,7 @@
 #include "psx_video_menu.h"
 #include "psx_ygo_cheats.h"
 #include "psx_textfile.h"      /* psx_fopen_utf8(): the player folder may have an accent (Windows) */
+#include "psx_ygo_netplay.h"
 
 /* ---- measured addresses -------------------------------------------------- */
 #define SHOP_STATE_ADDR   0x8009B23Au   /* campaign overlay state: 0xE00D   */
@@ -158,6 +162,12 @@
 #define SHOP_NP_RIGHT   0x2000u
 #define SHOP_NP_CROSS   0x0040u
 #define SHOP_NP_CIRCLE  0x0020u
+#define SHOP_NP_SQUARE  0x0080u
+#define SHOP_NP_L2      0x0001u
+#define SHOP_NP_R2      0x0002u
+#define SHOP_NP_L1      0x0004u
+#define SHOP_NP_R1      0x0008u
+#define SHOP_NP_START   0x0800u
 
 #define SHOP_ROW  1                     /* CARD SHOP's cursor index */
 #define SHOP_ROWS 5                     /* rows the cursor can reach */
@@ -271,6 +281,7 @@ static const char *const k_force_legendary[] = {
     "Swords of Revealing Light",
     "Raigeki",
     "Megamorph",
+    "Blue-eyes Ultimate Dragon",
     "Widespread Ruin",               /* judgment: FM's heaviest traps */
     "Acid Trap Hole",
     "Invisible Wire",
@@ -329,12 +340,13 @@ static int name_in(const char *nm, const char *const *list, int n) {
 
 typedef struct { char name[40]; uint8_t mask; } ShopForced;
 static int        s_cfg_price[SHOP_TIERS] = { 20, 80, 200, 800 };
-static int        s_cfg_atk[3]            = { 2500, 1600, 850 };
+static int        s_cfg_atk[3]            = { 3000, 2500, 1600 };
 static int        s_cfg_pool_min          = SHOP_POOL_MIN;
 static int        s_cfg_pack_cards        = 3;
 static ShopForced s_cfg_forced[SHOP_CFG_FORCED_MAX];
 static int        s_cfg_forced_n;
 static int        s_cfg_loaded;
+static int        s_pools_built;
 
 static int shop_ini_path(char *out, unsigned cap) {
     const char *dir = psx_mod_player_data_dir();
@@ -406,11 +418,25 @@ static void shop_cfg_write_default(const char *path) {
 static void shop_cfg_load(void) {
     if (s_cfg_loaded) return;
     s_cfg_loaded = 1;
+    /* A reload reflects the file as it exists now. Removed keys fall back to
+     * built-ins instead of retaining values from the previous parse. */
+    s_cfg_price[0] = 20; s_cfg_price[1] = 80;
+    s_cfg_price[2] = 200; s_cfg_price[3] = 800;
+    s_cfg_atk[0] = 3000; s_cfg_atk[1] = 2500; s_cfg_atk[2] = 1600;
+    s_cfg_pool_min = SHOP_POOL_MIN;
+    s_cfg_pack_cards = 3;
+    s_cfg_forced_n = 0;
     char path[512];
     if (!shop_ini_path(path, sizeof path)) return;
     FILE *f = psx_fopen_utf8(path, "r");
-    if (!f) { shop_cfg_write_default(path); return; }
-    s_cfg_forced_n = 0;
+    if (!f) {
+        /* The generated defaults are configuration, not just documentation.
+         * Parse them on the first run too; returning here left every forced
+         * rarity (including Megamorph) inactive until the next launch. */
+        shop_cfg_write_default(path);
+        f = psx_fopen_utf8(path, "r");
+        if (!f) return;
+    }
     char line[160], sect[24] = "";
     while (fgets(line, sizeof line, f)) {
         cfg_trim(line);
@@ -464,31 +490,50 @@ static void shop_cfg_load(void) {
 /* The ini was replaced from outside (a MOD package import): read it again. */
 void psx_card_shop_reload_config(void)
 {
+    /* Package import may replace both card_shop.ini and the ATK table while
+     * the old pools are already cached.  Reparse and rebuild together so the
+     * new monster rarity floors and pack economy take effect immediately. */
+    s_pools_built = 0;
     s_cfg_loaded = 0;
     shop_cfg_load();
 }
 
 /* A card's configured placement mask, 0 if the file does not mention it. */
 static int cfg_mask_for(const char *nm) {
+    /* Built-in balance pins are invariants, not default-file suggestions. A
+     * partial imported card_shop.ini must not make Megamorph, Exodia, or the
+     * strongest signature cards common merely by omitting [cards]. */
+    if (NAME_IN(nm, k_force_legendary)) return 1 << 3;
+    if (NAME_IN(nm, k_force_rare))
+        return NAME_IN(nm, k_dual_rare_legendary) ? (1 << 2) | (1 << 3)
+                                                   : 1 << 2;
     for (int i = 0; i < s_cfg_forced_n; i++)
         if (name_in(nm, (const char *const *)&(const char *){ s_cfg_forced[i].name }, 1))
             return s_cfg_forced[i].mask;
     return 0;
 }
 
-/* Home tiers: monsters by the user's ATK brackets (2500+ legendary,
- * 1600-2450 rare, 850-1550 uncommon, the rest common), everything else by
+/* Home tiers: monsters by the user's ATK brackets (3000+ legendary,
+ * 2500-2990 rare, 1600-2490 uncommon, the rest common), everything else by
  * how hard the game guards it (droppers = how many of the 39 duelists ever
  * drop it; 0 means password-only in the stock game). */
+static int monster_rarity_floor(int atk) {
+    const int configured = atk >= s_cfg_atk[0] ? 3 : atk >= s_cfg_atk[1] ? 2
+                         : atk >= s_cfg_atk[2] ? 1 : 0;
+    const int balance_floor = atk >= 3000 ? 3 : atk >= 2500 ? 2 : 0;
+    return configured > balance_floor ? configured : balance_floor;
+}
+
 static int card_rarity(int id, int atk, int type, int droppers) {
     const char *nm = psx_card_db_name(id);
     const int m = cfg_mask_for(nm);
     if (m) {   /* the file wins; its home tier is the highest bit set */
-        for (int t = SHOP_TIERS - 1; t >= 0; t--) if (m & (1 << t)) return t;
+        for (int t = SHOP_TIERS - 1; t >= 0; t--) if (m & (1 << t)) {
+            const int floor = type <= 19 ? monster_rarity_floor(atk) : 0;
+            return t < floor ? floor : t;
+        }
     }
-    if (type <= 19)
-        return atk >= s_cfg_atk[0] ? 3 : atk >= s_cfg_atk[1] ? 2
-             : atk >= s_cfg_atk[2] ? 1 : 0;
+    if (type <= 19) return monster_rarity_floor(atk);
     if (droppers == 0) return 2;
     if (droppers <= 3) return 1;
     return 0;
@@ -538,7 +583,8 @@ static uint16_t s_vs_back[64 * 64];      /* (896,256) the card back        */
 static int      s_vs_valid;
 static uint16_t s_award_q[SHOP_PULL_MAX];
 static int      s_award_n;
-static char     s_msg[30];
+static char     s_msg[80];
+static int      s_msg_tone;          /* 0 error (red), 1 note (grey), 2 success (green) */
 static uint16_t s_stock_entry;       /* table[17] before our repoint        */
 static int      s_say;               /* 0 idle, 1 kick pending, 2 line up   */
 static int      s_say_timer;         /* frames until the pending kick       */
@@ -547,10 +593,32 @@ static int      s_say_stock_ok;
 static uint16_t s_nav_latch;         /* arrows eaten at the driver's door   */
 static unsigned s_buys, s_denied, s_opens, s_remaps;
 
+/* SELL is a previewed, editable batch over the same 722-card live save the
+ * game's deck builder uses. Every trunk copy may be selected; deck copies are
+ * displayed for clarity but are never targets and are never reconstructed. */
+typedef struct {
+    uint16_t id;
+    uint8_t deck, trunk, sell, retained;
+    uint32_t value;
+    uint64_t subtotal;
+    uint8_t overridden;
+} SellEntry;
+static PsxCardInventorySnapshot s_sell_snapshot;
+static uint8_t  s_sell_target[PSX_CARD_INVENTORY_CARDS];
+static SellEntry s_sell_entry[PSX_CARD_INVENTORY_CARDS];
+static int      s_sell_mode;          /* 1 quantity editor, 2 confirmation */
+static int      s_sell_n;
+static int      s_sell_sel;
+static uint64_t s_sell_gross;
+static uint32_t s_sell_credit;
+static uint32_t s_sell_after;
+static unsigned s_sell_copies;
+static unsigned s_sell_runs;
+
 /* Card pools per (pack, tier), built once card_db + drop scarcity are up. */
 static uint16_t s_pool[SHOP_PACKS][SHOP_TIERS][PSX_CARD_DB_COUNT];
 static int      s_pool_n[SHOP_PACKS][SHOP_TIERS];
-static int      s_pools_built;
+int psx_card_shop_effective_sell_price(int id, int *source);
 
 /* ---- helpers ------------------------------------------------------------- */
 static uint32_t rng_next(void) {
@@ -568,6 +636,175 @@ static uint32_t rng_next(void) {
  * savestates plus the intro, title and name-entry screens. */
 static int save_live(void) {
     return psx_ygo_save_is_live();
+}
+
+static void sell_cancel(void);
+
+static void sell_recalculate(void)
+{
+    memcpy(s_sell_target, s_sell_snapshot.trunk, sizeof s_sell_target);
+    s_sell_gross = 0;
+    s_sell_copies = 0;
+    for (int i = 0; i < s_sell_n; i++) {
+        SellEntry *e = &s_sell_entry[i];
+        if (e->sell > e->trunk) e->sell = e->trunk;
+        e->retained = (uint8_t)(e->trunk - e->sell);
+        e->subtotal = (uint64_t)e->sell * (uint64_t)e->value;
+        s_sell_target[e->id - 1] = e->retained;
+        if (UINT64_MAX - s_sell_gross < e->subtotal)
+            s_sell_gross = UINT64_MAX;
+        else
+            s_sell_gross += e->subtotal;
+        s_sell_copies += e->sell;
+    }
+    const uint64_t room = s_sell_snapshot.starchips <= PSX_CARD_STARCHIP_CAP
+        ? (uint64_t)PSX_CARD_STARCHIP_CAP - s_sell_snapshot.starchips : 0;
+    s_sell_credit = (uint32_t)(s_sell_gross < room ? s_sell_gross : room);
+    s_sell_after = s_sell_snapshot.starchips + s_sell_credit;
+    s_dirty = 1;
+}
+
+static int sell_preview_build(char *msg, unsigned cap)
+{
+    if (!psx_card_inventory_snapshot(&s_sell_snapshot)) {
+        if (msg && cap) snprintf(msg, cap, "NO SAVE LOADED");
+        return 0;
+    }
+    if (s_sell_snapshot.starchips > PSX_CARD_STARCHIP_CAP) {
+        if (msg && cap) snprintf(msg, cap, "STARCHIPS ABOVE SUPPORTED CAP");
+        return 0;
+    }
+    s_sell_n = 0;
+    for (int i = 0; i < PSX_CARD_INVENTORY_CARDS; i++) {
+        const unsigned deck = s_sell_snapshot.deck[i];
+        const unsigned trunk = s_sell_snapshot.trunk[i];
+        if (!trunk) continue;
+        int overridden = 0;
+        const int price = psx_card_shop_effective_sell_price(i + 1, &overridden);
+        if (price < 0) {
+            if (msg && cap) snprintf(msg, cap, "SELL PRICES NOT READY");
+            s_sell_n = 0;
+            return 0;
+        }
+        SellEntry *e = &s_sell_entry[s_sell_n++];
+        e->id = (uint16_t)(i + 1);
+        e->deck = (uint8_t)deck;
+        e->trunk = (uint8_t)trunk;
+        e->sell = 0;
+        e->retained = (uint8_t)trunk;
+        e->value = (uint32_t)price;
+        e->subtotal = 0;
+        e->overridden = (uint8_t)overridden;
+    }
+    s_sell_sel = 0;
+    s_sell_mode = 1;
+    sell_recalculate();
+    if (msg && cap) {
+        if (!s_sell_n) snprintf(msg, cap, "TRUNK IS EMPTY");
+        else snprintf(msg, cap, "CHOOSE CARDS AND QUANTITIES");
+    }
+    s_dirty = 1;
+    return 1;
+}
+
+static int sell_confirm(char *msg, unsigned cap)
+{
+    if (s_sell_mode != 2) {
+        if (msg && cap) snprintf(msg, cap, "REVIEW AND CONFIRM THE SALE FIRST");
+        return 0;
+    }
+    if (!s_sell_n || !s_sell_copies) {
+        if (msg && cap) snprintf(msg, cap, "SELECT AT LEAST ONE CARD");
+        return 0;
+    }
+    for (int i = 0; i < s_sell_n; i++) {
+        if (psx_card_shop_effective_sell_price(s_sell_entry[i].id, NULL) !=
+            (int)s_sell_entry[i].value) {
+            char ignored[80];
+            (void)sell_preview_build(ignored, sizeof ignored);
+            if (msg && cap) snprintf(msg, cap,
+                "INVENTORY OR PRICES CHANGED - REVIEW AGAIN");
+            return 0;
+        }
+    }
+    if (!psx_card_inventory_commit_trunk(&s_sell_snapshot, s_sell_target,
+                                         s_sell_after)) {
+        char ignored[80];
+        (void)sell_preview_build(ignored, sizeof ignored);
+        if (msg && cap) snprintf(msg, cap,
+            "INVENTORY OR PRICES CHANGED - REVIEW AGAIN");
+        return 0;
+    }
+    if (msg && cap) snprintf(msg, cap, "SOLD %u COP%s +%u CHIPS",
+        s_sell_copies, s_sell_copies == 1 ? "Y" : "IES", s_sell_credit);
+    s_sell_runs++;
+    sell_cancel();
+    return 1;
+}
+
+static int sell_review(char *msg, unsigned cap)
+{
+    if (s_sell_mode != 1 || !s_sell_copies) {
+        if (msg && cap) snprintf(msg, cap, "SELECT AT LEAST ONE CARD");
+        return 0;
+    }
+    s_sell_mode = 2;
+    s_dirty = 1;
+    if (msg && cap) snprintf(msg, cap, "CONFIRM SALE OF %u COP%s",
+                             s_sell_copies,
+                             s_sell_copies == 1 ? "Y" : "IES");
+    return 1;
+}
+
+int psx_card_shop_sell_set_quantity(int card, int quantity, char *msg, unsigned cap)
+{
+    if (s_sell_mode != 1) {
+        if (msg && cap) snprintf(msg, cap, "OPEN THE SELL LIST FIRST");
+        return 0;
+    }
+    for (int i = 0; i < s_sell_n; i++) {
+        SellEntry *e = &s_sell_entry[i];
+        if (e->id != card) continue;
+        if (quantity < 0 || quantity > e->trunk) {
+            if (msg && cap) snprintf(msg, cap, "QUANTITY IS 0 TO %u", e->trunk);
+            return 0;
+        }
+        e->sell = (uint8_t)quantity;
+        s_sell_sel = i;
+        sell_recalculate();
+        if (msg && cap) snprintf(msg, cap, "CARD %03d: SELL %d", card, quantity);
+        return 1;
+    }
+    if (msg && cap) snprintf(msg, cap, "CARD IS NOT IN THE TRUNK");
+    return 0;
+}
+
+int psx_card_shop_sell_select_all(int selected, char *msg, unsigned cap)
+{
+    if (s_sell_mode != 1) {
+        if (msg && cap) snprintf(msg, cap, "OPEN THE SELL LIST FIRST");
+        return 0;
+    }
+    for (int i = 0; i < s_sell_n; i++)
+        s_sell_entry[i].sell = selected ? s_sell_entry[i].trunk : 0;
+    sell_recalculate();
+    if (msg && cap) snprintf(msg, cap, selected ? "SELECTED THE COMPLETE TRUNK"
+                                                : "CLEARED SALE QUANTITIES");
+    return 1;
+}
+
+static void sell_cancel(void)
+{
+    const int changed = s_sell_mode || s_sell_n || s_sell_sel;
+    s_sell_mode = 0;
+    s_sell_n = 0;
+    s_sell_sel = 0;
+    s_sell_copies = 0;
+    s_sell_gross = 0;
+    s_sell_credit = 0;
+    s_sell_after = 0;
+    memset(&s_sell_snapshot, 0, sizeof s_sell_snapshot);
+    if (changed) s_dirty = 1;
 }
 
 /* Why the gate refused, for the debug server: which of the two copies failed
@@ -589,6 +826,8 @@ static int save_gate_detail(uint32_t base, int *bad_slot, int *bad_val) {
 static void build_pools(void) {
     if (s_pools_built || !psx_card_db_ready()) return;
     shop_cfg_load();
+    /* Re-entry after card_shop.ini changes is a rebuild, not an append. */
+    memset(s_pool_n, 0, sizeof s_pool_n);
     static uint8_t droppers[PSX_CARD_DB_COUNT + 1];
     memset(droppers, 0, sizeof droppers);
     for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
@@ -622,7 +861,8 @@ static void build_pools(void) {
         /* A card listed with two rarities appears in both pools. */
         const int m = cfg_mask_for(psx_card_db_name(id));
         for (int tt = 0; tt < SHOP_TIERS; tt++)
-            if (tt != t && (m & (1 << tt)))
+            if (tt != t && (m & (1 << tt)) &&
+                (type > 19 || tt >= monster_rarity_floor(atk)))
                 s_pool[pack][tt][s_pool_n[pack][tt]++] = (uint16_t)id;
     }
     /* Variety floor: a short pool borrows whole tiers below it until it
@@ -635,6 +875,44 @@ static void build_pools(void) {
                     if (hpack[id] == p && home[id] == (uint8_t)tt)
                         s_pool[p][t][s_pool_n[p][t]++] = (uint16_t)id;
     s_pools_built = 1;
+}
+
+/* A bought pack may roll the same card in every slot. Therefore the resale
+ * ceiling for a card is the cheapest pack containing it divided by the
+ * number of cards in that pack. Even the worst possible pull can only break
+ * even; it can never mint chips by buying, selling, and repeating. `source`
+ * is 0 derived, 1 an explicit card.ini value, 2 an economy cap. */
+int psx_card_shop_effective_sell_price(int id, int *source)
+{
+    int overridden = 0;
+    const int configured = psx_card_packs_sell_price(id, &overridden);
+    if (configured < 0) return configured;
+    build_pools();
+    /* Password purchase is another route into inventory. It is a ceiling too,
+     * including for cards that are not present in any pack pool. */
+    int ceiling = psx_card_packs_price(id);
+    const int cards = s_cfg_pack_cards > 0 ? s_cfg_pack_cards : 1;
+    for (int p = 0; p < SHOP_PACKS; p++)
+        for (int t = 0; t < SHOP_TIERS; t++)
+            for (int i = 0; i < s_pool_n[p][t]; i++)
+                if (s_pool[p][t][i] == (uint16_t)id) {
+                    int cap = s_cfg_price[t] / cards;
+                    /* Pack division otherwise exposes awkward recurring
+                     * thirds (800/3=266, 200/3=66, 80/3=26). Keep resale
+                     * values in useful shop denominations, always rounding
+                     * down so the anti-arbitrage ceiling remains a ceiling. */
+                    if (cap >= 100)      cap = cap / 50 * 50;
+                    else if (cap >= 50)  cap = cap / 10 * 10;
+                    else if (cap >= 25)  cap = cap / 5 * 5;
+                    if (ceiling < 0 || cap < ceiling) ceiling = cap;
+                    break;
+                }
+    if (ceiling >= 0 && configured > ceiling) {
+        if (source) *source = 2;
+        return ceiling;
+    }
+    if (source) *source = overridden ? 1 : 0;
+    return configured;
 }
 
 /* ---- screen + native detection ------------------------------------------- */
@@ -791,6 +1069,7 @@ static void sfx_req(uint8_t id) {
  * play_se here, in guest context, snapshot/restore around the nested call
  * so the driver call in flight is untouched (the card_drops $ra rule). */
 void psx_mod_card_shop_on_menu_nav(CPUState *cpu, uint32_t address) {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
     if (!s_enabled) { s_sfx_n = 0; s_award_n = 0; s_view = 0; return; }
     if (s_sfx_n || s_award_n) {
@@ -1055,6 +1334,17 @@ static int text_width(const char *s) {
     return x;
 }
 
+static void fit_text(char *out, size_t cap, const char *src, int max_width)
+{
+    if (!out || !cap) return;
+    snprintf(out, cap, "%s", src ? src : "?");
+    if (text_width(out) <= max_width) return;
+    size_t n = strlen(out);
+    while (n > 3 && text_width(out) + text_width("...") > max_width)
+        out[--n] = 0;
+    if (n + 3 < cap) strcat(out, "...");
+}
+
 /* Three stacked password-screen boxes: header (title + starchip readout),
  * the pack list, and the message/pull box. */
 #define BOX_A_Y 0
@@ -1064,7 +1354,303 @@ static int text_width(const char *s) {
 #define BOX_C_Y 150
 #define BOX_C_H 80
 
+#define SELL_ROWS 6
+
+/* Sell layout, in panel pixels. Content spans SELL_X0..SELL_X1 of the
+ * 304-wide canvas (the frame edges are 8px sprites). The game's own font is
+ * about 9px per capital, so one line holds roughly 31 capitals: the row table
+ * carries name / trunk / sell / price, and the strip under it spells out the
+ * selected card's number, deck count, retained count and price source in
+ * full. Every text line sits on a 13px pitch from SELL_LINE(0); the 12-row
+ * glyphs leave row 12 free, which is where the rules go, so a rule costs no
+ * height. Six-digit prices are 54px wide in this font and the old layout
+ * right-aligned them at x=318 on a 304px canvas, which clipped them. */
+#define SELL_X0 14
+#define SELL_X1 290
+#define SELL_XC 152
+#define SELL_COL_TRUNK 184
+#define SELL_COL_SELL  228
+#define SELL_COL_PRICE 290
+#define SELL_NAME_MAX  (SELL_COL_TRUNK - 45 - 8 - SELL_X0 - 4)
+#define SELL_LINE(k)   (52 + 13 * (k))
+#define SELL_HINT_Y    208
+#define SELL_MSG_LINES 2
+
+#define C_RULE    0xFF6A7490u   /* separators inside the sell panel       */
+#define C_WARN    0xFF5A1E1Eu   /* the confirmation screen's warning band */
+
+static void draw_hint(const PsxSprite *btn, const char *label, int x, int y)
+{
+    skin_blit(btn, x, y, 0, 0, btn->w, btn->h);
+    put_text(label, x + btn->w + 2, y + 4, C_WHITE);
+}
+
+static int put_text_r(const char *s, int xr, int y, uint32_t tint) {
+    return put_text(s, xr - text_width(s), y, tint);
+}
+static int put_text_c(const char *s, int xc, int y, uint32_t tint) {
+    return put_text(s, xc - text_width(s) / 2, y, tint);
+}
+static void sell_rule(int y) {
+    px_fill(SELL_X0 - 2, y, SELL_X1 - SELL_X0 + 4, 1, C_RULE);
+}
+
+/* Word-wrap into at most max_lines lines of max_width pixels; a word that
+ * is wider than a line on its own is cut with an ellipsis, and so is the
+ * last line when the text needs more lines than there are. */
+static int wrap_text(const char *src, int max_width, char (*lines)[64],
+                     int max_lines)
+{
+    int n = 0;
+    const char *p = src;
+    if (!src || !*src || max_lines < 1) return 0;
+    lines[0][0] = 0;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *e = p;
+        while (*e && *e != ' ') e++;
+        char word[64];
+        snprintf(word, sizeof word, "%.*s", (int)(e - p), p);
+        char trial[64];
+        if (lines[n][0]) snprintf(trial, sizeof trial, "%s %s", lines[n], word);
+        else             snprintf(trial, sizeof trial, "%s", word);
+        if (text_width(trial) <= max_width || !lines[n][0]) {
+            /* fit_text copies src into out, so never alias the two. */
+            if (text_width(trial) > max_width) fit_text(lines[n], 64, trial, max_width);
+            else                               snprintf(lines[n], 64, "%s", trial);
+        } else if (n + 1 < max_lines) {
+            n++;
+            snprintf(lines[n], 64, "%s", word);
+            if (text_width(word) > max_width) fit_text(lines[n], 64, word, max_width);
+        } else {
+            /* Out of lines: keep what fits and mark the cut. */
+            snprintf(trial, sizeof trial, "%s %s", lines[n], word);
+            fit_text(lines[n], 64, trial, max_width);
+            return n + 1;
+        }
+        p = e;
+    }
+    return lines[n][0] ? n + 1 : n;
+}
+
+static uint32_t msg_tint(void) {
+    return s_msg_tone == 2 ? C_GREEN : s_msg_tone == 1 ? C_GREY : C_RED;
+}
+
+/* The three totals lines both sell screens share: credited sale value, number
+ * of copies, and the resulting balance. Do not repeat the credit as YOU GET;
+ * when the cap trims the gross value, the copy line carries the reason. */
+static void draw_sell_totals(int y)
+{
+    char line[40];
+    put_text("SALE VALUE", SELL_X0, y, C_GREY);
+    snprintf(line, sizeof line, "%u", s_sell_credit);
+    put_text_r(line, SELL_X1, y, s_sell_credit ? C_GOLD : C_GREY);
+
+    snprintf(line, sizeof line, "SELLING %u CARD%s", s_sell_copies,
+             s_sell_copies == 1 ? "" : "S");
+    put_text(line, SELL_X0, y + 13, C_GREY);
+    if (s_sell_gross > s_sell_credit) {
+        put_text_r("MAX IS 999999", SELL_X1, y + 13, C_RED);
+    }
+
+    put_text("BALANCE AFTER", SELL_X0, y + 26, C_GREY);
+    snprintf(line, sizeof line, "%u", s_sell_after);
+    put_text_r(line, SELL_X1, y + 26, C_GOLD);
+}
+
+static void draw_sell_header(const char *title, uint32_t tint)
+{
+    s_img_w = PANEL_W; s_img_h = PANEL_H;
+    memset(s_px, 0, sizeof s_px);
+    skin_box(0, BOX_A_Y, PANEL_W, BOX_A_H);
+    skin_box(0, BOX_B_Y, PANEL_W, PANEL_H - BOX_B_Y);
+    put_text(title, 16, BOX_A_Y + 15, tint);
+    skin_blit(&psx_spr_shop_star, 206, BOX_A_Y + 12, 0, 0,
+              psx_spr_shop_star.w, psx_spr_shop_star.h);
+    char line[40];
+    snprintf(line, sizeof line, "x %u", s_sell_snapshot.starchips);
+    put_text(line, 226, BOX_A_Y + 16, C_WHITE);
+}
+
+static void draw_sell_message(int y)
+{
+    char lines[SELL_MSG_LINES][64];
+    const int n = wrap_text(s_msg, SELL_X1 - SELL_X0, lines, SELL_MSG_LINES);
+    for (int i = 0; i < n; i++)
+        put_text_c(lines[i], SELL_XC, y + 13 * i, msg_tint());
+}
+
+static void draw_sell_empty(void)
+{
+    draw_sell_header("Sell  Cards", C_GOLD);
+    put_text_c("YOUR TRUNK IS EMPTY.", SELL_XC, 92, C_GOLD);
+    put_text_c("THERE IS NOTHING TO SELL.", SELL_XC, 112, C_WHITE);
+    put_text_c("CARDS IN YOUR DECK ARE NEVER SOLD.", SELL_XC, 132, C_GREY);
+    if (s_msg[0]) draw_sell_message(158);
+    const int w = psx_spr_shop_obtn.w + 2 + text_width("BACK");
+    draw_hint(&psx_spr_shop_obtn, "BACK", SELL_XC - w / 2, 190);
+}
+
+/* Quantity editor: totals, a five-row table around the cursor, the selected
+ * card's full strip, and the controls. A pending message takes the strip's
+ * three lines until the next press. */
+static void draw_sell_editor(void)
+{
+    draw_sell_header("Sell  Cards", C_GOLD);
+    char line[96];
+    draw_sell_totals(SELL_LINE(0));
+    sell_rule(SELL_LINE(2) + 12);
+
+    int first = s_sell_sel - SELL_ROWS / 2;
+    if (first > s_sell_n - SELL_ROWS) first = s_sell_n - SELL_ROWS;
+    if (first < 0) first = 0;
+    const int hy = SELL_LINE(3);
+    /* Position in the list; "CARD 722 OF 722" would reach the TRUNK tick,
+     * so the word is dropped once the numbers alone need the room. */
+    snprintf(line, sizeof line, "CARD %d OF %d", s_sell_sel + 1, s_sell_n);
+    if (SELL_X0 + 4 + text_width(line) > SELL_COL_TRUNK - 45 - 8)
+        snprintf(line, sizeof line, "%d OF %d", s_sell_sel + 1, s_sell_n);
+    put_text(line, SELL_X0 + 4, hy, C_GREY);
+    put_text_r("TRUNK", SELL_COL_TRUNK, hy, C_GREY);
+    put_text_r("SELL",  SELL_COL_SELL,  hy, C_GREY);
+    put_text_r("PRICE", SELL_COL_PRICE, hy, C_GREY);
+    sell_rule(hy + 12);
+    /* Column ticks sit in the gutters, clear of a six-digit price. */
+    const int tick_h = 12 + 13 * SELL_ROWS + 1;
+    px_fill(SELL_COL_TRUNK - 45 - 4, hy, 1, tick_h, C_SLOT);
+    px_fill(SELL_COL_SELL - 36 - 4,  hy, 1, tick_h, C_SLOT);
+    px_fill(SELL_COL_PRICE - 54 - 4, hy, 1, tick_h, C_SLOT);
+
+    for (int r = 0; r < SELL_ROWS && first + r < s_sell_n; r++) {
+        const int i = first + r;
+        const int y = SELL_LINE(4 + r);
+        const SellEntry *e = &s_sell_entry[i];
+        const int cur = i == s_sell_sel;
+        if (cur) {
+            px_fill(10, y - 2, PANEL_W - 20, 13, C_SEL);
+            px_fill(10, y - 2, 3, 13, C_GOLD);
+        }
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_NAME_MAX);
+        put_text(fitted, SELL_X0 + 4, y, cur ? C_GOLD : C_WHITE);
+        snprintf(line, sizeof line, "%u", (unsigned)e->trunk);
+        put_text_r(line, SELL_COL_TRUNK, y, C_WHITE);
+        snprintf(line, sizeof line, "%u", (unsigned)e->sell);
+        put_text_r(line, SELL_COL_SELL, y, e->sell ? C_GOLD : C_GREY);
+        if (cur) {
+            /* The editable cell: an outline round the SELL value, the way
+             * the password screen frames the digit the arrows change. */
+            const int bx = SELL_COL_SELL - 36 - 3, bw = 42;
+            px_fill(bx, y - 2, bw, 1, C_GOLD);
+            px_fill(bx, y + 10, bw, 1, C_GOLD);
+            px_fill(bx, y - 2, 1, 13, C_GOLD);
+            px_fill(bx + bw - 1, y - 2, 1, 13, C_GOLD);
+        }
+        snprintf(line, sizeof line, "%u", e->value);
+        put_text_r(line, SELL_COL_PRICE, y,
+                   e->overridden ? C_BLUE : e->value ? C_GOLD : C_GREY);
+    }
+    /* Scroll position beside the rows once the trunk outgrows the table. */
+    if (s_sell_n > SELL_ROWS) {
+        const int ty = SELL_LINE(4) - 2, th = 13 * SELL_ROWS;
+        px_fill(PANEL_W - 11, ty, 2, th, C_SLOT);
+        int len = th * SELL_ROWS / s_sell_n;
+        if (len < 4) len = 4;
+        const int pos = (th - len) * first / (s_sell_n - SELL_ROWS);
+        px_fill(PANEL_W - 11, ty + pos, 2, len, C_WHITE);
+    }
+    const int sy = SELL_LINE(4 + SELL_ROWS);
+    sell_rule(sy - 1);
+    if (s_msg[0]) {
+        draw_sell_message(sy);
+    } else {
+        const SellEntry *e = &s_sell_entry[s_sell_sel];
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_X1 - SELL_X0);
+        put_text(fitted, SELL_X0, sy, C_GOLD);
+        snprintf(line, sizeof line, "No.%03u", (unsigned)e->id);
+        put_text(line, SELL_X0, sy + 13, C_WHITE);
+    }
+    draw_hint(&psx_spr_shop_tbtn, "VIEW",   30,  SELL_HINT_Y);
+    draw_hint(&psx_spr_shop_xbtn, "REVIEW", 118, SELL_HINT_Y);
+    draw_hint(&psx_spr_shop_obtn, "CANCEL", 214, SELL_HINT_Y);
+}
+
+/* Confirmation: the same totals, a red warning band naming the irreversible
+ * action, and only the cards being sold with their subtotals. Nothing here
+ * is editable, and the only two buttons are SELL NOW and GO BACK. */
+static void draw_sell_confirm(void)
+{
+    draw_sell_header("Confirm Sale", C_RED);
+    px_fill(16, BOX_A_Y + 29, text_width("Confirm Sale"), 1, C_RED);
+    char line[96];
+    draw_sell_totals(SELL_LINE(0));
+    sell_rule(SELL_LINE(2) + 12);
+
+    int types = 0;
+    for (int i = 0; i < s_sell_n; i++) types += s_sell_entry[i].sell != 0;
+    px_fill(10, SELL_LINE(3) - 1, PANEL_W - 20, 27, C_WARN);
+    snprintf(line, sizeof line, "SELL %u COP%s OF %d CARD%s?", s_sell_copies,
+             s_sell_copies == 1 ? "Y" : "IES", types, types == 1 ? "" : "S");
+    put_text_c(line, SELL_XC, SELL_LINE(3), C_WHITE);
+    put_text_c("THIS CANNOT BE UNDONE.", SELL_XC, SELL_LINE(4), C_RED);
+
+    const int hy = SELL_LINE(5) + 2;
+    put_text("CARD", SELL_X0 + 4, hy, C_GREY);
+    put_text_r("SELL",  SELL_COL_TRUNK, hy, C_GREY);
+    put_text_r("VALUE", SELL_COL_PRICE, hy, C_GREY);
+    sell_rule(hy + 12);
+    int shown = 0, y = hy + 13;
+    const int room = 4;
+    for (int i = 0; i < s_sell_n && shown < room; i++) {
+        const SellEntry *e = &s_sell_entry[i];
+        if (!e->sell) continue;
+        if (shown == room - 1 && types > room) break;
+        char fitted[64];
+        fit_text(fitted, sizeof fitted, psx_card_packs_display_name(e->id),
+                 SELL_NAME_MAX);
+        put_text(fitted, SELL_X0 + 4, y, C_WHITE);
+        snprintf(line, sizeof line, "%u", (unsigned)e->sell);
+        put_text_r(line, SELL_COL_TRUNK, y, C_GOLD);
+        snprintf(line, sizeof line, "%" PRIu64, e->subtotal);
+        put_text_r(line, SELL_COL_PRICE, y, e->subtotal ? C_GOLD : C_GREY);
+        shown++; y += 13;
+    }
+    if (types > shown) {
+        snprintf(line, sizeof line, "AND %d MORE CARD%s", types - shown,
+                 types - shown == 1 ? "" : "S");
+        put_text(line, SELL_X0 + 4, y, C_GREY);
+    }
+    const int ny = hy + 13 * (room + 1) + 2;
+    if (s_msg[0])
+        draw_sell_message(ny);
+    else if (!s_sell_gross)
+        put_text_c("THESE CARDS ARE WORTH NOTHING.", SELL_XC, ny, C_RED);
+    else if (s_sell_gross > s_sell_credit)
+        put_text_c("STARCHIPS STOP AT 999999.", SELL_XC, ny, C_RED);
+    else
+        put_text_c("YOUR DECK IS NOT CHANGED.", SELL_XC, ny, C_GREY);
+    const int w = psx_spr_shop_xbtn.w + 2 + text_width("SELL NOW") + 20 +
+                  psx_spr_shop_obtn.w + 2 + text_width("GO BACK");
+    int x = SELL_XC - w / 2;
+    draw_hint(&psx_spr_shop_xbtn, "SELL NOW", x, SELL_HINT_Y);
+    x += psx_spr_shop_xbtn.w + 2 + text_width("SELL NOW") + 20;
+    draw_hint(&psx_spr_shop_obtn, "GO BACK", x, SELL_HINT_Y);
+}
+
+static void draw_sell_panel(void)
+{
+    if (!s_sell_n)            draw_sell_empty();
+    else if (s_sell_mode == 2) draw_sell_confirm();
+    else                       draw_sell_editor();
+}
+
 static void draw_panel(void) {
+    if (s_sell_mode) { draw_sell_panel(); return; }
     s_img_w = PANEL_W; s_img_h = PANEL_H;
     memset(s_px, 0, sizeof s_px);
     skin_box(0, BOX_A_Y, PANEL_W, BOX_A_H);
@@ -1108,7 +1694,19 @@ static void draw_panel(void) {
         put_text(line, 254, y, C_GOLD);
     }
 
-    if (s_msg[0]) put_text(s_msg, 16, BOX_C_Y + 8, s_pull_n ? C_GREY : C_RED);
+    int msg_lines = 0;
+    if (s_msg[0]) {
+        if (s_pull_n) {
+            put_text(s_msg, 16, BOX_C_Y + 8, C_GREY);
+        } else {
+            /* A sale result or refusal: wrapped, and coloured by outcome
+             * rather than always red (a completed sale is not an error). */
+            char lines[2][64];
+            msg_lines = wrap_text(s_msg, PANEL_W - 32, lines, 2);
+            for (int i = 0; i < msg_lines; i++)
+                put_text(lines[i], 16, BOX_C_Y + 8 + 13 * i, msg_tint());
+        }
+    }
     /* Button hints share the header line with the short "RESULTS:" label,
      * right-aligned. (With the old "LEGENDARY MONSTER:" header there was no
      * room here and the triangle button sat on top of the text.)
@@ -1120,8 +1718,9 @@ static void draw_panel(void) {
      * left to carry it. */
     if (s_pull_n || s_msg[0]) {
         const int hy = BOX_C_Y + 4;
-        const PsxSprite *btn[2];
-        const char *lbl[2];
+        const PsxSprite *btn[3];
+        const char *lbl[3];
+        int nbtn;
         if (s_ceremony) {
             /* Reveal phase: X flips the NEXT card, it does not dismiss the
              * list. Labelling it "Continue" there named the button it only
@@ -1129,22 +1728,33 @@ static void draw_panel(void) {
             btn[0] = &psx_spr_shop_tbtn; lbl[0] = "View";
             btn[1] = &psx_spr_shop_xbtn;
             lbl[1] = s_shown < s_pull_n ? "Next" : "Continue";
+            nbtn = 2;
         } else {
-            btn[0] = &psx_spr_shop_xbtn; lbl[0] = "BUY";
-            btn[1] = &psx_spr_shop_obtn; lbl[1] = "CLOSE";
+            /* A pull list leaves only its header row for controls. Keep this
+             * label compact there; the empty panel spells out SELL.
+             * A message with no list gets a dedicated second row below. */
+            btn[0] = &psx_spr_shop_tbtn; lbl[0] = "SELL";
+            btn[1] = &psx_spr_shop_xbtn; lbl[1] = "BUY";
+            btn[2] = &psx_spr_shop_obtn; lbl[2] = "CLOSE";
+            nbtn = 3;
         }
         /* Measured then laid out LEFT to right, so the pair keeps the panel's
          * own X-before-O order; laying it out backwards from the right edge
          * (which is all the fixed ceremony pair needed) reversed it. */
         int w = 0;
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < nbtn; i++)
             w += (i ? 12 : 0) + btn[i]->w + 2 + text_width(lbl[i]);
         int x = PANEL_W - 14 - w;
-        for (int i = 0; i < 2; i++) {
+        int y = hy;
+        if (!s_pull_n && s_msg[0]) {
+            x = 37;
+            y = BOX_C_Y + 28 + (msg_lines > 1 ? 14 : 0);
+        }
+        for (int i = 0; i < nbtn; i++) {
             if (i) x += 12;
-            skin_blit(btn[i], x, hy, 0, 0, btn[i]->w, btn[i]->h);
+            skin_blit(btn[i], x, y, 0, 0, btn[i]->w, btn[i]->h);
             x += btn[i]->w + 2;
-            put_text(lbl[i], x, hy + 4, C_WHITE);
+            put_text(lbl[i], x, y + 4, C_WHITE);
             x += text_width(lbl[i]);
         }
     }
@@ -1182,12 +1792,15 @@ static void draw_panel(void) {
     if (!s_pull_n && !s_msg[0]) {
         /* Nothing bought yet: the box is empty, so the password screen's own
          * OK/END buttons get the middle of it. */
-        skin_blit(&psx_spr_shop_xbtn, 88, BOX_C_Y + 28, 0, 0,
+        skin_blit(&psx_spr_shop_tbtn, 37, BOX_C_Y + 28, 0, 0,
+                  psx_spr_shop_tbtn.w, psx_spr_shop_tbtn.h);
+        put_text("SELL", 57, BOX_C_Y + 32, C_WHITE);
+        skin_blit(&psx_spr_shop_xbtn, 150, BOX_C_Y + 28, 0, 0,
                   psx_spr_shop_xbtn.w, psx_spr_shop_xbtn.h);
-        put_text("BUY", 108, BOX_C_Y + 32, C_WHITE);
-        skin_blit(&psx_spr_shop_obtn, 160, BOX_C_Y + 28, 0, 0,
+        put_text("BUY", 170, BOX_C_Y + 32, C_WHITE);
+        skin_blit(&psx_spr_shop_obtn, 211, BOX_C_Y + 28, 0, 0,
                   psx_spr_shop_obtn.w, psx_spr_shop_obtn.h);
-        put_text("CLOSE", 180, BOX_C_Y + 32, C_WHITE);
+        put_text("CLOSE", 231, BOX_C_Y + 32, C_WHITE);
     }
 }
 
@@ -1197,16 +1810,16 @@ static void buy(int pack) {
     const int price = s_cfg_price[tier];
     build_pools();
     if (!s_pools_built || !s_pool_n[pack][tier]) {
-        snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET");
+        snprintf(s_msg, sizeof s_msg, "SHOP NOT STOCKED YET"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     if (!save_live()) {
-        snprintf(s_msg, sizeof s_msg, "NO SAVE LOADED");
+        snprintf(s_msg, sizeof s_msg, "NO SAVE LOADED"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     const uint32_t chips = psx_mod_read_word(SHOP_CHIPS_ADDR);
     if (chips < (uint32_t)price) {
-        snprintf(s_msg, sizeof s_msg, "NOT ENOUGH CHIPS");
+        snprintf(s_msg, sizeof s_msg, "NOT ENOUGH CHIPS"); s_msg_tone = 0;
         s_pull_n = 0; s_denied++; sfx_req(SHOP_SE_DENY); return;
     }
     sfx_req(SHOP_SE_BUY);
@@ -1224,7 +1837,7 @@ static void buy(int pack) {
     /* Short label: the rarity and pack are both still on screen in the
      * highlighted row above, and the room this leaves on the header line
      * is what lets the button hints share it. */
-    snprintf(s_msg, sizeof s_msg, "RESULTS:");
+    snprintf(s_msg, sizeof s_msg, "RESULTS:"); s_msg_tone = 1;
     /* The pack-open ceremony: the first card is on the table already;
      * every X flips the next, then the list can be browsed and viewed. */
     s_ceremony = 1;
@@ -1257,7 +1870,12 @@ static void restore_stock_code(void) {
 }
 
 void psx_card_shop_tick(void) {
-    if (!s_enabled) { restore_stock_code(); return; }
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
+    if (!s_enabled) {
+        if (s_open) { s_open = 0; sell_cancel(); }
+        restore_stock_code();
+        return;
+    }
     /* Stage the stream, the label-table entry and the four code immediates
      * from the moment the game is up, NOT only while the gate is open.
      *
@@ -1280,7 +1898,7 @@ void psx_card_shop_tick(void) {
     const int gate = screen_match();
     if (gate != s_gate) { s_gate = gate; s_dirty = 1; }
     if (!gate) {
-        if (s_open) { s_open = 0; s_dirty = 1; }
+        if (s_open) { s_open = 0; sell_cancel(); s_dirty = 1; }
         /* Re-read card_shop.ini and rebuild pools on the next visit, so an
          * edit takes effect by walking out of the shop and back in. */
         if (s_pools_built) { s_pools_built = 0; s_cfg_loaded = 0; }
@@ -1325,7 +1943,7 @@ void psx_card_shop_tick(void) {
         /* Menu is showing stock labels (pre-repoint open, or a savestate
          * taken before this feature). Behave as absent: no fifth row, no
          * remap, stock count. */
-        if (s_open) { s_open = 0; s_dirty = 1; }
+        if (s_open) { s_open = 0; sell_cancel(); s_dirty = 1; }
         say_reset();
         return;
     }
@@ -1369,6 +1987,7 @@ void psx_card_shop_tick(void) {
                 say_winddown();
                 s_say = 0;
                 s_open = 1; s_sel = 0; s_msg[0] = 0; s_pull_n = 0; s_opens++;
+                sell_cancel();
                 s_rng ^= psx_mod_read_word(0x8009B0C4u) * 2654435761u;
                 s_dirty = 1;
             }
@@ -1404,6 +2023,104 @@ void psx_card_shop_tick(void) {
     if (s_view) {
         /* The game's card viewer is up: every button is its. The hook
          * clears s_view when the viewer's own Circle closes it. */
+    } else if (s_sell_mode) {
+        /* A pending message (refusal, result, note) lives until the next
+         * press; the press that produces a new one writes it after this. */
+        if (np && s_msg[0]) { s_msg[0] = 0; s_dirty = 1; }
+        const int was_confirm = s_sell_mode == 2;
+        if (was_confirm) {
+            if (np & SHOP_NP_CROSS) {
+                if (sell_confirm(s_msg, sizeof s_msg)) {
+                    s_msg_tone = 2; sfx_req(SHOP_SE_BUY);
+                } else {
+                    s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+                }
+                s_dirty = 1;
+            }
+            if (np & SHOP_NP_CIRCLE) {
+                /* GO BACK: to the editor with the quantities kept. This used
+                 * to fall through to the editor's own Circle below and cancel
+                 * the whole session, so BACK on the confirmation threw the
+                 * player's selection away. */
+                s_sell_mode = 1;
+                snprintf(s_msg, sizeof s_msg, "NOTHING SOLD. CHOICES KEPT.");
+                s_msg_tone = 1;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+            }
+        } else if (s_sell_n) {
+            if (np & SHOP_NP_UP) {
+                s_sell_sel = (s_sell_sel + s_sell_n - 1) % s_sell_n;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+            }
+            if (np & SHOP_NP_DOWN) {
+                s_sell_sel = (s_sell_sel + 1) % s_sell_n;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+            }
+            if (np & SHOP_NP_L1) {
+                s_sell_sel = (s_sell_sel + s_sell_n - 10 % s_sell_n) % s_sell_n;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+            }
+            if (np & SHOP_NP_R1) {
+                s_sell_sel = (s_sell_sel + 10) % s_sell_n;
+                sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+            }
+            SellEntry *e = &s_sell_entry[s_sell_sel];
+            int qty = e->sell;
+            if (np & SHOP_NP_LEFT)  qty--;
+            if (np & SHOP_NP_RIGHT) qty++;
+            if (qty < 0) qty = 0;
+            if (qty > e->trunk) qty = e->trunk;
+            if (qty != e->sell) {
+                e->sell = (uint8_t)qty;
+                sell_recalculate();
+                sfx_req(SHOP_SE_CURSOR);
+            }
+            if (np & SHOP_NP_SQUARE) {
+                e->sell = e->sell == e->trunk ? 0 : e->trunk;
+                sell_recalculate(); sfx_req(SHOP_SE_CURSOR);
+            }
+            if (np & (SHOP_NP_START | SHOP_NP_R2 | SHOP_NP_L2)) {
+                int all = (np & (SHOP_NP_START | SHOP_NP_R2)) != 0;
+                if (np & SHOP_NP_START) {
+                    all = 0;
+                    for (int i = 0; i < s_sell_n; i++)
+                        if (s_sell_entry[i].sell != s_sell_entry[i].trunk) {
+                            all = 1; break;
+                        }
+                }
+                for (int i = 0; i < s_sell_n; i++)
+                    s_sell_entry[i].sell = all ? s_sell_entry[i].trunk : 0;
+                sell_recalculate(); sfx_req(SHOP_SE_CURSOR);
+            }
+            if (np & SHOP_NP_TRIANGLE) {
+                s_view = 1; s_view_card = s_sell_entry[s_sell_sel].id;
+                s_dirty = 1;
+            }
+            if (np & SHOP_NP_CROSS) {
+                /* The confirmation screen states the copies and cards
+                 * itself; its review line would only repeat that. */
+                if (sell_review(s_msg, sizeof s_msg)) {
+                    s_msg[0] = 0; sfx_req(SHOP_SE_CURSOR);
+                } else {
+                    s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+                }
+                s_dirty = 1;
+            }
+        } else if (np & SHOP_NP_CROSS) {
+            snprintf(s_msg, sizeof s_msg, "TRUNK IS EMPTY"); s_msg_tone = 0;
+            sfx_req(SHOP_SE_DENY); s_dirty = 1;
+        }
+        if (!was_confirm && (np & SHOP_NP_CIRCLE)) {
+            sell_cancel();
+            snprintf(s_msg, sizeof s_msg, "SELL CANCELLED. NOTHING SOLD.");
+            s_msg_tone = 1;
+            sfx_req(SHOP_SE_CURSOR); s_dirty = 1;
+        }
+        eat |= (uint16_t)(np & (SHOP_NP_UP | SHOP_NP_DOWN | SHOP_NP_LEFT |
+                                SHOP_NP_RIGHT | SHOP_NP_CROSS | SHOP_NP_CIRCLE |
+                                SHOP_NP_TRIANGLE | SHOP_NP_SQUARE | SHOP_NP_L1 |
+                                SHOP_NP_R1 | SHOP_NP_L2 | SHOP_NP_R2 |
+                                SHOP_NP_START));
     } else if (s_ceremony && s_shown < s_pull_n) {
         /* Reveal phase: X flips the next card. The newest card is hovered
          * from the moment it lands, so TRIANGLE can view it right away. */
@@ -1437,8 +2154,16 @@ void psx_card_shop_tick(void) {
         if (np & SHOP_NP_DOWN)  { s_sel = (s_sel + 1) % SHOP_PACKS;              eat |= SHOP_NP_DOWN; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
         if (np & SHOP_NP_LEFT)  { s_tier[s_sel] = (s_tier[s_sel] + SHOP_TIERS - 1) % SHOP_TIERS; eat |= SHOP_NP_LEFT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
         if (np & SHOP_NP_RIGHT) { s_tier[s_sel] = (s_tier[s_sel] + 1) % SHOP_TIERS;              eat |= SHOP_NP_RIGHT; sfx_req(SHOP_SE_CURSOR); s_dirty = 1; }
+        if (np & SHOP_NP_TRIANGLE) {
+            if (sell_preview_build(s_msg, sizeof s_msg)) {
+                s_msg[0] = 0; sfx_req(SHOP_SE_CURSOR);
+            } else {
+                s_msg_tone = 0; sfx_req(SHOP_SE_DENY);
+            }
+            eat |= SHOP_NP_TRIANGLE; s_dirty = 1;
+        }
         if (np & SHOP_NP_CROSS) { buy(s_sel); eat |= SHOP_NP_CROSS; s_dirty = 1; }
-        if (np & SHOP_NP_CIRCLE){ s_open = 0; eat |= SHOP_NP_CIRCLE; sfx_req(SHOP_SE_LEAVE); s_dirty = 1; }
+        if (np & SHOP_NP_CIRCLE){ s_open = 0; sell_cancel(); eat |= SHOP_NP_CIRCLE; sfx_req(SHOP_SE_LEAVE); s_dirty = 1; }
     }
     if (eat)
         psx_mod_write_half(SHOP_PAD_NEW_ADDR, (uint16_t)(np & ~eat));
@@ -1508,8 +2233,9 @@ int psx_card_shop_card_json(char *out, unsigned cap, const char *name) {
     const int mask = cfg_mask_for(psx_card_db_name(id));
     int n = snprintf(out, cap,
         "\"found\":true,\"id\":%d,\"name\":\"%.32s\",\"type\":%d,\"atk\":%d,"
-        "\"cfg_mask\":%d,\"pools\":[",
-        id, psx_card_db_name(id), type, atk, mask);
+        "\"cfg_mask\":%d,\"purchase_price\":%d,\"sell_price\":%d,\"pools\":[",
+        id, psx_card_db_name(id), type, atk, mask,
+        psx_card_packs_price(id), psx_card_shop_effective_sell_price(id, NULL));
     int first = 1;
     for (int p = 0; p < SHOP_PACKS; p++)
         for (int t = 0; t < SHOP_TIERS; t++)
@@ -1527,8 +2253,86 @@ int psx_card_shop_card_json(char *out, unsigned cap, const char *name) {
     return n;
 }
 
+int psx_card_shop_sell_preview(char *msg, unsigned cap)
+{
+    return sell_preview_build(msg, cap);
+}
+
+int psx_card_shop_sell_review(char *msg, unsigned cap)
+{
+    return sell_review(msg, cap);
+}
+
+int psx_card_shop_sell_confirm(char *msg, unsigned cap)
+{
+    if (psx_ygo_netplay_session()) {
+        if (msg && cap) snprintf(msg, cap, "SELL DISABLED DURING NETPLAY");
+        return 0;
+    }
+    return sell_confirm(msg, cap);
+}
+
+void psx_card_shop_sell_cancel(void)
+{
+    sell_cancel();
+}
+
+int psx_card_shop_sell_state_json(char *out, unsigned cap)
+{
+    if (!out || cap < 256u) return 0;
+    unsigned n = (unsigned)snprintf(out, cap,
+        "\"active\":%d,\"types\":%d,\"copies\":%u,"
+        "\"gross\":%" PRIu64 ",\"credit\":%u,\"before\":%u,"
+        "\"after\":%u,\"cap\":%u,\"selected\":%d,\"entries\":[",
+        s_sell_mode, s_sell_n, s_sell_copies, s_sell_gross, s_sell_credit,
+        s_sell_snapshot.starchips, s_sell_after, PSX_CARD_STARCHIP_CAP,
+        s_sell_sel);
+    for (int i = 0; i < s_sell_n; i++) {
+        const SellEntry *e = &s_sell_entry[i];
+        if (n >= cap) return 0;
+        n += (unsigned)snprintf(out + n, cap - n,
+            "%s{\"id\":%u,\"deck\":%u,\"trunk\":%u,\"sell\":%u,"
+            "\"retained\":%u,\"sell_price\":%u,\"price_source\":\"%s\",\"subtotal\":%" PRIu64 "}",
+            i ? "," : "", (unsigned)e->id, (unsigned)e->deck,
+            (unsigned)e->trunk, (unsigned)e->sell, (unsigned)e->retained,
+            e->value, e->overridden == 2 ? "economy_cap" :
+                      e->overridden ? "override" : "derived", e->subtotal);
+    }
+    if (n >= cap) return 0;
+    n += (unsigned)snprintf(out + n, cap - n, "]");
+    return n < cap ? (int)n : 0;
+}
+
 int psx_card_shop_state_json(char *out, unsigned cap) {
+    build_pools();
     int bad_slot = -1, bad_val = -1;
+    int direct_bad = 0, pack_bad = 0, memberships = 0;
+    int atk2500_bad = 0, atk3000_bad = 0;
+    int megamorph_min = SHOP_TIERS, ultimate_min = SHOP_TIERS;
+    const int cards_per_pack = s_cfg_pack_cards > 0 ? s_cfg_pack_cards : 1;
+    for (int id = 1; id <= PSX_CARD_DB_COUNT; id++) {
+        const int sell = psx_card_shop_effective_sell_price(id, NULL);
+        const int buy = psx_card_packs_price(id);
+        if (sell >= 0 && buy >= 0 && sell > buy) direct_bad++;
+        int min_tier = SHOP_TIERS;
+        for (int p = 0; p < SHOP_PACKS; p++)
+            for (int t = 0; t < SHOP_TIERS; t++)
+                for (int i = 0; i < s_pool_n[p][t]; i++)
+                    if (s_pool[p][t][i] == (uint16_t)id) {
+                        memberships++;
+                        if (t < min_tier) min_tier = t;
+                        if (sell >= 0 && (uint64_t)sell * (unsigned)cards_per_pack >
+                                         (unsigned)s_cfg_price[t]) pack_bad++;
+                        break;
+                    }
+        int atk = 0, def = 0, type = 0;
+        (void)psx_card_db_stats(id, &atk, &def, &type);
+        if (type <= 19 && atk >= 2500 && min_tier < 2) atk2500_bad++;
+        if (type <= 19 && atk >= 3000 && min_tier < 3) atk3000_bad++;
+        const char *name = psx_card_db_name(id);
+        if (!strcmp(name, "Megamorph")) megamorph_min = min_tier;
+        if (!strcmp(name, "Blue-eyes Ultimate Dragon")) ultimate_min = min_tier;
+    }
     const int dk_live   = save_gate_detail(SHOP_SAVE_LIVE, &bad_slot, &bad_val);
     const int dk_mirror = save_gate_detail(SHOP_SAVE_MIRROR,
                                            dk_live ? &bad_slot : NULL,
@@ -1546,7 +2350,12 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         "\"table17\":%u,\"stock_entry\":%u,\"widget_cur\":%u,"
         "\"say\":%d,\"say_table\":%u,\"dlg_mode\":%u,\"dlg_id\":%u,"
         "\"cer\":%d,\"shown\":%d,\"csel\":%d,\"view\":%d,\"sub_cmd\":%u,"
+        "\"sell\":%d,\"sell_types\":%d,\"sell_copies\":%u,\"sell_runs\":%u,"
         "\"pools\":[%d,%d,%d,%d],"
+        "\"economy\":{\"cards_per_pack\":%d,\"memberships\":%d,"
+        "\"direct_violations\":%d,\"pack_violations\":%d},"
+        "\"rarity_audit\":{\"atk2500_violations\":%d,\"atk3000_violations\":%d,"
+        "\"megamorph_min_tier\":%d,\"ultimate_min_tier\":%d},"
         "\"buys\":%u,\"denied\":%u,\"opens\":%u,\"remaps\":%u,"
         "\"save_live\":%d,\"deck_live\":%d,\"deck_mirror\":%d,"
         "\"deck_bad_slot\":%d,\"deck_bad_val\":%d",
@@ -1566,10 +2375,13 @@ int psx_card_shop_state_json(char *out, unsigned cap) {
         (unsigned)psx_mod_read_half(SHOP_DLG_ID),
         s_ceremony, s_shown, s_card_sel, s_view,
         (unsigned)psx_mod_read_byte(SHOP_SUB_CMD),
+        s_sell_mode, s_sell_n, s_sell_copies, s_sell_runs,
         s_pool_n[0][0] + s_pool_n[0][1] + s_pool_n[0][2] + s_pool_n[0][3],
         s_pool_n[1][0] + s_pool_n[1][1] + s_pool_n[1][2] + s_pool_n[1][3],
         s_pool_n[2][0] + s_pool_n[2][1] + s_pool_n[2][2] + s_pool_n[2][3],
         s_pool_n[3][0] + s_pool_n[3][1] + s_pool_n[3][2] + s_pool_n[3][3],
+        cards_per_pack, memberships, direct_bad, pack_bad,
+        atk2500_bad, atk3000_bad, megamorph_min, ultimate_min,
         s_buys, s_denied, s_opens, s_remaps,
         save_live(), dk_live, dk_mirror, bad_slot, bad_val);
 }

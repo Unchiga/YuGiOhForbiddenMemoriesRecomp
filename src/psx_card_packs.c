@@ -3,7 +3,7 @@
  * PLAYER FILES  (<player-data>/cards/<id>/, id = 1..722)
  *     card.ini     name = Blue-eyes Ultimate Dragon
  *                  description = A delicate elf that|lacks in offense|...
- *                                ("|" breaks a line; no "|" = wrapped at 20)
+ *                                ("|" breaks a line; no "|" = wrapped at 21)
  *                  attack = 4500          defense = 3800     (0..5110, x10)
  *                  star1 = Sun            star2 = Mars       (name or 1..10)
  *                  type = Dragon                             (name or 0..23)
@@ -55,6 +55,7 @@
  * attic/, and its PNG quantiser and title renderer live on here. */
 
 #include "psx_card_packs.h"
+#include "psx_tool_window.h"
 #include "psx_card_effects_set.h"
 #include "psx_textfile.h"
 
@@ -90,6 +91,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
 #include "../psxrecomp/runtime/third_party/stb_truetype.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- guest facts ---------------------------------------------------------- */
 #define CARD_COUNT     722
@@ -126,16 +128,23 @@
 #define NAMES_BASE     0x801D9800u
 #define NAMES_LIMIT    PSX_CARD_PACKS_NAMES_LIMIT
 /* Descriptions: offsets are relative to 0x801C0000, so the strings must sit
- * in that 64 KB. The stock texts end at 0x801CD59E; psx_card_extend's
- * relocated tables run 0x801CD5A0..~0x801CEB90 and the parked free-duel
- * rows experiment (tools/free_duel_rows/) claimed 0x801CFE00, which leaves
- * this gap. */
+ * in that 64 KB. There are 723 offset entries (the game indexes 0..722), then
+ * the larger global offset table continues through 0x801C09F4, followed by
+ * the stock string bank ending at 0x801CD59E. psx_card_extend owns
+ * 0x801CD5A0..0x801CEBxx. We snapshot every exact stock byte string before
+ * writing, then rebuild into the original bank plus the proven
+ * 0x801CEC00..0x801CFE00 overflow arena. That retains old, description-heavy
+ * MOD packages without clipping while never touching the relocated tables. */
 #define DESC_TABLE     0x801C0200u        /* + id*2, entry index 0x100+id */
 #define DESC_SEGMENT   0x801C0000u
-#define DESC_BASE      0x801CEC00u
-#define DESC_LIMIT     0x801CFE00u
-#define DESC_COLS      20
-#define DESC_LINES     6
+#define DESC_PRIMARY_BASE 0x801C09F5u
+#define DESC_PRIMARY_END  0x801CD5A0u
+#define DESC_EXTRA_BASE   0x801CEC00u
+#define DESC_EXTRA_END    0x801CFE00u
+#define DESC_MARK_ADDR    (DESC_EXTRA_END - 4u)
+#define DESC_PRIMARY_CAP  (DESC_PRIMARY_END - DESC_PRIMARY_BASE)
+#define DESC_EXTRA_CAP    (DESC_MARK_ADDR - DESC_EXTRA_BASE)
+#define DESC_ENC_CAP   (PSX_CARD_PACK_DESC_MAX + PSX_CARD_PACK_DESC_LINES + 2)
 
 /* ---- names ----------------------------------------------------------------
  * The game's frequency-ordered character code (gText_adwGlyphCodeTable,
@@ -170,79 +179,108 @@ static void decode_text(uint32_t addr, char *out, size_t cap)
     out[n] = 0;
 }
 
-/* Description text -> game bytes. "|" or a literal "\n" breaks a line; with
- * no breaks at all the text is word-wrapped at DESC_COLS the way the stock
- * descriptions are laid out. At most DESC_LINES lines. Returns the length
- * including the 0xFF. */
-static int encode_desc(const char *text, uint8_t *out, int cap)
+static int desc_break(const char *p)
 {
-    char lines[DESC_LINES][DESC_COLS + 1];
-    int nl = 0;
-    const int has_breaks = strchr(text, '|') != NULL || strstr(text, "\\n") != NULL;
-    if (has_breaks) {
-        const char *p = text;
-        while (*p && nl < DESC_LINES) {
-            int k = 0;
-            while (*p && *p != '|' && !(p[0] == '\\' && p[1] == 'n')) { if (k < DESC_COLS) lines[nl][k++] = *p; p++; }
-            lines[nl][k] = 0; nl++;
-            if (*p == '|') p++; else if (*p == '\\') p += 2;
+    if (*p == '|' || *p == '\n' || *p == '\r') return 1;
+    return p[0] == '\\' && p[1] == 'n' ? 2 : 0;
+}
+
+/* One source of truth for validation, preview and encoding. Explicit lines
+ * never wrap: silently clipping them was the original corruption bug. Text
+ * without breaks uses the game's greedy 21-column word wrap, splitting a
+ * long word at the boundary. */
+static int desc_plan(const char *text, uint8_t *out, int cap,
+                     int *line_count, int *longest, int *first_wide,
+                     char *err, unsigned errcap)
+{
+    char rows[PSX_CARD_PACK_DESC_LINES][PSX_CARD_PACK_DESC_COLS + 1];
+    int nl = 0, lg = 0, wide = 0;
+    const int explicit_breaks = strchr(text, '|') || strchr(text, '\n') || strchr(text, '\r') || strstr(text, "\\n");
+    const char *p = text;
+    if (explicit_breaks) {
+        for (;;) {
+            const char *q = p;
+            while (*q && !desc_break(q)) q++;
+            const int k = (int)(q - p);
+            if (k > lg) lg = k;
+            if (k > PSX_CARD_PACK_DESC_COLS && !wide) wide = nl + 1;
+            if (nl >= PSX_CARD_PACK_DESC_LINES) {
+                if (err) snprintf(err, errcap, "Description has more than %d lines", PSX_CARD_PACK_DESC_LINES);
+                nl++;
+                break;
+            }
+            if (k > PSX_CARD_PACK_DESC_COLS) {
+                if (err) snprintf(err, errcap, "Description line %d has %d characters; maximum is %d", nl + 1, k, PSX_CARD_PACK_DESC_COLS);
+                nl++;
+                break;
+            }
+            memcpy(rows[nl], p, (size_t)k); rows[nl][k] = 0; nl++;
+            if (!*q) break;
+            p = q + desc_break(q);
         }
     } else {
-        const char *p = text;
-        while (*p && nl < DESC_LINES) {
+        while (*p) {
             while (*p == ' ') p++;
             if (!*p) break;
+            if (nl >= PSX_CARD_PACK_DESC_LINES) {
+                if (err) snprintf(err, errcap, "Description has more than %d lines", PSX_CARD_PACK_DESC_LINES);
+                nl++;
+                break;
+            }
             int k = 0;
             const char *last_space = NULL; const char *q = p;
-            while (*q && k < DESC_COLS) { if (*q == ' ') last_space = q; k++; q++; }
+            while (*q && k < PSX_CARD_PACK_DESC_COLS) { if (*q == ' ') last_space = q; k++; q++; }
             if (*q && last_space && *q != ' ') q = last_space;        /* back off to a word end */
-            k = (int)(q - p); if (k > DESC_COLS) k = DESC_COLS;
-            memcpy(lines[nl], p, (size_t)k); lines[nl][k] = 0; nl++;
+            k = (int)(q - p);
+            memcpy(rows[nl], p, (size_t)k); rows[nl][k] = 0; nl++;
+            if (k > lg) lg = k;
             p = q;
         }
     }
+    if (line_count) *line_count = nl;
+    if (longest) *longest = lg;
+    if (first_wide) *first_wide = wide;
+    if (nl > PSX_CARD_PACK_DESC_LINES || wide) return 0;
+
     int n = 0;
     for (int l = 0; l < nl; l++) {
-        if (l && n < cap) out[n++] = 0xFE;
-        for (const char *s = lines[l]; *s && n < cap; s++) out[n++] = (uint8_t)encode_char(*s);
+        if (l) { if (out && n < cap) out[n] = 0xFE; n++; }
+        for (const char *s = rows[l]; *s; s++) {
+            if (*s != ' ' && !encode_char(*s)) {
+                if (err) snprintf(err, errcap, "Description contains a character the game font cannot show");
+                return 0;
+            }
+            if (out && n < cap) out[n] = (uint8_t)encode_char(*s);
+            n++;
+        }
     }
-    if (n < cap) out[n++] = 0xFF; else out[cap - 1] = 0xFF;
+    if (out && n < cap) out[n] = 0xFF;
+    n++;
+    if (out && n > cap) {
+        if (err) snprintf(err, errcap, "Encoded description does not fit its buffer");
+        return 0;
+    }
     return n;
 }
 
 int psx_card_packs_desc_layout(const char *text, int *lines, int *longest, int *first_wide)
 {
-    int n = 0, lg = 0, wide = 0;
-    const char *p = text;
-    const int explicit_breaks = strchr(text, '|') != NULL;
-    while (*p) {
-        const char *e = strchr(p, '|');
-        const int len = e ? (int)(e - p) : (int)strlen(p);
-        if (explicit_breaks) {
-            n++;
-            if (len > lg) lg = len;
-            if (len > PSX_CARD_PACK_DESC_COLS && !wide) wide = n;
-        } else {
-            /* the game's greedy wrap at 20 columns on spaces */
-            int at = 0;
-            while (at < len) {
-                int cut = at + PSX_CARD_PACK_DESC_COLS;
-                if (cut >= len) cut = len;
-                else { int k = cut; while (k > at && p[k] != ' ') k--; if (k > at) cut = k; }
-                int ll = cut - at; while (ll > 0 && p[at + ll - 1] == ' ') ll--;
-                n++;
-                if (ll > lg) lg = ll;
-                at = cut; while (at < len && p[at] == ' ') at++;
-            }
-            if (!len) n++;
-        }
-        if (!e) break;
-        p = e + 1;
+    return desc_plan(text, NULL, 0, lines, longest, first_wide, NULL, 0) != 0;
+}
+
+int psx_card_packs_validate_description(const char *text, char *err, unsigned errcap)
+{
+    if (!text) { if (err) snprintf(err, errcap, "Description is missing"); return 0; }
+    if (strlen(text) > PSX_CARD_PACK_DESC_MAX) {
+        if (err) snprintf(err, errcap, "Description is longer than %d characters", PSX_CARD_PACK_DESC_MAX);
+        return 0;
     }
-    if (lines) *lines = n;
-    if (longest) *longest = lg;
-    if (first_wide) *first_wide = wide;
-    return n <= PSX_CARD_PACK_DESC_LINES && !wide;
+    return desc_plan(text, NULL, 0, NULL, NULL, NULL, err, errcap) != 0;
+}
+
+int psx_card_packs_description_bytes(const char *text)
+{
+    return desc_plan(text, NULL, 0, NULL, NULL, NULL, NULL, 0);
 }
 
 static const char *const TYPE_NAMES[24] = {
@@ -530,7 +568,7 @@ typedef struct {
     uint8_t  enc[PSX_CARD_PACK_NAME_MAX + 2];
     int      enc_len;                 /* incl. the 0xFF, 0 = no rename */
     uint32_t str_addr;
-    uint8_t  denc[PSX_CARD_PACK_DESC_MAX + DESC_LINES + 2];
+    uint8_t  denc[PSX_CARD_PACK_DESC_MAX + PSX_CARD_PACK_DESC_LINES + 2];
     int      denc_len;                /* incl. the 0xFF, 0 = stock description */
     uint32_t desc_addr;
     /* disc-side */
@@ -549,6 +587,111 @@ static int      s_menu_row = -1;
 static unsigned s_generation;
 static uint32_t s_names_next = NAMES_BASE;
 static int      s_pw_dirty;           /* the price/password sectors need a rebuild */
+static uint8_t  s_stock_desc[CARD_COUNT + 1][DESC_ENC_CAP];
+static uint16_t s_stock_desc_len[CARD_COUNT + 1];
+static uint8_t  s_desc_bank[PSX_CARD_PACK_DESC_ARENA_BYTES];
+static uint16_t s_desc_off[CARD_COUNT + 1];
+static unsigned s_desc_primary_used, s_desc_extra_used;
+static uint32_t s_desc_marker;
+static int      s_desc_stock_ready;
+static int      s_desc_plan_ready;
+
+static int cache_stock_descriptions(void)
+{
+    if (s_desc_stock_ready) return 1;
+    if (!psx_card_db_ready()) return 0;
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        const uint16_t off = psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u);
+        int n = 0;
+        while (n < DESC_ENC_CAP) {
+            const uint8_t b = psx_mod_read_byte(DESC_SEGMENT + off + (uint32_t)n);
+            s_stock_desc[id][n++] = b;
+            if (b == 0xFF) break;
+        }
+        if (!n || s_stock_desc[id][n - 1] != 0xFF) {
+            psx_tool_log("card descriptions: stock card %d exceeds the encoder buffer", id);
+            return 0;
+        }
+        s_stock_desc_len[id] = (uint16_t)n;
+    }
+    s_desc_stock_ready = 1;
+    return 1;
+}
+
+int psx_card_packs_validate_description_sizes(const int *sizes, char *err, unsigned errcap)
+{
+    if (!sizes || !cache_stock_descriptions()) {
+        if (err) snprintf(err, errcap, "The stock card-description bank is not ready");
+        return 0;
+    }
+    unsigned primary = 0, extra = 0;
+    int overflow = 0;
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        const int n = sizes[id] > 0 ? sizes[id] : (int)s_stock_desc_len[id];
+        if (!overflow && primary + (unsigned)n <= DESC_PRIMARY_CAP)
+            primary += (unsigned)n;
+        else {
+            overflow = 1;
+            if (extra + (unsigned)n > DESC_EXTRA_CAP) {
+                if (err) snprintf(err, errcap,
+                                  "Descriptions do not fit the game's %u-byte text bank",
+                                  (unsigned)PSX_CARD_PACK_DESC_ARENA_BYTES);
+                return 0;
+            }
+            extra += (unsigned)n;
+        }
+    }
+    return 1;
+}
+
+int psx_card_packs_validate(const PsxCardPack *candidate, char *err, unsigned errcap)
+{
+    if (!candidate || candidate->id < 1 || candidate->id > CARD_COUNT) {
+        if (err) snprintf(err, errcap, "Card id is invalid");
+        return 0;
+    }
+    if (candidate->sell_price < -1 || candidate->sell_price > 999999) {
+        if (err) snprintf(err, errcap, "Sell price is 0 to 999999");
+        return 0;
+    }
+    if (candidate->description[0] &&
+        !psx_card_packs_validate_description(candidate->description, err, errcap)) return 0;
+    if (candidate->field_targets_set) {
+        if (candidate->id < 330 || candidate->id > 335) {
+            if (err) snprintf(err, errcap, "Only field-spell cards can have a creature allow-list");
+            return 0;
+        }
+        if (candidate->field_target_n < 0 ||
+            candidate->field_target_n > PSX_CARD_PACK_FIELD_TARGET_MAX) {
+            if (err) snprintf(err, errcap, "A field-spell creature list can contain at most 722 cards");
+            return 0;
+        }
+        uint8_t seen[CARD_COUNT + 1]; memset(seen, 0, sizeof seen);
+        for (int i = 0; i < candidate->field_target_n; i++) {
+            const int id = candidate->field_target_ids[i];
+            if (id < 1 || id > CARD_COUNT) {
+                if (err) snprintf(err, errcap, "Field-spell creature ids are 1 to 722");
+                return 0;
+            }
+            if (seen[id]) {
+                if (err) snprintf(err, errcap, "A field-spell creature list cannot contain duplicate ids");
+                return 0;
+            }
+            seen[id] = 1;
+        }
+    }
+    int sizes[CARD_COUNT + 1]; memset(sizes, 0, sizeof sizes);
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        const char *desc = NULL;
+        if (id == candidate->id) desc = candidate->description;
+        else if (s_packs[id] && s_packs[id]->present) desc = s_packs[id]->cfg.description;
+        if (!desc || !desc[0]) continue;
+        const int n = psx_card_packs_description_bytes(desc);
+        if (!n) continue; /* malformed hand edit is already rejected at load */
+        sizes[id] = n;
+    }
+    return psx_card_packs_validate_description_sizes(sizes, err, errcap);
+}
 
 /* ---- small file helpers --------------------------------------------------- */
 static void pack_path(int id, const char *file, char *out, size_t cap)
@@ -986,7 +1129,7 @@ static void cfg_reset(PsxCardPack *c, int id)
 {
     memset(c, 0, sizeof *c);
     c->id = id;
-    c->attack = c->defense = c->star1 = c->star2 = c->type = c->level = c->attribute = c->price = -1;
+    c->attack = c->defense = c->star1 = c->star2 = c->type = c->level = c->attribute = c->price = c->sell_price = -1;
     psx_card_packs_effects_reset(c);
 }
 
@@ -996,6 +1139,8 @@ void psx_card_packs_effects_reset(PsxCardPack *c)
     c->equips_set = 0; c->equip_types = 0; c->equip_n = 0;
     c->boost_set = 0;
     for (int t = 0; t < 20; t++) c->boost[t] = PSX_CARD_PACK_BOOST_UNSET;
+    c->field_targets_set = 0;
+    c->field_target_n = 0;
     c->ritual_set = 0;
     c->ritual_mat[0] = c->ritual_mat[1] = c->ritual_mat[2] = c->ritual_result = -1;
     c->color = -1;
@@ -1093,6 +1238,47 @@ int psx_card_packs_parse_boost(const char *v, PsxCardPack *c, char *err, unsigne
     return 1;
 }
 
+int psx_card_packs_parse_field_targets(const char *v, PsxCardPack *c,
+                                       char *err, unsigned errcap)
+{
+    static char tok[PSX_CARD_PACK_FIELD_TARGET_MAX][48];
+    const int n = split_list(v, tok, PSX_CARD_PACK_FIELD_TARGET_MAX);
+    uint8_t seen[CARD_COUNT + 1];
+    uint16_t list[PSX_CARD_PACK_FIELD_TARGET_MAX];
+    int ids = 0;
+    memset(seen, 0, sizeof seen);
+    for (int i = 0; i < n; i++) {
+        const char *t = tok[i];
+        if (!strcmp(t, "none") || !strcmp(t, "None") || !strcmp(t, "NONE")) {
+            if (n != 1) {
+                seterr(err, errcap, "'none' must be the whole field target list");
+                return 0;
+            }
+            continue;
+        }
+        /* Deliberately card IDs only: type/attribute rules would make a saved
+         * list change meaning after an unrelated card edit. */
+        for (const char *p = t; *p; p++) {
+            if (*p < '0' || *p > '9') {
+                seterr(err, errcap, "field targets are card ids from 1 to 722");
+                return 0;
+            }
+        }
+        const int id = atoi(t);
+        if (id < 1 || id > CARD_COUNT) {
+            seterr(err, errcap, "field targets are card ids from 1 to 722");
+            return 0;
+        }
+        if (seen[id]) continue;       /* canonicalize old/hand-written duplicates */
+        seen[id] = 1;
+        list[ids++] = (uint16_t)id;
+    }
+    c->field_targets_set = 1;
+    c->field_target_n = ids;
+    memcpy(c->field_target_ids, list, (size_t)ids * sizeof list[0]);
+    return 1;
+}
+
 int psx_card_packs_parse_ritual(const char *v, PsxCardPack *c, char *err, unsigned errcap)
 {
     int m[3], r;
@@ -1126,6 +1312,17 @@ void psx_card_packs_format_boost(const PsxCardPack *c, char *out, unsigned cap)
         n += (unsigned)snprintf(out + n, cap - n, "%s%s %+d", n ? ", " : "", TYPE_NAMES[t], c->boost[t]);
         if (n >= cap) break;
     }
+    if (!n) snprintf(out, cap, "none");
+}
+
+void psx_card_packs_format_field_targets(const PsxCardPack *c, char *out,
+                                         unsigned cap)
+{
+    unsigned n = 0;
+    out[0] = 0;
+    for (int i = 0; i < c->field_target_n && n + 8 < cap; i++)
+        n += (unsigned)snprintf(out + n, cap - n, "%s%u", n ? ", " : "",
+                                (unsigned)c->field_target_ids[i]);
     if (!n) snprintf(out, cap, "none");
 }
 
@@ -1180,6 +1377,11 @@ static int read_ini(int id, PsxCardPack *c)
             c->attribute = parse_enum(val, ATTR_NAMES, 8, 0, 0, 7);
         } else if (!strcmp(key, "price") || !strcmp(key, "cost")) {
             const int v = atoi(val); if (v >= 0 && v <= 999999) c->price = v;
+        } else if (!strcmp(key, "sell_price")) {
+            char *end = NULL;
+            const long v = strtol(val, &end, 10);
+            if (end != val && !*end && v >= 0 && v <= 999999)
+                c->sell_price = (int)v;
         } else if (!strcmp(key, "password")) {
             int ok = strlen(val) == 8;
             for (int i = 0; ok && i < 8; i++) if (val[i] < '0' || val[i] > '9') ok = 0;
@@ -1199,6 +1401,10 @@ static int read_ini(int id, PsxCardPack *c)
             (void)psx_card_packs_parse_equips(val, c, NULL, 0);
         } else if (!strcmp(key, "boost") || !strcmp(key, "boosts")) {
             (void)psx_card_packs_parse_boost(val, c, NULL, 0);
+        } else if (!strcmp(key, "field_targets") ||
+                   !strcmp(key, "terrain_targets") ||
+                   !strcmp(key, "field_allowlist")) {
+            (void)psx_card_packs_parse_field_targets(val, c, NULL, 0);
         } else if (!strcmp(key, "trap_atk_max") || !strcmp(key, "trap_atk")) {
             const int v = atoi(val); if (v >= 0 && v <= 25500) c->trap_atk_max = v / 100 * 100;
         } else if (!strcmp(key, "ritual") || !strcmp(key, "recipe")) {
@@ -1228,6 +1434,13 @@ static int read_ini(int id, PsxCardPack *c)
         }
     }
     fclose(f);
+    if (c->description[0]) {
+        char err[160];
+        if (!psx_card_packs_validate_description(c->description, err, sizeof err)) {
+            psx_tool_log("card pack %d: ignoring invalid description: %s", id, err);
+            c->description[0] = 0;
+        }
+    }
     return 1;
 }
 
@@ -1377,17 +1590,90 @@ static void layout_names(void)
         a += (uint32_t)n + 1u;
     }
     s_names_next = a;
-    uint32_t d = DESC_BASE;
     for (int id = 1; id <= CARD_COUNT; id++) {
         Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
         pk->denc_len = 0;
         if (!pk->cfg.description[0]) continue;
-        const int n = encode_desc(pk->cfg.description, pk->denc, (int)sizeof pk->denc);
-        if (d + (uint32_t)n > DESC_LIMIT) continue;                  /* out of room: keep stock */
+        const int n = desc_plan(pk->cfg.description, pk->denc, (int)sizeof pk->denc,
+                                NULL, NULL, NULL, NULL, 0);
+        if (!n) continue;
         pk->denc_len = n;
-        pk->desc_addr = d;
-        d += (uint32_t)n;
+    }
+    s_desc_plan_ready = 0;
+}
+
+static int layout_descriptions(void)
+{
+    int sizes[CARD_COUNT + 1]; memset(sizes, 0, sizeof sizes);
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        Pack *pk = s_packs[id];
+        if (pk && pk->present && pk->denc_len) sizes[id] = pk->denc_len;
+    }
+    char err[160];
+    if (!psx_card_packs_validate_description_sizes(sizes, err, sizeof err)) {
+        psx_tool_log("card descriptions: replacement bank rejected: %s", err);
+        return 0;
+    }
+    unsigned primary = 0, extra = 0;
+    int overflow = 0;
+    uint32_t hash = 2166136261u;
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        Pack *pk = s_packs[id];
+        const uint8_t *src = s_stock_desc[id];
+        unsigned n = s_stock_desc_len[id];
+        if (pk && pk->present && pk->denc_len) {
+            src = pk->denc;
+            n = (unsigned)pk->denc_len;
+        }
+        if (!overflow && primary + n > DESC_PRIMARY_CAP) overflow = 1;
+        unsigned pos;
+        uint32_t addr;
+        if (!overflow) {
+            pos = primary;
+            addr = DESC_PRIMARY_BASE + primary;
+            primary += n;
+        } else {
+            pos = DESC_PRIMARY_CAP + extra;
+            addr = DESC_EXTRA_BASE + extra;
+            extra += n;
+        }
+        if (pk && pk->present && pk->denc_len) pk->desc_addr = addr;
+        s_desc_off[id] = (uint16_t)(addr - DESC_SEGMENT);
+        memcpy(s_desc_bank + pos, src, n);
+        hash ^= (uint32_t)s_desc_off[id]; hash *= 16777619u;
+        for (unsigned k = 0; k < n; k++) {
+            hash ^= src[k];
+            hash *= 16777619u;
+        }
+    }
+    s_desc_primary_used = primary;
+    s_desc_extra_used = extra;
+    s_desc_marker = hash ^ 0x44455343u; /* DESC */
+    if (!s_desc_marker) s_desc_marker = 0x44455343u;
+    s_desc_plan_ready = 1;
+    psx_tool_log("card descriptions: planned %u+%u/%u bytes, card 1 offset %04X, marker %08X",
+                 s_desc_primary_used, s_desc_extra_used,
+                 (unsigned)PSX_CARD_PACK_DESC_ARENA_BYTES,
+                 (unsigned)s_desc_off[1], (unsigned)s_desc_marker);
+    return 1;
+}
+
+static void assert_description_bank(void)
+{
+    if (!s_desc_plan_ready && !layout_descriptions()) return;
+    if (psx_mod_read_word(DESC_MARK_ADDR) != s_desc_marker) {
+        for (unsigned k = 0; k < s_desc_primary_used; k++)
+            psx_mod_write_byte(DESC_PRIMARY_BASE + k, s_desc_bank[k]);
+        for (unsigned k = 0; k < s_desc_extra_used; k++)
+            psx_mod_write_byte(DESC_EXTRA_BASE + k,
+                               s_desc_bank[DESC_PRIMARY_CAP + k]);
+        psx_mod_write_word(DESC_MARK_ADDR, s_desc_marker);
+    }
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        const uint32_t at = DESC_TABLE + (uint32_t)id * 2u;
+        if (psx_mod_read_half(at) != s_desc_off[id])
+            psx_mod_write_half(at, s_desc_off[id]);
     }
 }
 
@@ -1429,6 +1715,10 @@ static uint8_t target_aux(const Pack *pk)
 static void assert_ram(void)
 {
     const uint32_t sb = psx_card_extend_stats_base(), ab = psx_card_extend_aux_base();
+    int have_pack = 0;
+    for (int id = 1; id <= CARD_COUNT; id++)
+        if (s_packs[id]) { have_pack = 1; break; }
+    if (have_pack && cache_stock_descriptions()) assert_description_bank();
     for (int id = 1; id <= CARD_COUNT; id++) {
         Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
@@ -1448,16 +1738,6 @@ static void assert_ram(void)
                 psx_mod_write_half(NAMEOFF_TABLE + (uint32_t)id * 2u, want);
         } else if (psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u) != pk->stock_nameoff) {
             psx_mod_write_half(NAMEOFF_TABLE + (uint32_t)id * 2u, pk->stock_nameoff);
-        }
-        if (pk->denc_len) {
-            for (int k = 0; k < pk->denc_len; k++)
-                if (psx_mod_read_byte(pk->desc_addr + (uint32_t)k) != pk->denc[k])
-                    psx_mod_write_byte(pk->desc_addr + (uint32_t)k, pk->denc[k]);
-            const uint16_t want = (uint16_t)(pk->desc_addr - DESC_SEGMENT);
-            if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != want)
-                psx_mod_write_half(DESC_TABLE + (uint32_t)id * 2u, want);
-        } else if (psx_mod_read_half(DESC_TABLE + (uint32_t)id * 2u) != pk->stock_descoff) {
-            psx_mod_write_half(DESC_TABLE + (uint32_t)id * 2u, pk->stock_descoff);
         }
     }
 }
@@ -1553,6 +1833,42 @@ const char *psx_card_packs_display_name(int id)
     return psx_card_db_name(id);
 }
 
+int psx_card_packs_price(int id)
+{
+    if (id < 1 || id > CARD_COUNT || !psx_card_db_ready()) return -1;
+    Pack *pk = s_packs[id];
+    if (pk && pk->present && pk->cfg.price >= 0) return pk->cfg.price;
+    uint8_t sec[SECTOR];
+    const uint32_t off = (uint32_t)id * 8u;
+    if (!psx_mod_cd_read_stock_sector(PW_LBA + off / SECTOR, sec)) return -1;
+    const uint8_t *e = sec + off % SECTOR;
+    const uint32_t value = (uint32_t)e[0] | ((uint32_t)e[1] << 8) |
+                           ((uint32_t)e[2] << 16) | ((uint32_t)e[3] << 24);
+    return value <= 999999u ? (int)value : -1;
+}
+
+int psx_card_packs_derive_sell_price(int purchase)
+{
+    if (purchase < 0 || purchase > 999999) return -1;
+    /* Password costs are exact integers. Floor division by eight is
+     * deterministic, cannot overflow, and never produces a negative value.
+     * The game's 999999 "not realistically purchasable" sentinel gets a
+     * useful but bounded sale value of 500 instead of 124999. */
+    return purchase == 999999 ? 500 : purchase / 8;
+}
+
+int psx_card_packs_sell_price(int id, int *overridden)
+{
+    if (overridden) *overridden = 0;
+    if (id < 1 || id > CARD_COUNT || !psx_card_db_ready()) return -1;
+    Pack *pk = s_packs[id];
+    if (pk && pk->present && pk->cfg.sell_price >= 0) {
+        if (overridden) *overridden = 1;
+        return pk->cfg.sell_price;
+    }
+    return psx_card_packs_derive_sell_price(psx_card_packs_price(id));
+}
+
 int psx_card_packs_stock(int id, PsxCardStock *out)
 {
     if (id < 1 || id > CARD_COUNT || !out || !psx_card_db_ready()) return 0;
@@ -1594,6 +1910,7 @@ int psx_card_packs_stock(int id, PsxCardStock *out)
 int psx_card_packs_save(const PsxCardPack *c)
 {
     if (!c || c->id < 1 || c->id > CARD_COUNT || !s_dir_ok) return 0;
+    if (!psx_card_packs_validate(c, NULL, 0)) return 0;
     char path[1200];
     MKDIR(s_dir);
     pack_path(c->id, NULL, path, sizeof path);
@@ -1612,6 +1929,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->level >= 0)     fprintf(f, "level = %d\n", c->level);
     if (c->attribute >= 0) fprintf(f, "attribute = %s\n", psx_card_packs_attribute_name(c->attribute));
     if (c->price >= 0)     fprintf(f, "price = %d\n", c->price);
+    if (c->sell_price >= 0) fprintf(f, "sell_price = %d\n", c->sell_price);
     if (c->password[0])    fprintf(f, "password = %s\n", c->password);
     if (c->effect >= 0)    fprintf(f, "effect = %s\n", psx_card_packs_effect_name(c->effect));
     if (c->amount >= 0 || (c->effect == PSX_CARD_FX_WEAKEN && c->amount != -1)) fprintf(f, "amount = %d\n", c->amount);
@@ -1620,6 +1938,7 @@ int psx_card_packs_save(const PsxCardPack *c)
     if (c->equip_bonus >= 0) fprintf(f, "equip_bonus = %d\n", c->equip_bonus);
     if (c->equips_set)     { char b[4096]; psx_card_packs_format_equips(c, b, sizeof b); fprintf(f, "equips = %s\n", b); }
     if (c->boost_set)      { char b[512];  psx_card_packs_format_boost(c, b, sizeof b);  fprintf(f, "boost = %s\n", b); }
+    if (c->field_targets_set) { char b[4096]; psx_card_packs_format_field_targets(c, b, sizeof b); fprintf(f, "field_targets = %s\n", b); }
     if (c->trap_atk_max >= 0) fprintf(f, "trap_atk_max = %d\n", c->trap_atk_max);
     if (c->ritual_set)     { char b[64];   psx_card_packs_format_ritual(c, b, sizeof b); fprintf(f, "ritual = %s\n", b); }
     if (c->color >= 0)     fprintf(f, "color = %s\n", COLOR_KEYS[c->color][0]);
@@ -1870,6 +2189,7 @@ void psx_card_packs_register_menu(void)
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static unsigned frames;
     static int booted;
     if (!psx_mod_game_started()) return;

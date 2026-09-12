@@ -176,6 +176,13 @@ static int zip_finish(Zip *z)
 int psx_card_share_export(const char *path, char *msg, unsigned cap)
 {
     char dir[1024]; cards_dir(dir, sizeof dir);
+    const int drops = psx_drop_edits_has_export_content();
+    if (drops && !psx_drop_edits_save()) {
+        char why[256];
+        (void)psx_drop_edits_validate(why, sizeof why);
+        if (msg && cap) snprintf(msg, cap, "%s", why[0] ? why : "Drop tables could not be saved");
+        return 0;
+    }
     Zip z; memset(&z, 0, sizeof z);
     z.f = psx_fopen_utf8(path, "wb");
     if (!z.f) { if (msg) snprintf(msg, cap, "Could not create %s", path); return 0; }
@@ -188,8 +195,6 @@ int psx_card_share_export(const char *path, char *msg, unsigned cap)
     /* manifest first: what the file is, which cards, whether drops ride along */
     int ids[CARD_COUNT], n = 0;
     for (int id = 1; id <= CARD_COUNT; id++) if (card_edited(id, dir)) ids[n++] = id;
-    int drops = 0;
-    if (psx_drop_edits_any()) { psx_drop_edits_save(); drops = 1; }
     {
         static char m[8192];
         unsigned k = (unsigned)snprintf(m, sizeof m,
@@ -316,6 +321,101 @@ static void parse_manifest(const unsigned char *m, PsxCardShareInfo *info)
     }
 }
 
+/* Validate fields whose exact spelling/shape matters before an import changes
+ * any files. The runtime's own parsers remain the single source of truth for
+ * the new list; this pass also computes description-arena use. Return -1 for
+ * an invalid card.ini, 0 when its description is absent, or its encoded size. */
+static int ini_description_bytes(int id, const unsigned char *data,
+                                 char *err, unsigned errcap)
+{
+    const char *p = (const char *)data;
+    int desc_bytes = 0;
+    while (*p) {
+        const char *e = strchr(p, '\n');
+        const size_t len = e ? (size_t)(e - p) : strlen(p);
+        char line[4096];
+        if (len >= sizeof line) { if (err) snprintf(err, errcap, "card.ini line is too long"); return -1; }
+        memcpy(line, p, len); line[len] = 0;
+        char *q = line;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q != ';' && *q != '#' && *q != '[') {
+            char *eq = strchr(q, '=');
+            if (eq) {
+                *eq++ = 0;
+                char *ke = q + strlen(q);
+                while (ke > q && (ke[-1] == ' ' || ke[-1] == '\t' || ke[-1] == '\r')) *--ke = 0;
+                for (char *k = q; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
+                while (*eq == ' ' || *eq == '\t') eq++;
+                char *ve = eq + strlen(eq);
+                while (ve > eq && (ve[-1] == ' ' || ve[-1] == '\t' || ve[-1] == '\r')) *--ve = 0;
+                if (!strcmp(q, "description") || !strcmp(q, "desc") || !strcmp(q, "text")) {
+                    if (!psx_card_packs_validate_description(eq, err, errcap)) return -1;
+                    desc_bytes = eq[0] ? psx_card_packs_description_bytes(eq) : 0;
+                } else if (!strcmp(q, "password") && eq[0]) {
+                    int valid = strlen(eq) == 8;
+                    for (int i = 0; valid && i < 8; i++)
+                        if (eq[i] < '0' || eq[i] > '9') valid = 0;
+                    if (!valid) {
+                        if (err) snprintf(err, errcap, "password must be exactly eight decimal digits");
+                        return -1;
+                    }
+                } else if (!strcmp(q, "sell_price")) {
+                    char *end = NULL;
+                    const long value = strtol(eq, &end, 10);
+                    if (end == eq || *end || value < 0 || value > 999999) {
+                        if (err) snprintf(err, errcap,
+                                          "sell_price must be an integer from 0 to 999999");
+                        return -1;
+                    }
+                } else if (!strcmp(q, "field_targets") ||
+                           !strcmp(q, "terrain_targets") ||
+                           !strcmp(q, "field_allowlist")) {
+                    PsxCardPack parsed; memset(&parsed, 0, sizeof parsed); parsed.id = id;
+                    if (id < 330 || id > 335) {
+                        if (err) snprintf(err, errcap, "only cards 330 through 335 are field spells");
+                        return -1;
+                    }
+                    if (!psx_card_packs_parse_field_targets(eq, &parsed, err, errcap)) return -1;
+                }
+            }
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    return desc_bytes;
+}
+
+static int import_descriptions_fit(const unsigned char *zip, long zip_n,
+                                   const Entry *ents, int ent_n,
+                                   const PsxCardShareInfo *info,
+                                   char *err, unsigned errcap)
+{
+    int bytes[CARD_COUNT + 1]; memset(bytes, 0, sizeof bytes);
+    char dir[1024]; cards_dir(dir, sizeof dir);
+    /* What remains after the replacement, including descriptions on cards
+     * outside this archive. Invalid hand edits already fall back to stock and
+     * therefore consume no arena space. */
+    for (int id = 1; id <= CARD_COUNT; id++) {
+        char path[1200]; snprintf(path, sizeof path, "%s/%d/card.ini", dir, id);
+        long n; unsigned char *d = read_file(path, &n);
+        if (!d) continue;
+        const int v = ini_description_bytes(id, d, NULL, 0);
+        if (v > 0) bytes[id] = v;
+        free(d);
+    }
+    for (int i = 0; i < info->card_n; i++) bytes[info->card_ids[i]] = 0;
+    for (int i = 0; i < ent_n; i++) {
+        int id, file;
+        if (!parse_card_name(ents[i].name, &id, &file) || file != 0) continue;
+        long n; unsigned char *d = zip_extract(zip, zip_n, &ents[i], &n);
+        if (!d) { snprintf(err, errcap, "cards/%d/card.ini is damaged", id); return 0; }
+        char why[160]; const int v = ini_description_bytes(id, d, why, sizeof why); free(d);
+        if (v < 0) { snprintf(err, errcap, "cards/%d/card.ini: %s", id, why); return 0; }
+        bytes[id] = v;
+    }
+    return psx_card_packs_validate_description_sizes(bytes, err, errcap);
+}
+
 int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
 {
     memset(info, 0, sizeof *info);
@@ -325,6 +425,21 @@ int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
     static Entry ents[4096];
     const int k = zip_entries(b, n, ents, 4096, info->error, sizeof info->error);
     if (k < 0) { free(b); return 0; }
+    /* The directory alone is not a payload preflight. Validate every CRC and
+     * compressed stream now, before import can replace one existing file.
+     * This includes PNGs and unknown additive entries, not just card.ini. */
+    for (int i = 0; i < k; i++) {
+        if ((i % 100) == 0) starvation_watchdog_heartbeat();
+        long sz = 0;
+        unsigned char *entry = zip_extract(b, n, &ents[i], &sz);
+        if (!entry) {
+            snprintf(info->error, sizeof info->error,
+                     "damaged archive entry: %.63s", ents[i].name);
+            free(b);
+            return 0;
+        }
+        free(entry);
+    }
     static unsigned char have[CARD_COUNT + 1];
     memset(have, 0, sizeof have);
     int manifest = 0;
@@ -344,7 +459,7 @@ int psx_card_share_inspect(const char *path, PsxCardShareInfo *info)
         info->card_ids[info->card_n++] = id;
         if (psx_card_packs_get(id, NULL)) info->replace_ids[info->replace_n++] = id;
     }
-    info->drops_here = psx_drop_edits_any();
+    info->drops_here = psx_drop_edits_has_export_content();
     info->ok = 1;
     free(b);
     return 1;
@@ -360,6 +475,32 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
     char err[160];
     const int k = zip_entries(b, n, ents, 4096, err, sizeof err);
     if (k < 0) { free(b); if (msg) snprintf(msg, cap, "%s", err); return 0; }
+    if (!import_descriptions_fit(b, n, ents, k, &info, err, sizeof err)) {
+        free(b); if (msg) snprintf(msg, cap, "Import rejected before changing files: %s", err); return 0;
+    }
+    /* Validate the optional drop table before replacing even one card file.
+     * load_file is transactional on failure; a successful preflight becomes
+     * the imported live layer and is persisted in the loop below. */
+    int drops_preloaded = 0;
+    for (int i = 0; i < k; i++) {
+        if (strcmp(ents[i].name, "drop_table_edits.ini")) continue;
+        long sz; unsigned char *d = zip_extract(b, n, &ents[i], &sz);
+        char p[1200];
+        snprintf(p, sizeof p, "%s/drop_table_edits.import.ini",
+                 psx_mod_player_data_dir());
+        const int wrote = d && write_file(p, d, (size_t)sz);
+        free(d);
+        const int loaded = wrote ? psx_drop_edits_load_file(p) : -1;
+        remove(p);
+        if (loaded < 0) {
+            free(b);
+            if (msg) snprintf(msg, cap,
+                "Import rejected before changing files: drop table is invalid or uses a future format");
+            return 0;
+        }
+        drops_preloaded = 1;
+        break;
+    }
     char dir[1024]; cards_dir(dir, sizeof dir);
     MKDIR(dir);
     /* the file's cards replace the player's: clear those folders first */
@@ -380,14 +521,7 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
             if ((files % 100) == 0) starvation_watchdog_heartbeat();
             free(d);
         } else if (!strcmp(ents[i].name, "drop_table_edits.ini")) {
-            long sz; unsigned char *d = zip_extract(b, n, &ents[i], &sz);
-            if (!d) { bad++; continue; }
-            char p[1200]; snprintf(p, sizeof p, "%s/drop_table_edits.import.ini", psx_mod_player_data_dir());
-            if (write_file(p, d, (size_t)sz)) {
-                if (psx_drop_edits_load_file(p) >= 0) psx_drop_edits_save();
-                remove(p);
-            } else bad++;
-            free(d);
+            if (!drops_preloaded || !psx_drop_edits_save()) bad++;
         }
     }
     free(b);

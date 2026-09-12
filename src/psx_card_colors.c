@@ -38,6 +38,7 @@
 #include "psx_card_extend.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
+#include "psx_ygo_netplay.h"
 
 #define CARD_COUNT 722
 #define SECTOR 2048
@@ -171,6 +172,7 @@ static void patch_assert(int on)
 
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_mod_game_started()) return;
     take_stock();
     if (!s_stock_ok) return;

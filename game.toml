@@ -152,9 +152,6 @@ mod_function_entry_funcs = [
     # 0x8001825C  action 11, back from the 3D scene: gp+0x300/0x301 hold the
     #             rows it destroys; rewritten to match the battle effects.
     "0x8001825C",
-    # 0x8001B170  the summon action: state 5 = a monster just landed, which
-    #             is where on_summon triggers are queued.
-    "0x8001B170",
     # 0x8001F560  the attack action, entered every frame it runs. Its first
     #             frame = an attack was declared (on_attack triggers); the
     #             first frame of its state 4 is right after state 3 decided
@@ -223,3 +220,6 @@ multitap_analog = true
 require_cue = true
 required_tracks = 1
 required_disc_fp = "a828d94c24f6df7e040b1164c8ac59eff83f1107c43dba139e3cd5a0127161c4"
+# 2P DUEL loads one save per player: seat 2 offers its own memory card as
+# soon as it sits down (the lobby glyph starts lit; either side can turn it off).
+guest_memcard_default = true

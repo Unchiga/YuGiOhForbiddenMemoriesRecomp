@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Yu-Gi-Oh! Forbidden Memories Recompiled
+GenericName=Card battle game
+Comment=Yu-Gi-Oh! Forbidden Memories, recompiled to native code
+Exec=Play.sh
+Icon=ygofm-recompiled
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=yugioh;forbidden memories;recompilation;psx;
+StartupWMClass=Yu_Gi_Oh_Forbidden_Memories_Recompiled

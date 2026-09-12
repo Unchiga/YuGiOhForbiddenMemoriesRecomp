@@ -100,6 +100,7 @@
 #include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- the game side ------------------------------------------------------------ */
 #define BANK_BASE    0x801B0000u
@@ -1171,10 +1172,15 @@ static int import_file(const char *path, int persist, char *err, unsigned errcap
 #undef WARN
 }
 
-int psx_dialogue_import(const char *path, char *err, unsigned errcap) { return import_file(path, 1, err, errcap); }
+int psx_dialogue_import(const char *path, char *err, unsigned errcap)
+{
+    if (psx_ygo_netplay_session()) { if (err) snprintf(err, errcap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
+    return import_file(path, 1, err, errcap);
+}
 
 void psx_dialogue_clear(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     for (int i = 0; i < s_nruns; i++) run_clear(&s_runs[i]);
     { char why[64]; (void)rebuild_bank(why, sizeof why); }   /* nothing left: the stock bank comes back */
     restore_bank();
@@ -1199,6 +1205,8 @@ static void read_bank(void)
     for (uint32_t i = 0; i < BANK_SIZE; i++) s_bank[i] = psx_mod_read_byte(BANK_BASE + i);
     for (int i = 0; i < TABLE_N; i++) s_table[i] = psx_mod_read_half(TABLE_ADDR + (uint32_t)i * 2u);
     build_runs();
+    s_room = TRAMP_END - story_first();
+    s_used = s_text_end - story_first();
     int bad = 0;
     for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
@@ -1227,6 +1235,12 @@ int psx_dialogue_translated_count(void)
     int n = 0;
     for (int i = 0; i < s_nruns; i++) n += s_runs[i].enc != NULL;
     return n;
+}
+
+void psx_dialogue_capacity(unsigned *used, unsigned *room)
+{
+    if (used) *used = s_used;
+    if (room) *room = s_room;
 }
 
 int psx_dialogue_run(int index, PsxDialogueRun *out)
@@ -1267,6 +1281,7 @@ int psx_dialogue_state_json(char *out, unsigned cap)
 /* ---- the frame hook ------------------------------------------------------------------ */
 static void dialogue_tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static int booted;
     if (!psx_mod_game_started()) return;
     if (!booted) {

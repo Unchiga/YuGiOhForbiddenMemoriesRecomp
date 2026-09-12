@@ -53,6 +53,14 @@ int  psx_fusion_manager_edit(int a, int b, int result, char *err, unsigned errca
  * Goes through the equip card's card.ini list (psx_card_packs), not the
  * fusion table, so it travels with the cards. */
 int  psx_fusion_manager_equip_set(int equip, int mon, int on, char *err, unsigned errcap);
+/* Replace one equip's complete usable-monster list. IDs must be unique
+ * monsters; an empty list is intentional and remains empty after restart. */
+int  psx_fusion_manager_equip_replace(int equip, const int *monsters, int count,
+                                      char *err, unsigned errcap);
+/* Clear/restore every equip override without touching fusion recipes or any
+ * other card.ini field. */
+int  psx_fusion_manager_equip_clear_all(char *err, unsigned errcap);
+int  psx_fusion_manager_equip_restore_all(char *err, unsigned errcap);
 
 /* Drop every edit and put the game's own table back (the edits are copied to
  * fusion_edits_backup.txt first). This is what the confirm dialog does; it
@@ -62,6 +70,11 @@ void psx_fusion_manager_undo_all(void);
 /* Drive that dialog instead, so the modal itself is testable: 1 opens it,
  * 2 confirms, 0 cancels. */
 void psx_fusion_manager_confirm_restore(int ask);
+/* The independent two-step confirmation for Clear equips. */
+void psx_fusion_manager_confirm_clear_equips(int ask);
+/* Open the pending batch picker for an equip. Its changes do not persist
+ * until Apply, and Cancel discards them. */
+int  psx_fusion_manager_equip_batch_open(int equip);
 
 /* Empty the table completely, or just one card's share of it. Both ask
  * nothing -- the window puts a confirm in front of them, a script does not

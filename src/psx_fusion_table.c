@@ -56,6 +56,7 @@
 #include "psx_game_hooks.h"
 #include "psx_textfile.h"
 #include "psx_tool_window.h"
+#include "psx_ygo_netplay.h"
 
 #define NCARDS      PSX_FUSION_TABLE_CARDS
 #define TBL_BYTES   PSX_FUSION_TABLE_BYTES
@@ -626,6 +627,7 @@ void psx_fusion_table_reset(void)
 
 int psx_fusion_table_apply(char *err, unsigned cap)
 {
+    if (psx_ygo_netplay_session()) { if (err) snprintf(err, cap, "Not while a netplay session is running"); return 0; }   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!psx_fusion_table_ready()) { if (err) snprintf(err, cap, "The disc's fusion table has not been read"); return 0; }
     if (!s_packed_bytes && !rebuild(err, cap)) return 0;
     install_sectors();
@@ -639,6 +641,7 @@ int psx_fusion_table_apply(char *err, unsigned cap)
 
 void psx_fusion_table_revert(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     for (int k = 0; k < TERRAINS; k++)
         for (int s = 0; s < FUSION_SECTORS; s++)
             psx_mod_cd_override_clear(FUSION_LBA(k) + (uint32_t)s);
@@ -735,6 +738,7 @@ int psx_fusion_table_export(const char *path, int edits_only, char *err, unsigne
 
 static void tick(void)
 {
+    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static int done;
     char msg[256];
     if (!done) {
