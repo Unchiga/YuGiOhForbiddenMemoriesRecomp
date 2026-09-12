@@ -23,6 +23,9 @@ void psx_card_shop_register_menu(void);
 /* Re-read card_shop.ini after it was replaced (a MOD package import). */
 void psx_card_shop_reload_config(void);
 
+/* Actual resale after direct-purchase and pack-price anti-arbitrage caps. */
+int psx_card_shop_effective_sell_price(int card, int *source);
+
 /* Debug server read-back. */
 int  psx_card_shop_state_json(char *out, unsigned cap);
 

@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 #define PSX_CARD_PACK_NAME_MAX 40
-#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 20 columns otherwise; the card shows 8 x 20 */
+#define PSX_CARD_PACK_DESC_MAX 255   /* "|" separates lines; auto-wrapped at 21 columns otherwise; the card shows 8 x 21 */
 #define PSX_CARD_PACK_EQUIP_MAX   722   /* every monster, by id: the biggest stock groups hold 292 and 621 */
 #define PSX_CARD_PACK_FIELD_TARGET_MAX 722 /* explicit creature ids for one field spell */
 #define PSX_CARD_PACK_BOOST_UNSET (-32768)
@@ -210,10 +210,10 @@ void psx_card_packs_format_ritual(const PsxCardPack *c, char *out, unsigned cap)
 void psx_card_packs_effects_reset(PsxCardPack *c);
 
 /* How the game will lay a description out: the number of lines (auto-wrapped
- * at 20 columns, or as broken by "|", a newline, or a literal "\\n"), the
- * longest line, and the first line (1-based) longer than 20 columns, 0 when
+ * at 21 columns, or as broken by "|", a newline, or a literal "\\n"), the
+ * longest line, and the first line (1-based) longer than 21 columns, 0 when
  * none. The game shows 8 lines. */
-#define PSX_CARD_PACK_DESC_COLS  20
+#define PSX_CARD_PACK_DESC_COLS  21
 #define PSX_CARD_PACK_DESC_LINES 8
 /* Combined exact capacity of the stock string bank and the proven overflow
  * arena, excluding the four-byte layout marker. psx_card_extend's relocated

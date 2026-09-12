@@ -155,7 +155,7 @@ configured total and the remaining positions use the selected normal rank
 table. At Card Drops zero it is the one separate award. This applies only in
 the campaign - Free Duel is untouched. Pairs are kept in
 `drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
-and `Export` shares them.
+and the bulk export shares them.
 
 ### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
 
@@ -205,8 +205,9 @@ keeps its number of drops, every monster slot gets a random monster from the
 whole game, the magic, trap, equip and ritual drops keep their card, and every
 slot gets a fresh weight that still totals 2048. It asks twice, since it
 replaces every duelist's edits at once, and like any edit it is not written
-until `Save`. `Export…` writes your table to a file to send to someone and `Import…`
-loads one back - an import is kept straight away, so a table someone sends you
+until `Save`. `Export all…` writes all 39 duelists and all 117 complete rank
+tables as editable `pow_table`, `bcd_table` and `tec_table` lists. `Import…`
+loads that file back - an import is kept straight away, so a table someone sends you
 is live in the game and still there next launch. With `DROP MISSING CARDS` on, the manager shows and
 edits the table you will actually roll against.
 
@@ -337,7 +338,7 @@ An edited card is a folder in your player-data:
 cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         color = purple       frame (yellow, green, pink, blue, purple, orange)
                         name_color = red     the name's text (white, yellow, blue, green, grey, orange, red)
-                        description = Text with|a line break   (| = new line; no | = wrapped at 20, 7 lines)
+                        description = Text with|a line break   (| = new line; no | = wrapped at 21, 8 lines)
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
@@ -472,6 +473,14 @@ original`, an import of a file with nothing translated in it, and a MOD
 package import all turn the previous one into
 `dialogue/dialogue.backup-<date>-<time>.txt` first.
 
+Imports are transactional across the whole file: if any changed block is
+invalid, none of the bulk changes are applied. The manager footer reports the
+encoded bank usage and remaining bytes. Translations may grow and shrink
+individual entries, but the campaign bank has about 1 KB of aggregate spare
+room in the unmodified US release. The original font contains no accented
+Latin glyphs, so UTF-8 accents are rejected with the exact unsupported
+character instead of being rendered as the wrong symbol.
+
 ### Card shop (`MODS → CARD SHOP`)
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
@@ -483,6 +492,19 @@ Four pack types (monster, magic, equip, trap) across four rarities, priced
 20 / 80 / 200 / 800, with **all 722 cards in the pool**. A pack deals its cards
 one at a time: **X** turns over the next slot, **TRIANGLE** opens the game's own
 card viewer. Bought cards land in your trunk marked **New!**, like a duel drop.
+
+Selling cannot turn either purchase route into free starchips: a card's sell
+value cannot exceed its direct password price, and is also capped at the
+cheapest pack that can yield it divided by that pack's card count. Thus every
+possible pack's combined resale is at most its purchase price. Caps are
+rounded down to a clean shop denomination (for example 266 / 66 / 26 become
+250 / 60 / 25), including custom `sell_price` values. Card Manager shows the
+effective shop cap beside an authored or derived sell value.
+
+The default monster bands put 2500+ ATK monsters in Rare or above and 3000+
+ATK monsters in Legendary, even when an imported partial shop file omits the
+generated card pins. Megamorph and Blue-eyes Ultimate Dragon are always
+Legendary; Megamorph is exclusive to the Legendary Equip pool.
 
 Prices, bands and where individual cards sit are yours. The shop writes
 **`card_shop.ini`** next to your saves and re-reads it each time you leave the
@@ -600,7 +622,11 @@ shows. Both duelists.
 
 Also in the `F10` menu, courtesy of PSXRecomp: save states, rewind (`F8`), an
 emulation-speed multiplier, and **`GAME → FAST LOADING`**, which cuts disc loads
-to near-instant. That one ships **off**.
+to near-instant. That one ships **off**. Directly below Speed,
+**`GAME → NATIVE-RATE RENDERING`** keeps full-resolution presentation at
+59.94 FPS while accelerated simulation and audio continue at the selected
+speed. It ships **on** to avoid redundant 4K rendering and can be turned off
+when every accelerated frame is wanted.
 
 ---
 

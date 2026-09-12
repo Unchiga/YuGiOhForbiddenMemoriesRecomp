@@ -370,7 +370,15 @@ static void draw_detail(void)
 static void draw_footer(void)
 {
     const Layout *L = &s_L;
-    const char *m = s_msg[0] ? s_msg : "Wheel scrolls, type to search, Escape clears the search or closes. Edit the exported file with a text editor, then Import it.";
+    char status[320];
+    unsigned used = 0, room = 0;
+    psx_dialogue_capacity(&used, &room);
+    snprintf(status, sizeof status,
+             "%d translated. Bank: %u / %u bytes (%u free). Export, bulk-edit the UTF-8 file, then Import; longer text wraps to %dx%d pages.",
+             psx_dialogue_translated_count(), used, room,
+             room > used ? room - used : 0u,
+             PSX_DIALOGUE_COLS, PSX_DIALOGUE_LINES);
+    const char *m = s_msg[0] ? s_msg : status;
     Rect r = { px(U_PAD), L->foot.y, s_w - px(U_PAD) * 2, L->foot.h };
     text_in(&r, 0, m, s_msg[0] ? COL_WARN : COL_DIM, face_small());
 }

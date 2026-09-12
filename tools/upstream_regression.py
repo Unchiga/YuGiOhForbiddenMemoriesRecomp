@@ -27,6 +27,10 @@ def main():
     ap.add_argument('--disc', required=True, type=Path)
     ap.add_argument('--renderer', choices=['software','opengl','vulkan'], default='software')
     ap.add_argument('--resume-menu', type=Path, help='slot 7 state from this same executable revision')
+    ap.add_argument('--load-package', type=Path,
+                    help='import this .ygomods package for the stress_free_duel group')
+    ap.add_argument('--near-win-state', type=Path,
+                    help='slot-0 near-win state for deterministic stress reward results')
     ap.add_argument('--groups', default='menus,duel,managers,package')
     args = ap.parse_args()
     root = args.scratch.resolve()
@@ -36,6 +40,10 @@ def main():
     args.exe = args.exe.resolve(strict=True)
     args.seed = args.seed.resolve(strict=True)
     args.disc = args.disc.resolve(strict=True)
+    if args.load_package:
+        args.load_package = args.load_package.resolve(strict=True)
+    if args.near_win_state:
+        args.near_win_state = args.near_win_state.resolve(strict=True)
     with socket.socket() as sock:
         if sock.connect_ex(('127.0.0.1', args.port)) == 0:
             ap.error(f'debug port {args.port} is occupied; stop its owner before running')
@@ -46,6 +54,10 @@ def main():
     if args.resume_menu:
         (data/'openbios').mkdir()
         shutil.copyfile(args.resume_menu, data/'openbios'/args.resume_menu.name)
+    if args.near_win_state:
+        (data/'openbios').mkdir(exist_ok=True)
+        shutil.copyfile(args.near_win_state,
+                        data/'openbios'/'state_800129D8_slot00.pst')
     shots = root / 'shots'
     shots.mkdir()
     os.environ['SHOTDIR'] = str(shots)
@@ -81,6 +93,20 @@ def main():
                     pass
             time.sleep(.1)
         raise RuntimeError('native game screenshot did not complete: ' + str(path))
+
+    def present_shot(tag):
+        path = shots / (tag + '-present.png')
+        before = q({'cmd':'present_shot_seq'})['seq']
+        q({'cmd':'present_shot','path':str(path)})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            state = q({'cmd':'present_shot_seq'})
+            if state['seq'] != before:
+                assert state['wrote'], state
+                assert path.exists() and path.stat().st_size, path
+                return str(path)
+            time.sleep(.02)
+        raise RuntimeError('composed screenshot did not complete: ' + str(path))
 
     def group(name, fn):
         print('RUN', name, flush=True)
@@ -222,7 +248,14 @@ def main():
         assert drops['sel_duelist_name'] == renamed, drops
         x,y,w,h = drops['geom']['starchip_open']
         q({'cmd':'drop_viewer_click','x':x+w//2,'y':y+h//2,'button':1})
-        drops = q({'cmd':'drop_viewer'})
+        # Debug clicks are queued onto the SDL/game thread. Do not race the
+        # immediate debug reply against the next frame on a busy editor.
+        deadline = time.monotonic() + 2
+        while True:
+            drops = q({'cmd':'drop_viewer'})
+            if drops['starchip_editor']['open'] or time.monotonic() >= deadline:
+                break
+            time.sleep(.02)
         assert drops['starchip_editor']['opponent_name'] == renamed, drops
         drop_ini = root/'rename-drop-tables.ini'
         q({'cmd':'drop_viewer_set','export':str(drop_ini)})
@@ -484,6 +517,192 @@ def main():
         assert turns.lp()[1]==7500, (turns.lp(),effect)
         return {'lp':turns.lp(),'card_effects':effect}
 
+    def stress_free_duel():
+        """Import the full stress package and win a real Free Duel with it."""
+        if not args.load_package:
+            raise RuntimeError('stress_free_duel requires --load-package')
+        restore_menu()
+        imported = q({'cmd':'mod_package','import':str(args.load_package)})
+        time.sleep(3)
+        packs = q({'cmd':'card_packs'})
+        assert packs['generation'] == 722 and len(packs['packs']) == 722, packs
+        shop_audit = q({'cmd':'card_shop'})
+        assert shop_audit['economy']['direct_violations'] == 0, shop_audit
+        assert shop_audit['economy']['pack_violations'] == 0, shop_audit
+        assert shop_audit['rarity_audit']['atk2500_violations'] == 0, shop_audit
+        assert shop_audit['rarity_audit']['atk3000_violations'] == 0, shop_audit
+        assert shop_audit['rarity_audit']['megamorph_min_tier'] == 3, shop_audit
+        assert shop_audit['rarity_audit']['ultimate_min_tier'] == 3, shop_audit
+        rewards = q({'cmd':'starchip_rewards','op':'state'})
+        assert rewards['configured_rules'] >= 1, rewards
+        authored = rewards['rules'][0]
+        assert authored['mode'] == 1 and authored['opponent'] == 9, authored
+        assert authored['outcome'] == 1 and authored['rank'] == 4, authored
+        assert authored['amount'] == 123456, authored
+
+        # Card 7 is the package's deliberately strong no-effect control. Card
+        # 1 exercises a real authored on-summon effect before card 7 wins.
+        q({'cmd':'card_manager_set','open':1})
+        time.sleep(1)
+        q({'cmd':'card_manager_set','card':7})
+        card7 = q({'cmd':'card_manager'})
+        assert int(card7['atk']) == 3250 and int(card7['def']) == 540, card7
+        assert str(card7['password']) == '44034117', card7
+        assert card7['effective_sell_price'] <= int(card7['price']), card7
+        assert card7['effective_sell_source'] == 2, card7
+        q({'cmd':'card_manager_set','card':1})
+        card1 = q({'cmd':'card_manager'})
+        assert int(card1['atk']) == 2820 and str(card1['password']) == '28755651', card1
+        assert 'gain 500' in card1.get('desc','').lower(), card1
+        assert card1['effective_sell_price'] <= int(card1['price']), card1
+        q({'cmd':'card_manager_set','card':125})
+        card125 = q({'cmd':'card_manager'})
+        monster125 = card125['geom']['monster']
+        assert monster125['on_summon'] == 'destroy_strongest', monster125
+        assert monster125['on_flip'] == 'destroy_own_lp', monster125
+        q({'cmd':'card_manager_set','card':366})
+        card366 = q({'cmd':'card_manager'})
+        expected_long_desc = ('Effect: When it|attacks: destroy|your own monsters.|'
+                              'When flipped up: the|foe loses 1000 LP.|Cannot be destroyed|'
+                              'in battle. ATK and|DEF +300 per ally.')
+        assert card366['desc'] == expected_long_desc, card366
+        assert len(card366['desc']) == 149, card366['desc']
+        q({'cmd':'fm_editor','open':0})
+        time.sleep(1)
+
+        # Keep the imported amount but broaden the selector in this disposable
+        # scratch copy so any genuine Free Duel win reaches the visual oracle.
+        rewards = q({'cmd':'starchip_rewards','op':'set','index':0,
+                     'mode':1,'opponent':-1,'outcome':1,'rank':-1,
+                     'amount':123456})
+        assert rewards['rules'][0]['amount'] == 123456, rewards
+        for addr in (0x801D06F4, 0x801D36F4):
+            q({'cmd':'write_mem','addr':f'{addr:08X}',
+               'hex':bytes([p.rd(addr,1)[0] | 0x40]).hex()})
+        p.press('down',20,1); p.press('cross',20,4); p.press('cross',40,2)
+        assert p.mode() == 0xC6, hex(p.mode())
+        shot('stress-free-duel-grid')
+        q({'cmd':'savestate','op':'save','slot':8})
+        time.sleep(2)
+
+        def wait_cast(before, label):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                state = q({'cmd':'monster_effects'})
+                if (state['idle'] and not state['queue'] and not state['casting'] and
+                    state['casts_done'] > before['casts_done']):
+                    assert state['casts_stalled'] == before['casts_stalled'], (label,state)
+                    assert p.frame() > 0, label
+                    return state
+                time.sleep(.025)
+            raise AssertionError((label,state))
+
+        def fresh_duel(card):
+            q({'cmd':'savestate','op':'load','slot':8})
+            time.sleep(3)
+            assert p.mode() == 0xC6, hex(p.mode())
+            goto_duel.duel([card])
+
+        # These are genuine imported monster triggers, not synthetic queue
+        # calls. Both paths historically crashed when attached to monsters.
+        fresh_duel(227)
+        fx0 = q({'cmd':'monster_effects'})
+        assert turns.play_turn([227]), 'on-summon Dark Hole monster missing'
+        fx_dark = wait_cast(fx0, 'monster Dark Hole')
+        shot('stress-monster-dark-hole')
+        fresh_duel(123)
+        fx_before_jar = q({'cmd':'monster_effects'})
+        assert turns.play_turn([123]), 'on-summon Dragon Capture Jar monster missing'
+        fx_jar = wait_cast(fx_before_jar, 'monster Dragon Capture Jar')
+        shot('stress-monster-dragon-jar')
+
+        # Card 125 carries two independent authored trigger definitions. Its
+        # compound flip rule itself queues both destruction and LP loss; this
+        # is the high-risk multi-effect resolution path.
+        fresh_duel(125)
+        slot = next(slot for slot,card in turns.hand() if card == 125)
+        turns.summon(slot, face_up=False)
+        facedown = None
+        for row in range(5,10):
+            at = 0x801A7AD8 + row * 0x1c
+            raw = p.rd(at,0x1c)
+            if int.from_bytes(raw[0xc:0xe],'little') != 125: continue
+            flags = int.from_bytes(raw[0x16:0x18],'little')
+            if flags & 0x1000:
+                facedown = (at,flags)
+                break
+        assert facedown is not None, turns.field()
+        fx_before_flip = q({'cmd':'monster_effects'})
+        q({'cmd':'write_mem','addr':f'{facedown[0]+0x16:08X}',
+           'hex':(facedown[1] & ~0x1000).to_bytes(2,'little').hex()})
+        fx_multi_flip = wait_cast(fx_before_flip, 'multi-effect on_flip')
+        assert fx_multi_flip['casts_done'] - fx_before_flip['casts_done'] == 2, fx_multi_flip
+        shot('stress-multi-effect-monster')
+
+        # The three menu-started Free Duels above exercised the authored
+        # effects. Use the established real near-win duel fixture for a
+        # deterministic stock result boundary, marking its persisted mode byte
+        # as Free Duel before the win so the reward selector takes that path.
+        if not args.near_win_state:
+            raise RuntimeError('stress reward test requires --near-win-state')
+        q({'cmd':'savestate','op':'load','slot':0})
+        time.sleep(4)
+        flags = p.rd(0x8009B365,1)[0] | 0x80
+        q({'cmd':'write_mem','addr':'8009B365','hex':bytes([flags]).hex()})
+        live_rule = q({'cmd':'starchip_rewards','op':'state'})['rules'][0]
+        if (live_rule['mode'],live_rule['opponent'],live_rule['outcome'],
+            live_rule['rank'],live_rule['amount']) != (1,-1,1,-1,123456):
+            q({'cmd':'starchip_rewards','op':'set','index':0,
+               'mode':1,'opponent':-1,'outcome':1,'rank':-1,'amount':123456})
+        for _ in range(5):
+            p.press('cross',12,4)
+            reward_probe = q({'cmd':'starchip_rewards','op':'state'})
+            if reward_probe['matched']: break
+        else: raise RuntimeError(('near-win result did not match reward',reward_probe))
+
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            reward0 = q({'cmd':'starchip_rewards','op':'state'})
+            if reward0['matched'] and reward0['page'] == 0 and reward0['visible']:
+                break
+            time.sleep(.05)
+        else: raise AssertionError(reward0)
+        assert reward0['mode'] == 1 and reward0['outcome'] == 1, reward0
+        assert reward0['amount'] == 123456 and reward0['size'] == [100,17], reward0
+        assert reward0['background_alpha'] == 255, reward0
+        assert reward0['after'] == min(999999, reward0['before'] + 123456), reward0
+        result0 = present_shot('stress-reward-page-0')
+
+        # Right leaves the summary for the mod's card-results page. Telemetry
+        # retains how many composed frames covered that transition, so it can
+        # be asserted after a normal human-length press.
+        p.press('right', 6, 0)
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            reward1 = q({'cmd':'starchip_rewards','op':'state'})
+            if reward1['page_exit_events'] > reward0['page_exit_events']:
+                break
+            time.sleep(.01)
+        else: raise AssertionError(reward1)
+        assert reward1['page_exit_frames'] - reward0['page_exit_frames'] >= 2, (reward0,reward1)
+        result1 = present_shot('stress-reward-next-page')
+        f0 = p.frame(); time.sleep(.5); assert p.frame() > f0
+        return {'import':imported,'card_packs':len(packs['packs']),
+                'override_fields':packs['overrides'],
+                'shop_audit':shop_audit,
+                'authored_rule':authored,'card1':{'atk':card1['atk'],'password':card1['password']},
+                'card7':{'atk':card7['atk'],'def':card7['def'],'password':card7['password']},
+                'multi_effect_card':{'id':125,'on_summon':monster125['on_summon'],
+                                     'on_flip':monster125['on_flip']},
+                'long_description':{'card':366,'characters':len(card366['desc']),
+                                    'text':card366['desc']},
+                'effect_casts':1 + 1 + (fx_multi_flip['casts_done'] - fx_before_flip['casts_done']),
+                'effect_checkpoints':{'dark_hole':fx_dark['casts_done']-fx0['casts_done'],
+                                      'dragon_jar':fx_jar['casts_done']-fx_before_jar['casts_done'],
+                                      'multi_flip':fx_multi_flip['casts_done']-fx_before_flip['casts_done']},
+                'reward_page0':reward0,'reward_after_transition':reward1,
+                'screenshots':[result0,result1]}
+
     def effects():
         """Every synthetic effect class, queue bounds, and mid-cast restore."""
         restore_menu()
@@ -634,7 +853,7 @@ def main():
                 time.sleep(12)
                 restore_menu()
             for name in args.groups.split(','):
-                group(name, {'menus':menus,'duel':duel,'managers':managers,'package':package,'video':video,'video_actions':video_actions,'mods':mods,'win':win,'magic':magic,'effects':effects}[name])
+                group(name, {'menus':menus,'duel':duel,'managers':managers,'package':package,'video':video,'video_actions':video_actions,'mods':mods,'win':win,'magic':magic,'effects':effects,'stress_free_duel':stress_free_duel}[name])
         finally:
             dbg.q({'cmd':'quit_graceful'})
             try: child.wait(timeout=10)

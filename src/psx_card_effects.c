@@ -782,7 +782,7 @@ static void hook_equip(struct CPUState *cpu, uint32_t address)
     eq_apply();
 }
 
-/* Wrap `text` into "|"-separated lines of at most 20 columns, appended to out. */
+/* Wrap `text` into "|"-separated lines at the card description width. */
 static void wrap_append(char *out, unsigned cap, const char *text)
 {
     unsigned n = (unsigned)strlen(out);
@@ -794,7 +794,7 @@ static void wrap_append(char *out, unsigned cap, const char *text)
         if (!*p) break;
         const char *e = p; while (*e && *e != ' ') e++;
         const int wl = (int)(e - p);
-        if (col && col + 1 + wl > 20) { out[n++] = '|'; col = 0; }
+        if (col && col + 1 + wl > PSX_CARD_PACK_DESC_COLS) { out[n++] = '|'; col = 0; }
         else if (col) { out[n++] = ' '; col++; }
         for (const char *q = p; q < e && n + 1 < cap; q++) { out[n++] = *q; col++; }
         p = e;

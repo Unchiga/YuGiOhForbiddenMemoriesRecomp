@@ -661,13 +661,13 @@ int psx_drop_edits_validate(char *err, unsigned errcap)
     return 1;
 }
 
-static int write_to(const char *path)
+static int write_to(const char *path, int all_tables)
 {
     if (!psx_drop_edits_validate(NULL, 0)) return 0;
     FILE *f = psx_fopen_utf8(path, "w");
     if (!f) return 0;
     fprintf(f,
-"; Yu-Gi-Oh! Forbidden Memories - Recompiled : drop table edits\n"
+"; Yu-Gi-Oh! Forbidden Memories - Recompiled : %s\n"
 "format = 3\n"
 ";\n"
 "; Written by the Drop Table Manager (VIEW > DROP TABLE MANAGER); hand-editing\n"
@@ -702,30 +702,44 @@ static int write_to(const char *path)
 "; campaign/free_duel mode, opponent (1..39), win/loss, and duel rank.\n"
 "; Amount is 0..999999. If no rule matches, the disc's exact 1..5 reward is\n"
 "; retained. Earlier sections have priority when conditions overlap.\n"
-"\n");
+"\n", all_tables ? "complete drop tables (bulk-editable export)"
+                  : "drop table edits");
     if (g_smart_drop_present)
         fprintf(f, "smart_drop = %s\n\n", g_smart_drop ? "on" : "off");
     for (int d = 0; d < NDUEL; d++) {
-        if (!g_n[d] && !g_reward[d] && !g_replace_mask[d]) continue;
+        if (!all_tables && !g_n[d] && !g_reward[d] && !g_replace_mask[d]) continue;
         fprintf(f, "[%s]\n", PSX_DROP_DB[d].name);
         if (g_reward[d]) {
             fprintf(f, "card = %d\n", g_reward[d]);
             if (g_reward_every[d]) fprintf(f, "when = every\n");
         }
-        for (int i = 0; i < g_n[d]; i++) {
+        for (int i = 0; !all_tables && i < g_n[d]; i++) {
             const Edit *e = &g_edit[d][i];
             fprintf(f, "%-3d = %4d, %4d, %4d\n",
                     e->card, e->w[0], e->w[1], e->w[2]);
         }
         for (int t = 0; t < 3; t++) {
-            if (!(g_replace_mask[d] & (1u << t))) continue;
+            if (!all_tables && !(g_replace_mask[d] & (1u << t))) continue;
             static const char *const key[3] = {
                 "pow_table", "bcd_table", "tec_table"
             };
             fprintf(f, "%s = ", key[t]);
+            uint16_t effective[NCARDS];
+            const uint16_t *weights = g_replace[d][t];
+            if (all_tables) {
+                memset(effective, 0, sizeof effective);
+                const PsxDropDbDuelist *db = &PSX_DROP_DB[d];
+                for (int i = 0; i < db->count[t]; i++) {
+                    const PsxDropWeight *e = &db->tier[t][i];
+                    if (e->card >= 1 && e->card <= NCARDS)
+                        effective[e->card - 1] = e->weight;
+                }
+                (void)psx_drop_edits_apply(d, t, effective);
+                weights = effective;
+            }
             int first = 1;
             for (int card = 1; card <= NCARDS; card++) {
-                const unsigned w = g_replace[d][t][card - 1];
+                const unsigned w = weights[card - 1];
                 if (!w) continue;
                 fprintf(f, "%s%d:%u", first ? "" : ", ", card, w);
                 first = 0;
@@ -765,7 +779,7 @@ int psx_drop_edits_save(void)
         snprintf(g_status, sizeof(g_status), "save refused: %.76s", why);
         return 0;
     }
-    if (!write_to(g_ini_path)) {
+    if (!write_to(g_ini_path, 0)) {
         snprintf(g_status, sizeof(g_status), "save FAILED");
         return 0;
     }
@@ -831,7 +845,7 @@ int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
         const size_t n = strlen(p);
         snprintf(p + n, sizeof p - n, ".ini");
     }
-    if (!write_to(p)) {
+    if (!write_to(p, 0)) {
         snprintf(g_status, sizeof(g_status), "export FAILED");
         if (msg && cap) snprintf(msg, cap, "Could not write that file");
         return 0;
@@ -858,6 +872,37 @@ int psx_drop_edits_export_file(const char *path, char *msg, unsigned cap)
     return 1;
 }
 
+int psx_drop_edits_export_all_file(const char *path, char *msg, unsigned cap)
+{
+    psx_drop_edits_ensure_loaded();
+    if (!path || !path[0]) {
+        if (msg && cap) snprintf(msg, cap, "No file to export to");
+        return 0;
+    }
+    char why[192];
+    if (!psx_drop_edits_validate(why, sizeof why)) {
+        if (msg && cap) snprintf(msg, cap, "%s", why);
+        return 0;
+    }
+    char p[1200];
+    snprintf(p, sizeof p, "%s", path);
+    if (!strchr(base_name(p), '.')) {
+        const size_t n = strlen(p);
+        snprintf(p + n, sizeof p - n, ".ini");
+    }
+    if (!write_to(p, 1)) {
+        if (msg && cap) snprintf(msg, cap, "Could not write that file");
+        return 0;
+    }
+    snprintf(g_status, sizeof g_status, "exported all tables as %.52s",
+             base_name(p));
+    if (msg && cap)
+        snprintf(msg, cap,
+                 "Exported all %d duelists and %d rank tables for bulk editing as %.36s",
+                 NDUEL, NDUEL * 3, base_name(p));
+    return 1;
+}
+
 int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
 {
     const int n = psx_drop_edits_load_file(path);
@@ -876,13 +921,19 @@ int psx_drop_edits_import_file(const char *path, char *msg, unsigned cap)
     const int r = psx_drop_edits_reward_count();
     const int sc = psx_drop_edits_starchip_count();
     const int sd = psx_drop_edits_smart_drop_present();
+    int tables = 0;
+    for (int d = 0; d < NDUEL; d++)
+        for (int t = 0; t < 3; t++)
+            tables += !!(g_replace_mask[d] & (1u << t));
     if (msg && cap) {
         if (!kept)
             snprintf(msg, cap, "Imported %d entr%s, but %s could not be written",
                      n, n == 1 ? "y" : "ies", INI_NAME);
-        else if (r || sc || sd)
-            snprintf(msg, cap, "Imported %d entr%s, %d scripted drop%s, %d starchip rule%s%s%s; kept",
-                     n, n == 1 ? "y" : "ies", r, r == 1 ? "" : "s",
+        else if (r || sc || sd || tables)
+            snprintf(msg, cap, "Imported %d entr%s, %d complete table%s, %d scripted drop%s, %d starchip rule%s%s%s; kept",
+                     n, n == 1 ? "y" : "ies",
+                     tables, tables == 1 ? "" : "s",
+                     r, r == 1 ? "" : "s",
                      sc, sc == 1 ? "" : "s",
                      sd ? ", Smart drops " : "", sd ? (g_smart_drop ? "On" : "Off") : "");
         else

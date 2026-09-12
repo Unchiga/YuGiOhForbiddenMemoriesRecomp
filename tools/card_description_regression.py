@@ -165,10 +165,13 @@ def main():
         ("nine-lines", "A|B|C|D|E|F|G|H|I", False, 9),
         ("auto-19", "A" * 19, True, 1),
         ("auto-20", "A" * 20, True, 1),
-        ("auto-21-long-word", "A" * 21, True, 2),
+        ("auto-21", "A" * 21, True, 1),
+        ("auto-22-long-word", "A" * 22, True, 2),
         ("explicit-19", "A" * 19 + "|B", True, 2),
         ("explicit-20", "A" * 20 + "|B", True, 2),
-        ("explicit-21", "A" * 21 + "|B", False, 1),
+        ("explicit-21", "A" * 21 + "|B", True, 2),
+        ("explicit-22", "A" * 22 + "|B", False, 1),
+        ("melting-red-shadow", "A creature that|melts into the earth,|melds with an|opponent's shadow,|and attacks|from below.", True, 6),
         ("literal-backslash-n", r"First\nSecond", True, 2),
         ("actual-newline", "First\nSecond", True, 2),
         ("automatic-words", "One two three four five six seven", True, 2),
@@ -191,13 +194,13 @@ def main():
             results["validation"].append({"case": name, "text": text, "reply": r})
 
         reload_texts = ["One line.", "A|B|C|D|E|F", "A|B|C|D|E|F|G",
-                        "A|B|C|D|E|F|G|H", "A" * 21]
+                        "A|B|C|D|E|F|G|H", "A" * 22]
         for text in reload_texts:
             write_card(player, text)
             q(port, {"cmd": "card_packs_reload", "card": CARD})
             time.sleep(.5)
             got = guest_description(port)
-            expected = "A" * 20 + "|A" if text == "A" * 21 else text
+            expected = "A" * 21 + "|A" if text == "A" * 22 else text
             if got["decoded"] != expected:
                 raise AssertionError((text, expected, got))
             results["reloads"].append({"source": text, "guest": got})

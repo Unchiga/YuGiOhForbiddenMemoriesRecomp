@@ -95,6 +95,9 @@ int psx_drop_edits_save(void);
  * on demand. load_file is the raw import a bare name resolves against that
  * folder; it returns the entry count, -1 when unreadable, or -2 when invalid. */
 int  psx_drop_edits_export_file(const char *path, char *msg, unsigned cap);
+/* Export every current stock+edit weight as exact pow/bcd/tec tables. The
+ * result is accepted by the normal importer and is intended for bulk edits. */
+int  psx_drop_edits_export_all_file(const char *path, char *msg, unsigned cap);
 int  psx_drop_edits_import_file(const char *path, char *msg, unsigned cap);
 void psx_drop_edits_share_dir(char *out, unsigned cap);
 int  psx_drop_edits_load_file(const char *name_or_path);

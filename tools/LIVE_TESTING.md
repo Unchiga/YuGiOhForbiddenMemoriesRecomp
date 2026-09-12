@@ -834,7 +834,7 @@ scale, placement, or priority. Always snapshot those separately before a
 physical scale matrix and restore/compare the snapshot when finished.
 
 `card_description_validate` runs the exact planner used by editor save and
-import. The capacity is eight lines by 20 columns. `|`, actual newlines, and a
+import. The capacity is eight lines by 21 columns. `|`, actual newlines, and a
 literal `\\n` are explicit breaks; unbroken text wraps automatically. A save
 must fail rather than clipping line 9 or an explicit 21-column row.
 

@@ -49,6 +49,9 @@ int  psx_fm_editor_page(void);
 int  psx_fm_editor_is_switching(void);
 int  psx_fm_editor_content_height(int output_h);
 int  psx_fm_editor_window_y(int content_y);
+/* The strip grows with the editor instead of remaining a 38-pixel island on
+ * high-resolution desktops. PSX_FM_EDITOR_TAB_H is its compact minimum. */
+int  psx_fm_editor_tab_height(int output_h);
 /* Call first in a page's event hook. Returns 1 for tab-strip/shortcut input;
  * otherwise copies the event to adjusted and translates its mouse y into the
  * page canvas below the tabs. */

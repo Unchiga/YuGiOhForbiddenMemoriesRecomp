@@ -21,8 +21,8 @@
  *    machine whose seat is NOT the side acting, paints card backs over the
  *    CARDS the acting player is entitled to see and this player is not:
  *      - the five hand sprites of the acting side (52x60 quads at the
- *        object's +0x30/+0x32, which follow the hand as it slides in, lifts
- *        for a fusion pick and flies to the field),
+ *        object's +0x30/+0x32, which follow the hand as it is drawn/slides
+ *        in, lifts for a fusion pick and flies to the field),
  *      - the same hand as the 3D placement view draws it: for the first
  *        substate of duel phase 7 the 2D objects are already freed and the
  *        3D path paints the hand itself at a fixed row (x 14+60i, y 160),
@@ -160,6 +160,13 @@ static uint32_t   s_px[SCREEN_W * SCREEN_H];
 static PsxUiCanvas s_cv = { s_px, SCREEN_W, SCREEN_H, 0, 0, 0, 0 };
 static int        s_have;          /* the canvas holds something this frame */
 static int        s_hold;          /* presents to keep asking for after it empties */
+static int        s_view_hold;     /* keep the full-view cover through slide-out */
+static int        s_view_side = -1;
+
+/* The viewer command clears before its card has necessarily finished sliding
+ * off-screen. 24 native frames is deliberately conservative: a lingering
+ * privacy panel is harmless; one exposed animation frame is not. */
+#define VIEW_EXIT_HOLD 24
 
 #define COL_BACK   0xFF1B2545u
 #define COL_EDGE   0xFF7C8BC4u
@@ -291,6 +298,7 @@ static int card_public(int id)
 static void cover_tick(void)
 {
     const int was = s_have;
+    int remote_turn = 0;
     s_have = 0;
     if (!psx_ygo_netplay_session() || !psx_mod_game_started()) goto done;
     const int slot = psx_ygo_netplay_local_slot();
@@ -302,8 +310,8 @@ static void cover_tick(void)
     if (field_card_hidden(slot, NULL))
         strip_cover_label("FACE-DOWN CARD");
     if (side == slot) goto done;                                /* my turn: my hand is mine to see */
+    remote_turn = 1;
 
-    const char *who = side == 0 ? "PLAYER 1 IS VIEWING A CARD" : "PLAYER 2 IS VIEWING A CARD";
     const int phase = psx_mod_read_half(A_PHASE) & 0xF;
     /* In DECK NUMBER mode (+0x1F != 0) the hand is numbered backs already. */
     const int hand_open = psx_mod_read_byte(A_DUELISTS + (uint32_t)side * 0x20u + 0x1Fu) == 0;
@@ -318,8 +326,11 @@ static void cover_tick(void)
             if (!ram_ptr(obj)) continue;
             if ((psx_mod_read_half(obj + 0x08) & 0xC0) != 0xC0) continue;   /* not renderable */
             const int rec = psx_mod_read_byte(obj + 0x6A);
-            if (rec / 15 != side) continue;
-            if (rec % 15 > 4) {
+            /* During the draw slide this byte is briefly uninitialised/stale.
+             * A_HAND_OBJECTS itself is the ownership proof: it is the acting
+             * side's five hand display objects. Cover first, and exempt only
+             * a valid acting-side field record that is already public. */
+            if (rec < 30 && rec / 15 == side && rec % 15 > 4) {
                 const unsigned fl = rec_flags(rec);
                 if ((fl & REC_OCCUPIED) && !(fl & REC_FACE_DOWN)) continue;
             }
@@ -353,13 +364,37 @@ static void cover_tick(void)
     }
 
     /* The full card view (TRIANGLE): art, name, stats and text fill the
-     * screen. Cover it whole when the card it shows is not public. */
-    if ((psx_mod_read_byte(A_EFFECT) & 0x7F) == 2 && !card_public(s16_at(A_VIEWER_CARD))) {
-        big_back(4, 8, SCREEN_W - 8, SCREEN_H - 16, who);
+     * screen. Start on the request frame, then retain the cover after the
+     * command clears so the slide-out cannot expose the card. The panel spans
+     * the complete 320x240 presentation instead of leaving animated edge
+     * strips visible around an inset card-shaped cover. */
+    const int viewer_private = (psx_mod_read_byte(A_EFFECT) & 0x7F) == 2 &&
+                               !card_public(s16_at(A_VIEWER_CARD));
+    if (viewer_private) {
+        s_view_hold = VIEW_EXIT_HOLD;
+        s_view_side = side;
+    }
+    if (s_view_hold > 0) {
+        const int view_side = s_view_side >= 0 ? s_view_side : side;
+        const char *view_who = view_side == 0
+            ? "PLAYER 1 IS VIEWING A CARD" : "PLAYER 2 IS VIEWING A CARD";
+        /* big_back has rounded transparent corner pixels by design. Fill first
+         * so "whole window" is literal and no underlying animation can peek
+         * through those corners. */
+        psx_ui_fill(&s_cv, 0, 0, SCREEN_W, SCREEN_H, COL_BACK);
+        big_back(0, 0, SCREEN_W, SCREEN_H, view_who);
         s_have = 1;
+        if (!viewer_private)
+            s_view_hold--;
     }
 
 done:
+    if (!remote_turn) {
+        s_view_hold = 0;
+        s_view_side = -1;
+    } else if (s_view_hold == 0) {
+        s_view_side = -1;
+    }
     if (was && !s_have) s_hold = 3;
     else if (s_hold > 0) s_hold--;
 }
@@ -405,16 +440,19 @@ int psx_ygo_netplay_privacy_json(char *out, size_t cap)
     const int slot = psx_ygo_netplay_local_slot();
     const int side = psx_mod_read_byte(A_SIDE) & 1;
     const int phase = psx_mod_read_half(A_PHASE) & 0xF;
+    const int effect = psx_mod_read_byte(A_EFFECT) & 0x7F;
     int rec = -1;
     const int hidden = active ? field_card_hidden(slot, &rec) : 0;
     const unsigned fl = rec >= 0 ? rec_flags(rec) : 0;
     const int card = rec >= 0 ? s16_at(A_CARD_RECORDS + (uint32_t)rec * REC_SIZE + REC_CARD) : 0;
     const int n = snprintf(out, cap,
         "\"active\":%d,\"slot\":%d,\"side\":%d,\"phase\":%d,"
+        "\"viewer_effect\":%d,\"viewer_card\":%d,\"viewer_hold\":%d,"
         "\"selected_record\":%d,\"selected_owner\":%d,\"selected_card\":%d,"
         "\"selected_flags\":%u,\"field_hidden\":%d,\"hand_hidden\":%d,"
         "\"cover_present\":%d",
-        active, slot, side, phase, rec, rec >= 0 ? rec / 15 : -1, card, fl,
+        active, slot, side, phase, effect, s16_at(A_VIEWER_CARD), s_view_hold,
+        rec, rec >= 0 ? rec / 15 : -1, card, fl,
         hidden, psx_ygo_netplay_hand_hidden(), s_have ? 1 : 0);
     return n >= 0 && (size_t)n < cap;
 }

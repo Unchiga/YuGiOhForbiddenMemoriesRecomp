@@ -695,7 +695,7 @@ static void handle_card_effects(int id, const char *json)
 
 static void handle_card_password_view(int id, const char *json)
 {
-    char buf[768];
+    char buf[1024];
     (void)json;
     if (!psx_card_password_view_state_json(buf, sizeof buf)) {
         send_err(id, "password-view state too long"); return;
@@ -1253,8 +1253,10 @@ static void handle_drop_viewer_set(int id, const char *json)
     {   /* the file pair answers with its own message, window or no window */
         char path[1024], msg[256];
         const int imp = json_get_str(json, "import", path, sizeof path) != NULL;
-        if (imp || json_get_str(json, "export", path, sizeof path)) {
+        const int all = !imp && json_get_str(json, "export_all", path, sizeof path) != NULL;
+        if (imp || all || json_get_str(json, "export", path, sizeof path)) {
             const int ok = imp ? psx_drop_viewer_import(path, msg, sizeof msg)
+                         : all ? psx_drop_viewer_export_all(path, msg, sizeof msg)
                                : psx_drop_viewer_export(path, msg, sizeof msg);
             for (char *q = msg; *q; q++) if (*q == '"') *q = '\'';
             send_fmt("{\"id\":%d,\"ok\":%s,\"msg\":\"%s\"}", id, ok ? "true" : "false", msg);

@@ -59,12 +59,13 @@ def shot(tag):
 
 def state(): return r.query('card_shop_sell')
 def setq(card, qty): return r.query('card_shop_sell', op='set', card=card, quantity=qty)
+def entry(s, card): return next(row for row in s['entries'] if row['id'] == card)
 def press(b, frames=12, settle=0.8): r.press(b, frames, settle)
 def key(code):
     """Keyboard-equivalent input through ydotool (Linux keycode), if focused."""
     subprocess.run(['ydotool', 'key', '-d', '120', f'{code}:1', f'{code}:0'], check=True); time.sleep(0.8)
 
-FIX_TRUNK = {1:3, 4:3, 5:4, 24:10, 104:2, 108:10, 114:3, 148:99, 195:1, 229:255, 232:2, 298:99}
+FIX_TRUNK = {1:3, 4:3, 5:4, 11:1, 24:10, 104:2, 108:10, 114:3, 148:99, 195:1, 229:255, 232:2, 298:99}
 def fixture(chips, trunk_map=None):
     tm = FIX_TRUNK if trunk_map is None else trunk_map
     deck = sr.deterministic_deck({104:1, 114:1, 195:2, 232:2, 229:3})
@@ -87,16 +88,21 @@ try:
     ev.check('empty circle closes sell', not state()['active'])
 
     # B. normal quantity selection with controller-equivalent presses
-    fixture(77)
+    fixture(999000)
     press('triangle'); s = state(); ev.check('editor open', s['active'] == 1 and s['types'] == len(FIX_TRUNK), s)
+    ev.check('effective resale respects pack and direct-price ceilings',
+             (entry(s, 1)['sell_price'], entry(s, 11)['sell_price'], entry(s, 4)['sell_price']) == (250, 25, 6),
+             {card: entry(s, card)['sell_price'] for card in (1, 11, 4)})
     shot('editor-initial')
     press('right'); s = state(); ev.check('right = +1 on first row', s['entries'][0]['sell'] == 1, s['entries'][0]); shot('qty-1')
     press('left'); ev.check('left = -1', state()['entries'][0]['sell'] == 0)
     setq(24, 10); shot('qty-10')
     setq(148, 99); shot('qty-99')
-    setq(229, 0); press('r1'); s = state(); ev.check('R1 = +10', s['entries'][9]['sell'] == 10, s['entries'][9]); shot('r1-plus-10')
-    press('l1'); ev.check('L1 = -10', state()['entries'][9]['sell'] == 0)
-    press('square'); s = state(); ev.check('square = max', s['entries'][9]['sell'] == 255, s['entries'][9]); shot('qty-255')
+    start_sel = state()['selected']; press('r1'); s = state()
+    ev.check('R1 skips forward ten cards', s['selected'] == (start_sel + 10) % s['types'], s['selected']); shot('r1-skip-10')
+    press('l1'); ev.check('L1 skips back ten cards', state()['selected'] == start_sel)
+    setq(229, 0)
+    press('square'); s = state(); ev.check('square = max', entry(s, 229)['sell'] == 255, entry(s, 229)); shot('qty-255')
     setq(108, 0); shot('long-name-override')
     setq(298, 5); shot('mixed-prices-six-digit')
     setq(5, 4); shot('zero-value-row')
@@ -115,10 +121,10 @@ try:
 
     # C/D. six-digit totals without cap loss, confirm, successful sale
     fixture(100)
-    press('triangle'); setq(298, 5); s = state(); ev.check('six digit gross', s['gross'] == 617280 and s['credit'] == 617280, s)
-    shot('six-digit-totals'); press('cross'); shot('confirm')
+    press('triangle'); setq(298, 5); s = state(); ev.check('selected total is exact', s['gross'] == 30 and s['credit'] == 30, s)
+    shot('selected-totals'); press('cross'); shot('confirm')
     before = sr.inventory(r); press('cross', 12, 1.5); after = sr.inventory(r)
-    ev.check('sale credited', after['chips'] == 617380 and after['trunk'][297] == 94, after['chips'])
+    ev.check('sale credited', after['chips'] == 130 and after['trunk'][297] == 94, after['chips'])
     ev.check('deck unchanged', after['deck'] == before['deck'])
     shot('sold')
 
@@ -141,8 +147,9 @@ try:
     for _ in range(3): press('down', 12, 0.4)
     shot('scroll-mid'); setq(722, 1); shot('scroll-bottom')
     press('start'); s = state(); ev.check('all 722 selected', s['copies'] == 722, s['copies']); shot('all-722-selected')
+    all_722_credit = s['credit']
     press('cross'); shot('confirm-722')
-    press('cross', 12, 1.5); s = sr.inventory(r); ev.check('722 sale capped', s['chips'] == 999999, s['chips']); shot('sold-722')
+    press('cross', 12, 1.5); s = sr.inventory(r); ev.check('722 sale credits the exact reviewed total', s['chips'] == all_722_credit, s['chips']); shot('sold-722')
     for c in range(600, 618): shutil.rmtree(player / 'cards' / str(c))
     r.query('card_packs_reload')
 

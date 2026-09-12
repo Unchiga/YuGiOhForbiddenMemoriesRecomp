@@ -15,9 +15,10 @@
  *
  * A matched rule gets a present-only compact `star x amount` row. This covers
  * the stock one-to-five stars without touching guest VRAM and safely fits all
- * six digits permitted by the real save cap. It is shown only on results page
- * zero, and netplay disables both mutation and presentation while preserving
- * the persisted offline rules.
+ * six digits permitted by the real save cap. It is shown on results page zero
+ * and held for two frames after leaving it so the stock star sprites cannot
+ * flash through during the page transition. Netplay disables both mutation
+ * and presentation while preserving the persisted offline rules.
  */
 
 #include "psx_starchip_rewards.h"
@@ -56,7 +57,8 @@
 #define ORIGIN_X 152
 #define ORIGIN_Y 184
 #define CANVAS_W 100
-#define CANVAS_H 16
+#define CANVAS_H 17
+#define PAGE_EXIT_HOLD 2
 
 static uint32_t s_canvas[CANVAS_W * CANVAS_H];
 static int s_registered;
@@ -78,6 +80,10 @@ static uint32_t s_lost_to_cap;
 static unsigned s_applies;
 static unsigned s_stock_fallbacks;
 static int s_present_hold;
+static int s_page_exit_hold;
+static int s_last_page = -1;
+static unsigned s_page_exit_events;
+static unsigned s_page_exit_frames;
 static int s_placement[10];
 static uint32_t s_state_mem;
 
@@ -150,6 +156,8 @@ static void reset_result(void)
     s_before = 0;
     clear_decision();
     s_present_hold = 3;
+    s_page_exit_hold = 0;
+    s_last_page = -1;
 }
 
 static void on_results(CPUState *cpu, uint32_t address)
@@ -237,6 +245,8 @@ static void state_before_save(void)
     state_put(&at, s_after);
     state_put(&at, s_lost_to_cap);
     state_put(&at, (uint32_t)s_present_hold);
+    state_put(&at, (uint32_t)s_page_exit_hold);
+    state_put(&at, (uint32_t)s_last_page);
 }
 
 static void state_after_load(void)
@@ -260,6 +270,8 @@ static void state_after_load(void)
     s_after = state_get(&at);
     s_lost_to_cap = state_get(&at);
     s_present_hold = (int)state_get(&at);
+    s_page_exit_hold = (int)state_get(&at);
+    s_last_page = (int)state_get(&at);
     s_hooked_this_frame = 0;
     s_absent_frames = 0;
 }
@@ -272,6 +284,27 @@ static void tick(void)
         s_hooked_this_frame = 0;
         s_absent_frames = 0;
         return;
+    }
+    if (s_matched && s_results_active) {
+        const uint32_t result = psx_mod_read_word(RESULT_PTR);
+        const int page = result
+            ? (int)psx_mod_read_byte(result + RESULT_PAGE_OFF) : -1;
+        const int leaving_page_zero = s_last_page == 0 &&
+            (page != 0 || !s_hooked_this_frame);
+        if (leaving_page_zero) {
+            /* Some result transitions stop calling RESULTS_FN before the
+             * result object's page byte changes. Treat that first absent
+             * frame as the page edge too, otherwise the stock star sprites
+             * can flash through after our replacement vanishes. */
+            s_page_exit_hold = PAGE_EXIT_HOLD;
+            s_page_exit_events++;
+        } else if (page == 0 && s_hooked_this_frame) {
+            s_page_exit_hold = PAGE_EXIT_HOLD;
+        } else if (s_page_exit_hold > 0) {
+            s_page_exit_hold--;
+        }
+        if (page != 0 && s_page_exit_hold > 0) s_page_exit_frames++;
+        s_last_page = page;
     }
     if (s_hooked_this_frame) s_absent_frames = 0;
     else if (s_results_active && ++s_absent_frames > 3) reset_result();
@@ -293,9 +326,12 @@ void psx_starchip_rewards_init(void)
 int psx_starchip_rewards_image(const uint32_t **pixels, int *w, int *h)
 {
     const uint32_t result = psx_mod_read_word(RESULT_PTR);
-    if (!s_matched || !s_results_active || !result ||
-        psx_mod_read_byte(result + RESULT_PAGE_OFF) != 0u ||
-        psx_ygo_netplay_session()) return 0;
+    const int page = result
+        ? (int)psx_mod_read_byte(result + RESULT_PAGE_OFF) : -1;
+    const int normal_page = s_matched && s_results_active && result && page == 0;
+    const int transition_cover = s_matched && s_results_active &&
+        s_page_exit_hold > 0 && (!result || page != 0);
+    if ((!normal_page && !transition_cover) || psx_ygo_netplay_session()) return 0;
     if (pixels) *pixels = s_canvas;
     if (w) *w = CANVAS_W;
     if (h) *h = CANVAS_H;
@@ -310,7 +346,7 @@ void psx_starchip_rewards_origin(int *x, int *y)
 
 int psx_starchip_rewards_needs_present(void)
 {
-    return s_present_hold > 0;
+    return s_present_hold > 0 || s_page_exit_hold > 0;
 }
 
 void psx_starchip_rewards_placed(const int *placement)
@@ -333,7 +369,8 @@ int psx_starchip_rewards_state_json(char *out, unsigned cap)
         "\"mode\":%d,\"opponent\":%d,\"opponent_name\":\"%s\",\"outcome\":%d,\"rank\":%d,"
         "\"amount\":%u,\"before\":%u,\"after\":%u,\"cap_loss\":%u,"
         "\"origin\":[%d,%d],\"size\":[%d,%d],\"background_alpha\":255,"
-        "\"page\":%d,\"visible\":%d,\"applies\":%u,"
+        "\"page\":%d,\"visible\":%d,\"page_exit_hold\":%d,"
+        "\"page_exit_events\":%u,\"page_exit_frames\":%u,\"applies\":%u,"
         "\"stock_fallbacks\":%u,\"placement\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
         psx_drop_edits_starchip_count(), s_results_active, s_result_calls,
         s_decided, s_matched, s_rule, s_mode, s_opponent,
@@ -341,7 +378,8 @@ int psx_starchip_rewards_state_json(char *out, unsigned cap)
         s_outcome, s_rank,
         (unsigned)s_amount, (unsigned)s_before, (unsigned)s_after,
         (unsigned)s_lost_to_cap, ORIGIN_X, ORIGIN_Y, CANVAS_W, CANVAS_H, page,
-        s_matched && s_results_active && page == 0, s_applies,
+        s_matched && s_results_active && (page == 0 || s_page_exit_hold > 0),
+        s_page_exit_hold, s_page_exit_events, s_page_exit_frames, s_applies,
         s_stock_fallbacks,
         s_placement[0], s_placement[1], s_placement[2], s_placement[3],
         s_placement[4], s_placement[5], s_placement[6], s_placement[7],

@@ -1205,6 +1205,8 @@ static void read_bank(void)
     for (uint32_t i = 0; i < BANK_SIZE; i++) s_bank[i] = psx_mod_read_byte(BANK_BASE + i);
     for (int i = 0; i < TABLE_N; i++) s_table[i] = psx_mod_read_half(TABLE_ADDR + (uint32_t)i * 2u);
     build_runs();
+    s_room = TRAMP_END - story_first();
+    s_used = s_text_end - story_first();
     int bad = 0;
     for (int i = 0; i < s_nruns; i++) {
         Run *r = &s_runs[i];
@@ -1233,6 +1235,12 @@ int psx_dialogue_translated_count(void)
     int n = 0;
     for (int i = 0; i < s_nruns; i++) n += s_runs[i].enc != NULL;
     return n;
+}
+
+void psx_dialogue_capacity(unsigned *used, unsigned *room)
+{
+    if (used) *used = s_used;
+    if (room) *room = s_room;
 }
 
 int psx_dialogue_run(int index, PsxDialogueRun *out)

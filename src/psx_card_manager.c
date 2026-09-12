@@ -46,6 +46,7 @@
 #include "psx_card_effects.h"
 #include "psx_card_colors.h"
 #include "psx_card_share.h"
+#include "psx_card_shop.h"
 #include "psx_card_texts.h"
 #include "psx_game_hooks.h"
 #include "psx_ui_draw.h"
@@ -184,6 +185,45 @@ static int s_target_selected_n;
 typedef struct { int x, y, w, h; } Rect;
 static int in_rect(const Rect *r, int x, int y) { return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h; }
 
+/* These previews are indexed, pixel-authored game assets.  Keep every source
+ * texel an exact square on screen instead of letting the window's fractional
+ * UI scale choose a bilinear destination size. */
+static Rect integer_preview_rect(int x, int y, int max_w, int max_h,
+                                 int src_w, int src_h)
+{
+    int scale = max_w / src_w;
+    const int scale_y = max_h / src_h;
+    Rect out;
+    if (scale_y < scale) scale = scale_y;
+    if (scale < 1) scale = 1;
+    out.w = src_w * scale;
+    out.h = src_h * scale;
+    out.x = x + (max_w > out.w ? (max_w - out.w) / 2 : 0);
+    out.y = y + (max_h > out.h ? (max_h - out.h) / 2 : 0);
+    return out;
+}
+
+static void blit_integer_preview(PsxUiCanvas *c, const Rect *dst,
+                                 const uint32_t *src, int src_w, int src_h)
+{
+    int scale;
+    if (!c || !c->px || !dst || !src || src_w <= 0 || src_h <= 0) return;
+    scale = dst->w / src_w;
+    if (scale < 1 ||
+        dst->w != src_w * scale || dst->h != src_h * scale) return;
+    psx_ui_mark(c, dst->x, dst->y, dst->w, dst->h);
+    for (int dy = 0; dy < dst->h; dy++) {
+        const int y = dst->y + dy;
+        if ((unsigned)y >= (unsigned)c->h) continue;
+        const uint32_t *srow = src + (size_t)(dy / scale) * src_w;
+        for (int dx = 0; dx < dst->w; dx++) {
+            const int x = dst->x + dx;
+            if ((unsigned)x < (unsigned)c->w)
+                c->px[(size_t)y * c->w + x] = srow[dx / scale];
+        }
+    }
+}
+
 typedef struct {
     Rect bar, search, list, list_rows, sb, ed;
     int  row_h, rows;
@@ -192,6 +232,7 @@ typedef struct {
     int  bar_free;                    /* room left in the bar after the search box */
     Rect art, thumb;
     int  info_x, info_y;
+    int  form_right;
     int  status_y;
     int  fx_note_x, fx_note_y;        /* the effects note line, 0 = none */
     Rect tab[2];
@@ -639,7 +680,7 @@ static int field_applies(int f) { return field_fits(f) && field_tab(f) == s_tab;
 
 /* The help under the buttons, per tab */
 static const char *const HELP_TEXT[2] = {
-    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (20 columns, eight lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
+    "Green is your edit; x puts a value back to stock. Click a value to type, Enter keeps it, Esc cancels; select with the mouse or Shift+arrows, Ctrl+C/V copies and pastes. In the description a | starts a new line (21 columns, eight lines). Export Config writes every edited card to one .ygocards file; Import Config reads one and shows what it will replace first.",
     "Each rule is a sentence: when it happens, the odds, what it does. Lists open on a click; type to filter a long one. \"Effect text \xE2\x86\x92 description\" writes the card text onto the card.",
 };
 #define HELP_LINES 5
@@ -661,7 +702,7 @@ static void layout_pass(void)
     L->ed = (Rect){ L->list.x + L->list.w + gap, top, s_w - (L->list.x + L->list.w + gap) - gap, s_h - top - gap };
 
     const int ex = L->ed.x + pad;
-    const int right = L->ed.x + L->ed.w - pad;
+    int right = L->ed.x + L->ed.w - pad;
     int y = L->ed.y + pad + px(16.0f) + px(8.0f);        /* below the header line */
     /* the two tabs */
     {
@@ -676,15 +717,32 @@ static void layout_pass(void)
         y += th + px(8.0f);
     }
     if (s_tab == 0) {
-        /* previews */
-        const int art_h = px(72.0f), art_w = art_h * 102 / 96;
-        L->art = (Rect){ ex, y, art_w, art_h };
-        const int th_h = px(24.0f), th_w = th_h * 40 / 32;
-        L->thumb = (Rect){ ex + art_w + pad, y, th_w, th_h };
-        L->info_x = L->thumb.x + th_w + pad;
-        L->info_y = y;
-        y += art_h + px(12.0f);
+        if (L->ed.w >= px(560.0f)) {
+            /* The form only needs the left half of a wide editor. Turn the
+             * formerly empty right half into a large, persistent art rail. */
+            const int rail_w = px(174.0f);
+            const int rail_x = right - rail_w;
+            const int art_slot_h = rail_w * 96 / 102;
+            const int th_slot_w = px(136.0f), th_slot_h = th_slot_w * 32 / 40;
+            L->art = integer_preview_rect(rail_x, y, rail_w, art_slot_h, 102, 96);
+            L->thumb = integer_preview_rect(rail_x + (rail_w - th_slot_w) / 2,
+                                             y + art_slot_h + px(20.0f),
+                                             th_slot_w, th_slot_h, 40, 32);
+            L->info_x = rail_x;
+            L->info_y = L->thumb.y + L->thumb.h + px(20.0f);
+            right = rail_x - pad;
+        } else {
+            const int art_slot_h = px(72.0f), art_slot_w = art_slot_h * 102 / 96;
+            const int th_slot_h = px(24.0f), th_slot_w = th_slot_h * 40 / 32;
+            L->art = integer_preview_rect(ex, y, art_slot_w, art_slot_h, 102, 96);
+            L->thumb = integer_preview_rect(ex + L->art.w + pad, y,
+                                             th_slot_w, th_slot_h, 40, 32);
+            L->info_x = L->thumb.x + L->thumb.w + pad;
+            L->info_y = y;
+            y += L->art.h + px(12.0f);
+        }
     }
+    L->form_right = right;
     /* fields */
     const int label_w = px(U_LABEL_W), box_h = px(U_BOX_H), step_w = px(U_STEP_W), sgap = px(3.0f);
     const int desc_h = psx_ui_font_line_height(face_body()) * PSX_CARD_PACK_DESC_LINES + px(6.0f);
@@ -778,12 +836,13 @@ static void layout_pass(void)
         const PsxUiFace *fb = face_bold();
         int bx = ex, bh = px(U_BTN_H);
         snprintf(s_dev_label, sizeof s_dev_label, "Dev Card Effects: %s", psx_card_packs_is_dev() ? "ON" : "OFF");
-        /* the bar's buttons, right to left, in the small face so five fit */
+        /* Match the other managers' action size; the preview rail frees the
+         * body space that used to force this page into a compact treatment. */
         {
-            const PsxUiFace *fs = face_small();
+            const PsxUiFace *fs = face_bold();
             int rx = s_w - px(8.0f);
             for (int b = B_COUNT - 1; b >= B_BAR_FIRST; b--) {
-                const int bw = psx_ui_font_text_w(fs, b == B_DEV ? s_dev_label : BTN_LABEL[b]) + px(14.0f);
+                const int bw = psx_ui_font_text_w(fs, b == B_DEV ? s_dev_label : BTN_LABEL[b]) + px(18.0f);
                 rx -= bw;
                 L->btn[b] = (Rect){ rx, (L->bar.h - bh) / 2, bw, bh };
                 rx -= px(4.0f);
@@ -2025,7 +2084,9 @@ static void draw_editor(void)
     const Layout *L = &s_L;
     const PsxUiFace *ft = face_title(), *fb = face_body(), *fs = face_small();
     psx_ui_round_rect(&s_cv, L->ed.x, L->ed.y, L->ed.w, L->ed.h, (float)px(U_R_PANEL), COL_PANEL);
-    const int ex = L->ed.x + px(U_PAD), right = L->ed.x + L->ed.w - px(U_PAD);
+    const int ex = L->ed.x + px(U_PAD);
+    const int panel_right = L->ed.x + L->ed.w - px(U_PAD);
+    const int right = L->form_right ? L->form_right : panel_right;
     /* header */
     {
         char h[96]; snprintf(h, sizeof h, "%sCard %03d", psx_card_packs_is_dev() ? "[Card Effects] " : "", s_sel);
@@ -2048,14 +2109,14 @@ static void draw_editor(void)
     /* previews */
     if (s_tab == 0) {
     psx_ui_round_rect(&s_cv, L->art.x - 2, L->art.y - 2, L->art.w + 4, L->art.h + 4, (float)px(U_R_BOX), COL_EDIT_BG);
-    if (s_art_ok) psx_ui_blit_scaled(&s_cv, L->art.x, L->art.y, L->art.w, L->art.h, (float)px(4.0f), s_art_argb, 102, 96);
+    if (s_art_ok) blit_integer_preview(&s_cv, &L->art, s_art_argb, 102, 96);
     psx_ui_round_rect(&s_cv, L->thumb.x - 2, L->thumb.y - 2, L->thumb.w + 4, L->thumb.h + 4, (float)px(4.0f), COL_EDIT_BG);
-    if (s_thumb_ok) psx_ui_blit_scaled(&s_cv, L->thumb.x, L->thumb.y, L->thumb.w, L->thumb.h, (float)px(3.0f), s_thumb_argb, 40, 32);
+    if (s_thumb_ok) blit_integer_preview(&s_cv, &L->thumb, s_thumb_argb, 40, 32);
     psx_ui_text(&s_cv, L->thumb.x, L->thumb.y + L->thumb.h + px(4.0f) + psx_ui_font_ascent(fs), "duel", COL_DIM, fs);
     {
         const int lh = psx_ui_font_line_height(fs);
         int y = L->info_y;
-        const int iw = right - L->info_x;
+        const int iw = panel_right - L->info_x;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_art ? "Face art: yours" : "Face art: stock", s_edit.has_art ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_thumb ? "Duel thumbnail: yours" : "Duel thumbnail: stock", s_edit.has_thumb ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours (96x14)" : "Title strip: from the name (96x14)", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
@@ -2110,9 +2171,9 @@ static void draw_editor(void)
             int lines = 0, longest = 0, wide = 0;
             const int ok = psx_card_packs_desc_layout(txt, &lines, &longest, &wide);
             char w[160];
-            if (wide) snprintf(w, sizeof w, "Line %d is %d characters; the card shows 20 per line", wide, longest);
+            if (wide) snprintf(w, sizeof w, "Line %d is %d characters; the card shows %d per line", wide, longest, PSX_CARD_PACK_DESC_COLS);
             else if (lines > PSX_CARD_PACK_DESC_LINES) snprintf(w, sizeof w, "%d lines; the card shows %d", lines, PSX_CARD_PACK_DESC_LINES);
-            else snprintf(w, sizeof w, "%d of %d lines, longest %d of 20 characters", lines, PSX_CARD_PACK_DESC_LINES, longest);
+            else snprintf(w, sizeof w, "%d of %d lines, longest %d of %d characters", lines, PSX_CARD_PACK_DESC_LINES, longest, PSX_CARD_PACK_DESC_COLS);
             psx_ui_text_clip(&s_cv, v->x, v->y + v->h + px(2.0f) + psx_ui_font_ascent(fs), w, ok ? COL_DIM : COL_WARN, fs, right - v->x);
         }
         if (field_is_enum(f) && !no_steppers(f)) {
@@ -2145,8 +2206,12 @@ static void draw_editor(void)
                 if (f == F_SELL_PRICE) {
                     const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
                     int derived = psx_card_packs_derive_sell_price(purchase);
+                    int effective = psx_card_shop_effective_sell_price(s_sel, NULL);
                     if (derived < 0) derived = 0;
-                    snprintf(s2, sizeof s2, "override; derived: %d", derived);
+                    if (effective >= 0 && effective < s_edit.sell_price)
+                        snprintf(s2, sizeof s2, "override; shop cap: %d", effective);
+                    else
+                        snprintf(s2, sizeof s2, "override; derived: %d", derived);
                 } else
                     snprintf(s2, sizeof s2, "stock: %s", st);
                 const int sx = c->x + c->w + px(8.0f);
@@ -2155,9 +2220,16 @@ static void draw_editor(void)
             }
         } else if (f == F_SELL_PRICE) {
             const int sx = v->x + v->w + px(8.0f);
+            char note[96];
+            const int purchase = s_edit.price >= 0 ? s_edit.price : s_stock.price;
+            const int derived = psx_card_packs_derive_sell_price(purchase);
+            const int effective = psx_card_shop_effective_sell_price(s_sel, NULL);
+            if (effective >= 0 && effective < derived)
+                snprintf(note, sizeof note, "derived; shop cap: %d", effective);
+            else
+                snprintf(note, sizeof note, "derived: floor(Price / 8)");
             psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs),
-                             "derived: floor(Price / 8)", COL_DIM, fs,
-                             right - sx);
+                             note, COL_DIM, fs, right - sx);
         }
     }
     if (L->fx_note_y) {
@@ -2184,7 +2256,7 @@ static void draw_editor(void)
     }
     for (int b = 0; b < B_COUNT; b++)
         if (L->btn[b].w) draw_button_face(&L->btn[b], b == B_DEV ? s_dev_label : BTN_LABEL[b], (b == B_SAVE && s_changed) || (b == B_DEV && psx_card_packs_is_dev()), s_hover_btn == b,
-                         b >= B_BAR_FIRST ? face_small() : face_bold());
+                         face_bold());
     /* status + help, wrapped to the panel */
     {
         int y = L->status_y;
@@ -3023,17 +3095,21 @@ int psx_card_manager_state_json(char *out, unsigned cap)
 {
     static char t[F_COUNT][FTEXT];
     for (int f = 0; f < F_COUNT; f++) field_text(f, 0, t[f], sizeof t[f]);
+    int effective_source = 0;
+    const int effective_sell = psx_card_shop_effective_sell_price(s_sel, &effective_source);
     if (s_win) layout_compute();
     unsigned n = (unsigned)snprintf(out, cap,
         "\"open\":%d,\"card\":%d,\"edited\":%d,\"changed\":%d,\"focus\":%d,\"buf\":\"%s\","
         "\"search\":\"%s\",\"rows\":%d,\"scroll\":%d,\"w\":%d,\"h\":%d,\"unit\":%.2f,\"msg\":\"%s\","
         "\"name\":\"%s\",\"desc\":\"%s\",\"atk\":\"%s\",\"def\":\"%s\",\"star1\":\"%s\",\"star2\":\"%s\",\"type\":\"%s\","
-        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"sell_price\":\"%s\",\"sell_price_source\":\"%s\",\"password\":\"%s\","
+        "\"level\":\"%s\",\"attr\":\"%s\",\"price\":\"%s\",\"sell_price\":\"%s\",\"sell_price_source\":\"%s\","
+        "\"effective_sell_price\":%d,\"effective_sell_source\":%d,\"password\":\"%s\","
         "\"color\":\"%s\",\"name_color\":\"%s\",\"effect\":\"%s\",\"amount\":\"%s\",\"target\":\"%s\",\"terrain\":\"%s\",\"ritual\":\"%s\",\"equip_bonus\":\"%s\",\"equips\":\"%.200s\",\"boost\":\"%.200s\",\"field_targets\":\"%.200s\",\"trap_max\":\"%s\","
         "\"art\":%d,\"thumb\":%d,\"title\":%d,\"presents\":%u,\"modal\":%d,\"field_picker\":{\"open\":%d,\"selected\":%d,\"matches\":%d,\"scroll\":%d,\"filter\":\"%s\"},\"geom\":{",
         s_win != NULL, s_sel, s_has_pack, s_changed, s_focus, s_buf, s_search, s_order_n, s_scroll,
         s_w, s_h, s_u, s_msg, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
-        field_is_set(F_SELL_PRICE) ? "override" : "derived", t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20], t[21], t[22], t[23],
+        field_is_set(F_SELL_PRICE) ? "override" : "derived",
+        effective_sell, effective_source, t[11], t[12], t[13], t[14], t[15], t[16], t[17], t[18], t[19], t[20], t[21], t[22], t[23],
         s_edit.has_art, s_edit.has_thumb, s_edit.has_title, s_present_count, s_modal,
         s_target_open, s_target_selected_n, s_target_n, s_target_scroll, s_target_search);
     {

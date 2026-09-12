@@ -58,6 +58,7 @@
 #include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_fusion_db.h"
+#include "psx_ygo_netplay.h"
 
 /* ---- the selection the player is building ---------------------------------
  *
@@ -123,7 +124,12 @@ static uint32_t rec_addr(int slot)
 /* Can the player act on their hand at all right now? */
 static int players_turn(void)
 {
-    return psx_mod_read_byte(PSX_FUSION_TURN) == 0u;
+    const int side = psx_mod_read_byte(PSX_FUSION_TURN) & 1u;
+    const int local = psx_ygo_netplay_local_slot();
+    /* Stock/offline play is always side 0. In netplay each peer may own
+     * either side, so the old ==0 test disabled the guest's helper precisely
+     * when side 1 became playable. */
+    return local >= 0 ? side == local : side == 0;
 }
 
 /* Is this hand position currently a pickable card? */

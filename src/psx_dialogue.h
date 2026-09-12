@@ -42,6 +42,9 @@ int  psx_dialogue_count(void);
 int  psx_dialogue_run(int index, PsxDialogueRun *out);
 /* How many runs are translated right now. */
 int  psx_dialogue_translated_count(void);
+/* Aggregate encoded story-bank usage after wrapping/repacking. `room` is the
+ * hard u16-addressable capacity, so room-used is the translation headroom. */
+void psx_dialogue_capacity(unsigned *used, unsigned *room);
 /* Bumps on every apply, so a viewer can redraw. */
 unsigned psx_dialogue_generation(void);
 

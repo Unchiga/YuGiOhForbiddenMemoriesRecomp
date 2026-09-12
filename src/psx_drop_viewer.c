@@ -599,7 +599,7 @@ static void layout_compute(void)
     L->btn_random = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Restore all drops") + px(18.0f);
     L->btn_restore = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
-    w = tw(fb, "Export" S_ELLIP) + px(18.0f);
+    w = tw(fb, "Export all" S_ELLIP) + px(18.0f);
     L->btn_export = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
     w = tw(fb, "Import" S_ELLIP) + px(18.0f);
     L->btn_import = (Rect){ rx - w, by, w, bh }; rx -= w + px(4.0f);
@@ -1401,7 +1401,7 @@ static void draw_bar(void)
      * drag-and-drop. */
     draw_button(&L->btn_save, "Save", psx_drop_edits_dirty() && !psx_drop_edits_empty_count(), s_hover_btn == 2);
     draw_button(&L->btn_import, "Import" S_ELLIP, 0, s_hover_btn == 3);
-    draw_button(&L->btn_export, "Export" S_ELLIP, 0, s_hover_btn == 4);
+    draw_button(&L->btn_export, "Export all" S_ELLIP, 0, s_hover_btn == 4);
     draw_button(&L->btn_random, "Randomize", randomize_armed(), s_hover_btn == 6);
     draw_button(&L->btn_restore, "Restore all drops", restore_armed(), s_hover_btn == 7);
     if (s_view == VIEW_DUELISTS) draw_button(&L->btn_third, "Clear" S_ELLIP, clear_armed(-1, 0), s_hover_btn == 5);
@@ -2081,7 +2081,7 @@ static void finish_pick(int kind, const char *path)
 {
     char msg[160];
     if (kind == 1) {
-        (void)psx_drop_edits_export_file(path, msg, sizeof msg);
+        (void)psx_drop_edits_export_all_file(path, msg, sizeof msg);
     } else {
         if (psx_drop_edits_import_file(path, msg, sizeof msg)) invalidate();
     }
@@ -3088,6 +3088,13 @@ void psx_drop_viewer_request_open(int open)
 int psx_drop_viewer_export(const char *path, char *msg, unsigned cap)
 {
     const int ok = psx_drop_edits_export_file(path, msg, cap);
+    if (s_win) { say(msg); }
+    return ok;
+}
+
+int psx_drop_viewer_export_all(const char *path, char *msg, unsigned cap)
+{
+    const int ok = psx_drop_edits_export_all_file(path, msg, cap);
     if (s_win) { say(msg); }
     return ok;
 }

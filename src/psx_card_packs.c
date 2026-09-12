@@ -3,7 +3,7 @@
  * PLAYER FILES  (<player-data>/cards/<id>/, id = 1..722)
  *     card.ini     name = Blue-eyes Ultimate Dragon
  *                  description = A delicate elf that|lacks in offense|...
- *                                ("|" breaks a line; no "|" = wrapped at 20)
+ *                                ("|" breaks a line; no "|" = wrapped at 21)
  *                  attack = 4500          defense = 3800     (0..5110, x10)
  *                  star1 = Sun            star2 = Mars       (name or 1..10)
  *                  type = Dragon                             (name or 0..23)
@@ -187,7 +187,7 @@ static int desc_break(const char *p)
 
 /* One source of truth for validation, preview and encoding. Explicit lines
  * never wrap: silently clipping them was the original corruption bug. Text
- * without breaks uses the game's greedy 20-column word wrap, splitting a
+ * without breaks uses the game's greedy 21-column word wrap, splitting a
  * long word at the boundary. */
 static int desc_plan(const char *text, uint8_t *out, int cap,
                      int *line_count, int *longest, int *first_wide,
