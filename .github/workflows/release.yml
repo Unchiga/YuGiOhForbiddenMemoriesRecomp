@@ -552,6 +552,18 @@ jobs:
           # Lean zip (no embedded toolchain/). RetComM / wizard download
           # cmake-clang-v1; pass --embed-toolchain only for offline-first packs.
           scripts/package_setup_release.sh build-ci "${{ matrix.zip_tag }}" build-recompiler
+          mapfile -t PACKAGES < <(compgen -G "dist/ygofm-*-${{ matrix.zip_tag }}.zip")
+          if [[ "${#PACKAGES[@]}" -ne 1 ]]; then
+            echo "::error::expected one ${{ matrix.zip_tag }} release zip, found ${#PACKAGES[@]}"
+            exit 1
+          fi
+          # The GitHub Release must contain the install tree directly. Reject
+          # an accidentally re-wrapped package before upload (zip-in-a-zip).
+          if unzip -Z1 "${PACKAGES[0]}" | grep -Eiq '\.zip$'; then
+            echo "::error::${PACKAGES[0]} contains a nested zip"
+            unzip -Z1 "${PACKAGES[0]}" | grep -Ei '\.zip$'
+            exit 1
+          fi
           ls -la dist/
 
       # Two artifacts. GitHub zips whatever a job uploads, so the artifact
