@@ -552,8 +552,8 @@ jobs:
           # Lean zip (no embedded toolchain/). RetComM / wizard download
           # cmake-clang-v1; pass --embed-toolchain only for offline-first packs.
           scripts/package_setup_release.sh build-ci "${{ matrix.zip_tag }}" build-recompiler
-          mapfile -t PACKAGES < <(compgen -G "dist/ygofm-*-${{ matrix.zip_tag }}.zip")
-          if [[ "${#PACKAGES[@]}" -ne 1 ]]; then
+          PACKAGES=(dist/ygofm-*-${{ matrix.zip_tag }}.zip)
+          if [[ "${#PACKAGES[@]}" -ne 1 || ! -f "${PACKAGES[0]}" ]]; then
             echo "::error::expected one ${{ matrix.zip_tag }} release zip, found ${#PACKAGES[@]}"
             exit 1
           fi
