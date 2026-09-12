@@ -1,860 +1,207 @@
 # Yu-Gi-Oh! Forbidden Memories Recompiled
 
-A static recompilation of **Yu-Gi-Oh! Forbidden Memories** (USA, SLUS-01411).
-The game's MIPS code is translated to C ahead of time and compiled into a native
-executable, not interpreted by an emulator.
+A static recompilation of **Yu-Gi-Oh! Forbidden Memories** (USA,
+SLUS-01411). The game's MIPS code is translated to C ahead of time and built
+as a native executable instead of being interpreted by an emulator.
 
-![A duel in progress, with the overlay menu bar across the top of the window and the duel-rank meter reading S beside the FIELD box.](media/duel.png)
-
-*A duel running natively. The menu bar and the duel-rank meter beside the FIELD
-box are this project's, drawn in the game's own art.*
-
-On top sits a set of quality-of-life features: a live duel-rank meter, a fusion
-assistant, a card-drop multiplier, the all-in-one FM Editor, a full Card Shop,
-netplay, a cheat menu, and MOD packages that export and import a complete mod
-as one file to share. All gameplay options are toggleable at runtime.
+![A duel running natively with the project's menu bar and live duel-rank meter.](media/duel.png)
 
 Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
-> **You bring your own disc.** Nothing in this repository, and nothing in the
-> download, contains any of the game's code or data. The screenshot above is
-> just that, a screenshot. The C is generated on your machine, from your copy,
-> the first time you run it.
+> **Bring your own disc.** Neither this repository nor its downloads contain
+> the game's code or data. Your copy is verified and recompiled locally on the
+> first run.
 
 | | |
 |---|---|
-| Serial | SLUS-01411 (USA / NTSC-U) |
-| Players | 2 |
-| Publisher | Konami, 1999 |
-| BIOS | OpenBIOS, bundled. Nothing to supply |
-
----
+| Supported game | SLUS-01411 (USA / NTSC-U) |
+| Players | 1-2, including netplay |
+| BIOS | OpenBIOS, bundled |
 
 ## Version 0.6.0
 
-**0.6.0 is the FM Editor + netplay update.** Existing saves, save states and
-settings carry over when the new release is extracted over an existing install.
+**The FM Editor + netplay update.** Existing saves, save states and settings
+carry over when you extract it over an existing install.
 
-- One resizable **FM Editor** now owns Cards, Drop Tables, Fusions, Dialogue and
-  CPU duelists, including every card effect and all 117 drop tables.
-- The Card Shop now supports selling with bulk selection, a review screen and
-  prices protected against direct-card and pack resale exploits.
-- Netplay has more accurate hidden-card covers, and the fusion assistant now
-  follows the local player when playing as player two.
-- Monster effect queues, custom StarChip result screens and accelerated
-  high-resolution rendering have all been hardened.
+- One resizable **FM Editor** for Cards, Drop Tables, Fusions, Dialogue and CPU
+  duelists
+- Card Shop selling, bulk controls, card viewing and protected buy/sell prices
+- More accurate netplay privacy and working player-two fusion hints
+- Complete monster-effect queues and fixes for attached Dark Hole and Dragon
+  Capture Jar effects
+- Lighter 2x-4x play at high resolutions with native-rate rendering
 
-See [Release notes](RELEASE_NOTES.md#060) for the exhaustive change list.
+See the [full 0.6.0 release notes](RELEASE_NOTES.md#060) for every change and
+fix.
 
-## What this adds
+## Highlights
 
-Gameplay options live in the overlay menu on **`F10`** and take effect
-immediately. The FM Editor opens from `VIEW → FM EDITOR`; netplay is launched
-from the pre-game launcher. No patched save is required.
+### FM Editor (`F10 → VIEW → FM EDITOR`)
 
-### FM Editor (`VIEW → FM EDITOR`)
+The five persistent tabs cover the whole modding workflow in one resizable
+window:
 
-Cards, Drop Tables, Fusions, Dialogue and CPU duelists now live as persistent
-tabs in **one resizable editor**. Move freely between them while authoring a
-mod; each tab keeps its place, and the interface adapts to both compact windows
-and high-resolution displays.
-
-Together the five tabs cover card data, artwork and effects; all 117 drop
-tables, Smart Drops and StarChip rules; fusion recipes; campaign dialogue; and
-CPU decks, AI, names, portraits and Free Duel progress. `MODS → EXPORT MOD
-PACKAGE…` bundles the complete project into one shareable `.ygomods` file, and
-the matching import validates a package before replacing the current mod.
-
-### Duel rank meter (`VIEW → DUEL RANK`)
-
-The game grades every duel you win but only tells you afterwards. This puts the
-grade on screen **while you play**, in the game's own HUD sprites.
-
-| Mode | What you get |
+| Tab | What it edits |
 |---|---|
-| `OFF` | stock behaviour |
-| `IN GAME` | the game's POW/TEC badge and rank letter, beside the FIELD box |
-| `IN GAME + SCORE` | the same, plus the raw 0-99 score |
-| `OVERLAY TEXT` | plain text in the corner, never covered by a card view |
+| Cards | Names, descriptions, stats, passwords/prices, artwork, colors, effects, triggers, equips, fields and rituals |
+| Drop Tables | All 117 rank tables, guaranteed drops, Smart Drops and conditional StarChip rewards |
+| Fusions | Every recipe in both directions, including equip pairings |
+| Dialogue | All campaign dialogue, with automatic wrapping and capacity checks |
+| CPU | Deck pools, AI values, names, portraits and Free Duel records |
 
-### Fusion assistant (`VIEW → FUSION HINT`)
+![The FM Editor Cards tab editing Dark Magician.](media/fm-editor-cards-dark-magician.png)
 
-Forbidden Memories has thousands of fusions and teaches you none of them. This
-reads your hand against the game's real tables in memory, not a copied list, so
-its answers are the game's answers.
+Edits are applied live and stored beside your saves; your disc and save data
+are not patched. Card descriptions support the game's full eight-line,
+21-character layout without overflowing adjacent data.
 
-| Mode | What you get |
-|---|---|
-| `OFF` | stock behaviour |
-| `NUMBERS` | pick order marked on the cards themselves |
-| `NUMBERS + INFO` | pick order plus the name of the card it produces |
-| `HINT ONLY` | just `FUSION AVAILABLE`: no cards marked, no card named |
+### Card Shop and passwords (`F10 → MODS → CARD SHOP`)
 
-`VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
-
-### Fusion editor (`VIEW → FM EDITOR → FUSIONS`)
-
-> **Experimental, expect bugs.** Much newer than the rest of this list. It
-> cannot hurt your save: every change is a file beside your saves, and `Restore
-> stock` undoes the lot.
-
-The assistant above answers "what can this hand make?" mid-duel. This answers
-the other question, **every fusion in the game, both ways round**, and lets
-you change any of them.
-
-![The Fusion Manager: the card list on the left, FUSES WITH and MADE FROM beside it](docs/screenshots/fusion-manager.png)
-
-**Fuses with** is every partner and what the pair makes, equips included with
-their +500 / +1000 already in the numbers; **Made from** is every pair that
-makes it. Click a name to follow it, `Backspace` to go back. `Recipes` is all
-25 146 as one sortable list.
-
-**Right-click a row** to change, delete or add a fusion, picking the card off a
-searchable list: type `dragon`, take *Blue-eyes Ultimate Dragon*, never having
-to know it is card 380. The orange rows are **equip pairings**, and they are
-editable here too: right-click one to take it away, right-click an equip card
-for `Add a monster it fits…`, or a monster for `Add an equip that fits it…`.
-An equip's list is kept as `equips = …` in its own `cards/<id>/card.ini`
-(the same list the Card Manager edits), so it travels with your cards and a
-MOD package, and `Equip list back to the disc's own` undoes it. The window
-shows the pairings the game actually answers, Card Manager edits included. `Delete all…` empties the table for designing a set from
-scratch; `Restore stock…` (or `Ctrl+Z`) puts the game's own back, keeping a copy
-in `fusion_edits_backup.txt`. `Export…` / `Import…` move a recipe list as plain
-text (a `card1,card2,result` CSV works), and changes save to `fusion_edits.txt`
-as you make them.
-
-**MODS → FUSION EDITS** replaces the fusion table's **disc sectors**, so the
-game's own loader brings your table in and everything reads it, the AI planners
-included; a duel already running is patched in memory too. The table is read off
-the disc rather than duel RAM, so the editor works from boot with no duel. It
-also shows the fifteen *glitch fusions* the packed format produces by accident
-and the game really performs. The format holds 65 535 bytes and stock uses 65 002,
-so there is room for about a hundred new recipes; an edit that would not fit is
-refused.
-
-### Card drops (`MODS → CARD DROPS`)
-
-Stock, a won duel awards exactly one card. This makes it **0-99**. Zero is an
-intentional no-normal-card result, not an empty-table roll: it consumes the
-one stock carrier roll but skips its award safely. A separate eligible
-guaranteed campaign reward still fires once. It comes with
-a results screen stock never had: the cards you won across three pages you flip
-with **D-pad Left/Right**, with the game's own yellow **New!** tag on anything
-you didn't already own.
-
-### Drop missing cards (`MODS → DROP MISSING CARDS`)
-
-**82 of the game's 722 cards are dropped by nobody**, both of Exodia's legs
-among them, which is why the set cannot be completed in the stock game. This
-gives every one a source by rewriting the weights the duel loads into memory;
-your disc is untouched. Placement is yours, in **`drop_missing_cards.ini`**:
-
-```ini
-[Weevil Underwood]
-52  =  30,  20,   0   ; Hercules Beetle
-278 =  30,  20,   0   ; Petit Moth
-```
-
-The three numbers are the S/A POW, B/C/D and S/A TEC rates, out of 2048. 20 is
-about 1%. Each band totals 2048, so what you add comes off that duelist's normal
-drops in proportion. Delete the file for the defaults back.
-
-### Library placeholders (`MODS → LIBRARY PLACEHOLDERS`)
-
-The LIBRARY knows three states per card: never met, **seen** but not owned (a
-fusion you watched resolve, drawn dim), and owned. This row makes every card
-readable while it is on: all 722 show their picture, name, stars, guardian
-stars, ATK/DEF, text and password, and the figure at the top counts **the
-cards you actually own** instead of the ones you have seen.
-
-It gives you nothing. Your trunk is not touched, so a card you looked up here
-is still not yours and cannot go in a deck. Nothing is written to your save
-either: the marks exist only while the LIBRARY is on screen, which is the one
-screen with no `SAVE` on it, and the row puts your own list back bit for bit
-when you leave or turn it off.
-
-### Scripted story drops (in the Drop Table Manager)
-
-Give a duelist a card they are **guaranteed to drop when the campaign beats
-them**. Right-click a row in the Drop Table Manager to set or clear one, and
-pick whether it comes on the **first** campaign win only or on **every** one.
-A stock install has none, so a duelist with no card set is the off switch.
-
-For a nonzero Card Drops count, the scripted card is position one of the
-configured total and the remaining positions use the selected normal rank
-table. At Card Drops zero it is the one separate award. This applies only in
-the campaign - Free Duel is untouched. Pairs are kept in
-`drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
-and the bulk export shares them.
-
-### Drop Table editor (`VIEW → FM EDITOR → DROP TABLES`)
-
-![The Drop Table Manager](docs/screenshots/drop-table-manager.png)
-
-The Drop Tables tab knows every card and every duelist's drop table, and **you
-can rewrite any duelist's drops and the game rolls what you wrote.** Leave the
-resizable FM Editor open on another monitor while you play, or switch between
-its tabs as you build the rest of a mod.
-
-| View | What you get |
-|---|---|
-| `By card` | all 722 cards (id, name, type, ATK, DEF, how many tables drop it), sortable on any column, with every duelist that drops the selected one, the rank band needed, and the chance |
-| `By duelist` | all 39 duelists, with everything they drop, the band, and the weight both raw and as a percentage |
-
-Type to search, click a heading to sort, click a row on the right to cross into
-the other view. Weights are out of 2048, which is what lets one read as a
-percentage.
-
-**Editing.** Click a weight and type a new one; click the rank cell to move a
-drop between bands; right-click for add, move and remove; or **drag a card from
-the left list onto a duelist**. Every band still totals exactly 2048, so what
-you add comes off that duelist's other drops in proportion, and an edit that
-cannot balance is refused rather than fudged.
-
-`Smart drops` is an authoring toggle here, saved and shared with the tables.
-For **every normal reward** it excludes weighted cards already owned three
-times across deck and trunk, including cards earned earlier in the same duel,
-then preserves the eligible cards' relative probabilities. If every weighted
-card is full, that reward is skipped instead of retrying forever or giving a
-fourth copy. Guaranteed story rewards are separate from this filter. The saved
-offline choice remains intact but has no effect during stock netplay.
-
-`Starchip rewards...` opens an ordered, first-match-wins rule editor. A rule
-can match campaign or Free Duel, a stable opponent ID, win or loss, and rank,
-with `Any` available for every condition. With no matching rule the disc's
-exact reward remains in charge. Authored amounts are 0 through 999999, add
-safely up to the save's 999999 cap, and use a compact results overlay that can
-show all six digits. Reordering makes overlaps explicit; the displayed
-opponent label follows CPU renames while the saved condition remains numeric.
-Creating and loading a savestate during the results screen preserves the
-already-applied decision, so a custom reward cannot be added twice.
-
-**Nothing is written until `Save`**, which persists your table as
-`drop_table_edits.ini` (hand-editable); `Defaults` clears a duelist back to
-stock. `Randomize` rebuilds every duelist's three bands from stock: each band
-keeps its number of drops, every monster slot gets a random monster from the
-whole game, the magic, trap, equip and ritual drops keep their card, and every
-slot gets a fresh weight that still totals 2048. It asks twice, since it
-replaces every duelist's edits at once, and like any edit it is not written
-until `Save`. `Export all…` writes all 39 duelists and all 117 complete rank
-tables as editable `pow_table`, `bcd_table` and `tec_table` lists. `Import…`
-loads that file back - an import is kept straight away, so a table someone sends you
-is live in the game and still there next launch. With `DROP MISSING CARDS` on, the manager shows and
-edits the table you will actually roll against.
-
-Card names and ATK/DEF come from the running game; the drop tables are baked
-from your disc when you build. Duelist portraits are Konami art and, like
-everything here, **never shipped**. The manager reads them off your own disc.
-
-### CPU editor (`VIEW → FM EDITOR → CPU`)
-
-Every opponent, and the four things that make them: their portrait, their
-`WIN`/`LOSS` record, the pool their deck is drawn from, and the nine bytes the
-duel AI reads about them.
-
-**Decks.** A duelist does not have a deck, they have a **pool** of 722 weights
-out of 2048, and forty cards are drawn from it before each duel. `Decks` lists
-that pool heaviest first; click a weight to type a new one and the rest is
-rescaled so the total stays 2048, exactly as the Drop Table Manager does it.
-Right-click a card to drop it from the pool. The game still deals **at most
-three copies of any one card**, so a big weight buys frequency, not a
-solitaire deck.
-
-Turn on `All cards` to see all 722 beside the pool, with `0` on the ones this
-duelist cannot draw: type a weight on one of those, or right-click it, and it
-joins the deck. Right-click anything for the rest - remove a card, put the
-deck, the AI or both back to stock, clear a record.
-
-**AI.** `gDuel_aOpponentData` gives each duelist nine bytes. The AI is a
-bytecode VM whose script can be disassembled, and five of the bytes have a
-job we can read off it:
-
-| | |
-|---|---|
-| `Hand size` | how many cards this opponent plays with; 5 early, 20 at the end |
-| `Life point line` | x100 and compared against a life point total, so 10 = 1000 LP |
-| `Fusion deck gate` | compared against the cards left in the AI's deck just before it looks for a fusion |
-| `Combo width` | handed to the best-combo search |
-| `Fusion depth` | minus one, how far the fusion evaluator looks |
-
-The rest are editable but not understood, so the editor leaves them unnamed
-and shows the disc's value beside yours for every byte.
-
-**Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
-the ones `FREE DUEL` shows. Click either and type.
-
-**Name.** Click the name on the title line (or right-click the duelist and
-`Rename…`) and type what the `FREE DUEL` grid should call them, up to 20
-characters from the game's own font (letters, digits and a little
-punctuation, no accents). Enter keeps it, an empty box puts the disc's name
-back, and the grid shows the new name at once. CPU-aware authoring and status
-surfaces—including Drop Tables, guaranteed rewards, Drop Missing Cards and
-starchip rules—update too; serialized conditions continue to use the stable
-numeric opponent ID. The ini keeps the disc's name as the section header so a
-renamed duelist can still be found.
-
-**Portraits.** The header above the deck shows the portrait large, with
-`Change portrait…`, `Stock portrait` and `Rename…` under it (the portrait and
-the name are clickable too): any PNG, JPG or BMP becomes their 48x48 tile,
-scaled and quantised to the 64 colours the tile holds, so a small square
-picture looks best, and the game draws it on the `FREE DUEL` grid. Your PNG is kept in
-`duelists/<id>/portrait.png`, so it comes back at the next launch and can be
-replaced by hand; `Portrait back to stock` removes it.
-
-Deck, AI and name edits are kept in `cpu_manager.ini` (hand-editable) and
-applied the moment they change: the AI table and the name are written in
-memory (the name is an entry in the same string table the card names use),
-and the deck and the portrait go back to the game through sector overrides
-of that duelist's disc record and portrait tile, so the game loads them with
-its own loader. Nothing on your disc is touched.
-
-A deck pool listed in the ini **replaces** the duelist's: a card that is not in
-the list is not in the pool. `Back to stock` puts one duelist's deck, AI, name and portrait back. `Export…` writes the ini, or,
-once any portrait is replaced, a `.ygoduelists` file (a zip, like
-`.ygocards`) with the ini and the portrait PNGs inside, so a set travels
-whole; `Import…` takes either, is kept straight away and replaces what was
-there, overrides and portraits included.
-
-### Free Duel completion
-
-The upper-right of the `FREE DUEL` heading shows **owned / obtainable** for
-the selected unlocked opponent. Obtainable is the unique union of every
-nonzero card in that opponent's three effective rank bands after Drop Missing
-Cards and saved Drop Table edits; owned means at least one copy exists across
-the live deck and trunk. Forbidden Memories does not record which opponent
-originally awarded a card, so this is collection progress against the current
-table rather than drop provenance.
-
-When every obtainable card is owned, the supplied eight-frame glow animates
-over that opponent's portrait. Empty effective tables show `0/0` and are never
-marked complete. The fraction, scrolling portrait positions, unlock state and
-animation are present-only, and the whole completion overlay is disabled in
-stock netplay.
-
-### Card editor (`VIEW → FM EDITOR → CARDS`)
-
-Card edits live in `cards/`, never in your save, and `Restore stock` puts an
-individual card back.
-
-Change any of the 722 cards: **name, description, face art, duel thumbnail, ATK,
-DEF, both Guardian Stars, type, level, attribute, password price, sell price and
-password**. The change shows up **everywhere the card is drawn**, because it is
-applied where the game reads, not where it draws.
-
-![The FM Editor Cards tab editing Dark Magician, with its card data and artwork visible.](media/fm-editor-cards-dark-magician.png)
-
-The effective eight-digit password is also shown in white at the bottom-right
-of the common full-card detail view used in duels, the Library, deck building
-and other card viewers. It appears only after the card has flipped into view
-and disappears as soon as that view starts closing, without taking one of the
-description's eight lines.
-
-Green marks your edit and the `x` puts it back; the frame row is why an effect
-monster comes out orange, and `Name color` tints the card's name wherever the
-game prints it - the library, the chest, the duel. A card with no name color
-set draws the way the game draws it.
-
-`Dev Card Effects` ships one of those colors for **228 of the 722 cards**, as
-a rarity ladder: blue for a card nobody drops, then red, orange, yellow and
-green as the best drop chance any duelist gives it improves. They are yours
-from the moment you switch the set on - change one in the manager, or delete
-the card's folder to put it back.
-
-An edited card is a folder in your player-data:
-
-```
-cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
-                        color = purple       frame (yellow, green, pink, blue, purple, orange)
-                        name_color = red     the name's text (white, yellow, blue, green, grey, orange, red)
-                        description = Text with|a line break   (| = new line; no | = wrapped at 21, 8 lines)
-                        attack = 4500        defense = 3800
-                        star1 = Sun          star2 = Mars
-                        type = Dragon        level = 12      attribute = Light
-                        price = 999999       sell_price = 500
-                        password = 12345678
-cards/<id>/art.png      any size, becomes the 102x96 / 256-color card face
-cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, the middle 80x64 of art.png when absent
-cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
-```
-
-Every key is optional and a missing one keeps the stock value. **Folders are
-watched**: edit a file or drop a new folder in and the game picks it up within
-seconds. Nothing on your disc or in your save is touched. The mod serves
-replacement disc sectors and table entries to the running game, and removing the
-folder restores stock. Titles are rasterised in the game's own style when a
-`timesbd.ttf` sits in `cards/`.
-
-#### Effects
-
-The same `card.ini` carries what a card **does**:
-
-```
-effect = damage            what a Magic card does when played (see the list)
-amount = 2000              its number: LP healed or lost, the ATK threshold,
-                           or how much the opponent's monsters lose
-target = Dragon            for effect = destroy_type
-terrain = Yami             for effect = field
-ritual = 58, 58, 58 -> 26  for effect = ritual: three materials on your field -> result
-equip_bonus = 1500         an Equip card's ATK/DEF bonus (stock 500, Megamorph 1000)
-equips = Dragon, Warrior, 5, 12   the monsters it fits: types, card ids, all or none
-                           (this REPLACES the stock list; leave it out to keep it)
-boost = Dragon +1000, Fairy -500  a field card (Forest..Yami): each type's boost
-trap_atk_max = 3000        a trap (House of Adhesive Tape..Widespread Ruin):
-                           attackers at or under this ATK are stopped
-```
-
-Effects a Magic card can take: `none`, `heal`, `damage`, `destroy_type`,
-`destroy_atk`, `raigeki`, `dark_hole`, `dragon_jar`, `stop_defense`, `flip`,
-`weaken` (a negative amount strengthens), `swords`, `cursebreaker`, `harpie`,
-`field`, `ritual`. Any Magic or Ritual card can take any of them, and the
-game's own handler runs with your number. Equip compatibility, ritual recipes,
-field boosts and trap ceilings are the game's own tables, served edited. What
-stays fixed is what is code rather than data: which cards count as traps (only
-681-686), the four scripted traps, and the granularity of heal and damage.
-
-#### Monster effects
-
-Stock monsters do nothing but fight. The **Effects** tab shows a monster's rules
-as sentences. Here is Time Wizard with the one it has in every other game:
-
-![The Card Manager's Effects tab on Time Wizard: two When/odds/do rules making up its coin flip](docs/screenshots/card-effects-time-wizard.png)
-
-Two lines and it is done. `+ Add effect` adds one, the `x` removes it, every
-list filters as you type, and `Effect text → description` writes the generated
-card text onto the card. The same rules in `card.ini`:
-
-```
-battle    = indestructible | mutual | slayer     how it fights
-on_summon = damage 1000     when it lands face-up      on_flip / on_death /
-on_attack = heal 500        when it attacks            each_turn / opp_turn too
-on_summon = 50%: raigeki; else: destroy_own_lp   branches, each rolling its odds
-bonus     = 500, 200 per ally, 500 per Lava Battleguard, 300 per hand
-immune    = traps, magic
-```
-
-A face-down monster has no effect until it is turned over. The cast effects are
-the Magic list above plus `gamble` (Time Wizard's coin) and `destroy_own` /
-`destroy_own_lp`; they run through the game's own effect engine, with the popup
-and sound the matching spell would show. A monster with any of these draws with
-the orange effect frame unless `color` says otherwise.
-
-Effects are queued rather than replacing one another: monsters with multiple
-summon or flip rules finish the complete sequence. Spell behavior attached to
-a monster uses the same guarded path, including Dark Hole and Dragon Capture
-Jar, without the crashes those combinations caused in earlier builds.
-
-#### The Card Effects mod
-
-`MODS → Card set` (or `Dev Card Effects` in the manager, the same switch)
-switches to a second card set in `mods/card_effects/cards/`: the original cards with their
-real effects adapted to Forbidden Memories. While it is on, the manager, Export
-and Import work on that set and your own `cards/` edits sit untouched. Off by
-default.
-
-#### Sharing and bulk edits
-
-`Restore all…` puts every edited card back to the disc's own after a yes (the
-folders in `cards/` go, so `Export Config` first if you want them back). With
-`Dev Card Effects` on it puts the shipped effects set back instead.
-
-`Export Config` writes every edited card (`card.ini` and PNGs) plus your
-`drop_table_edits.ini` to a single `.ygocards` file, a plain zip. `Import
-Config` shows what it holds and what it would replace, first.
-
-`Export Descriptions` writes all 722 names and descriptions to one text file,
-one block per card:
-
-```
-[3] Hitotsu-me Giant
-A one-eyed behemoth
-with thick, powerful
-arms made for
-delivering punishing
-blows.
-```
-
-Edit it in any text editor (a card shows eight lines of 21 characters) and
-`Import Descriptions` reads it back: only the cards that differ are written.
-Long descriptions use a separate safe arena, so they no longer overflow into
-adjacent game data. It shows live.
-
-### Dialogue editor (`VIEW → FM EDITOR → DIALOGUE`)
-
-Translations live in `dialogue/`, never in your save, and `Back to original`
-removes them.
-
-For translations: the campaign's dialogue (150 texts) exports to one plain text
-file and a translated file imports back at runtime, without touching the disc.
-The tab lists them with a search box, original beside current. The file is
-just words:
-
-```
-[1923]
-Hmmm...
-T'would seem I've won.
-
-Many days have passed since
-I taught you the game...
-But you've still much to learn.
-```
-
-A blank line is a page break, and nobody has to count characters: on import,
-long lines are wrapped and long pages split. The game's own codes show as `{1}`,
-`{2}`… and only need to stay in order next to the same words; `{name}` is the
-player's name. An imported file lives on as `dialogue/dialogue.txt`, and one
-that fails to parse changes nothing. That file is never deleted: `Back to
-original`, an import of a file with nothing translated in it, and a MOD
-package import all turn the previous one into
-`dialogue/dialogue.backup-<date>-<time>.txt` first.
-
-Imports are transactional across the whole file: if any changed block is
-invalid, none of the bulk changes are applied. The manager footer reports the
-encoded bank usage and remaining bytes. Translations may grow and shrink
-individual entries, but the campaign bank has about 1 KB of aggregate spare
-room in the unmodified US release. The original font contains no accented
-Latin glyphs, so UTF-8 accents are rejected with the exact unsupported
-character instead of being rendered as the wrong symbol.
-
-### Card shop (`MODS → CARD SHOP`)
-
-![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
-
-The stock shop only exchanges a password and StarChips for one direct card.
-This turns it into a complete shop: the shopkeeper's menu grows a fifth row
-that **buys card packs**, and `TRIANGLE` opens a Sell screen for your own
+Passwords appear on full card-detail views. The expanded shop supports direct
+password purchases, four types of card packs and selling cards from your
 collection.
 
-Four pack types (monster, magic, equip, trap) across four rarities, priced
-20 / 80 / 200 / 800, with **all 722 cards in the pool**. A pack deals its cards
-one at a time: **X** turns over the next slot, **TRIANGLE** opens the game's own
-card viewer. Bought cards land in your trunk marked **New!**, like a duel drop.
+![The Card Shop pack panel and its three-card results view.](docs/screenshots/card-shop.png)
 
-On the Sell screen, Left/Right changes a quantity, L1/R1 moves ten cards,
-Square selects every copy, Start or R2 selects the trunk, L2 clears the
-selection, and Triangle opens the card viewer. Nothing is sold until the
-separate review screen is confirmed. Deck cards are never included, and the
-transaction is rejected if the save changed after the review was prepared.
-The tighter layout keeps the card list, quantities and six-digit totals sharp
-without repeating labels that do not help make the decision.
+`TRIANGLE` opens Sell. Left/Right changes quantity, L1/R1 moves ten cards,
+Square selects all copies, Start or R2 selects the trunk, L2 clears the
+selection, and Triangle views a card. A review screen prevents accidental
+sales, and deck cards are never sold.
 
-Selling cannot turn either purchase route into free starchips: a card's sell
-value cannot exceed its direct password price, and is also capped at the
-cheapest pack that can yield it divided by that pack's card count. Thus every
-possible pack's combined resale is at most its purchase price. Caps are
-rounded down to a clean shop denomination (for example 266 / 66 / 26 become
-250 / 60 / 25), including custom `sell_price` values. Card Manager shows the
-effective shop cap beside an authored or derived sell value.
-
-The default monster bands put 2500+ ATK monsters in Rare or above and 3000+
-ATK monsters in Legendary, even when an imported partial shop file omits the
-generated card pins. Megamorph and Blue-eyes Ultimate Dragon are always
-Legendary; Megamorph is exclusive to the Legendary Equip pool.
-
-Prices, bands and where individual cards sit are yours. The shop writes
-**`card_shop.ini`** next to your saves and re-reads it each time you leave the
-shop and come back:
-
-```ini
-[prices]
-legendary = 800
-
-[packs]
-cards = 3          ; 1-3, the results box prints three
-
-[monster]
-legendary_atk = 2500   ; a monster lands in the highest band its ATK reaches
-
-[cards]
-Exodia the Forbidden One = legendary   ; or `rare+legendary` for both
-```
-
-### MOD packages (`MODS → IMPORT MOD PACKAGE…` / `EXPORT MOD PACKAGE…`)
-
-One file with everything. `Export MOD package…` writes a `.ygomods` file (a
-zip, like `.ygocards`) holding every manager's edits and every mod setting:
-your own edited cards and their pictures (always the `cards/` set, never the
-Dev Card Effects set, whichever is live), the drop tables, scripted story
-drops, Smart Drops choice and starchip rules, the CPU duelists' decks, AI,
-names and portraits, the fusion edits,
-the dialogue translation, the drop-missing-cards placements, the card shop's
-configuration, and a `mod_settings.ini` with the value of every `MODS`,
-`CHEATS` and `VIEW` mod row. Whatever you have not touched is left out.
-
-`Revert to Stock`, the last row: every manager's edits and every mod setting
-go back to the disc's own, saved or not. It asks twice: the first choice is
-the warning, a second within ten seconds does it. `Export MOD package…` first
-if you want any of it back.
-
-`Import MOD package…` hands each part to the manager that owns it, through
-that manager's own import, so each part replaces yours the way that
-manager's Import does and is kept straight away; the settings rows are set
-as if you had clicked them. A part the file does not carry leaves that
-manager alone. The default folder is `mod_packages` beside your saves.
-Every member is decompressed and CRC-checked before import begins. If an
-intact later section is rejected by its manager, the complete pre-import
-managed state is restored instead of leaving an earlier section half-applied.
-
-**Packages keep working across versions.** Every part is a plain-text file
-read only by its own manager; a part the file lacks, a file the game does not
-know, or a key it does not know is skipped, keys never change meaning, and the
-format number only moves when an older game would misread a file (then the
-older game refuses it and says to update). Before a release,
-`tools/package_roundtrip.py` exports, reverts, imports and exports again and
-compares every part, then imports the packages earlier versions wrote
-(`tools/fixtures/`).
-
-#### A randomizer package (`tools/randomizer.py`)
-
-`python3 tools/randomizer.py --seed 2026` builds a whole-game randomizer as one
-`.ygomods` file, from this disc's own data (it needs the debug build running
-past the boot screen, see `tools/LIVE_TESTING.md`). Every monster's ATK and
-DEF are rolled outright from 0 to 4500 (a card the game can deal into a new
-game's first deck stays under 3000), its level, type, attribute and guardian
-stars are rolled, every card gets a random frame
-color, name color, price and password; 60 % of monsters get a cast effect (a
-third of those two, on different triggers), a fifth a battle rule and maybe an
-immunity, 15 % a field bonus that can be negative, and about a third of the
-casts hurt their owner; every Magic and Ritual card gets a new effect (Ritual
-cards a real recipe half the time), every trap a new ATK ceiling, every equip
-a new bonus and a random set of monsters it fits, every field card new type
-boosts; and every card whose effect changed has its description replaced by a
-short text saying what it now does; every duelist's drop tables, deck pool, hand size,
-fusion deck gate, combo width and fusion depth are rolled; the monster +
-monster fusion results are shuffled; and the package switches on `CARD DROPS`
-at 15, `DROP MISSING CARDS` and `LIBRARY PLACEHOLDERS`. The drop tables come
-in two shapes: the default pins up to 128 random monsters over each duelist's
-stock table, taking most of every band, which every release since 0.5.5
-loads; `--drops full` rewrites the bands outright, like the `Randomize`
-button, and needs the runtime that ships with it. The CPUs still ramp:
-the later a duelist sits in the campaign, the stronger the monsters their
-pool draws from, the heavier their strongest cards weigh, and the bigger their
-hand, combo width and fusion depth. `--difficulty 2` makes that ramp steep
-from the first duelist, `--difficulty 0` flattens it. Same seed, same
-package, so a seed is enough to share a run. Import it with `MODS → IMPORT MOD PACKAGE…`, after
-exporting your own package if you want your edits back.
+Direct-card and pack resale values are capped so no purchase can be resold for
+a profit. The FM Editor shows both authored sell prices and their effective
+shop caps.
 
 ### Netplay
 
 Open **Netplay** in the pre-game launcher to host or join through the online
-lobby, on a LAN or by direct address. Each peer supplies their own matching
-game disc; the match runs one synchronized game while each player controls
-their own seat.
+lobby, LAN or a direct address. Each player supplies a matching game disc.
 
-![A netplay duel with the remote player's five-card hand hidden behind card backs and a message reading “Unchiga is choosing.”](media/netplay-card-privacy.png)
+![A netplay duel hiding the remote player's hand while “Unchiga is choosing.”](media/netplay-card-privacy.png)
 
-Hidden information is covered only for the player who must not see it. The
-opponent's hand is hidden from its first draw-slide frame, and private
-full-card views remain covered through their closing animation; ordinary
-public card views remain visible. The status message uses the remote player's
-name so waiting never looks like a frozen game.
+Opponent hands are covered from the first draw frame, and private full-card
+views remain hidden through their closing animation. Public card views stay
+visible. The fusion assistant follows the local seat, including player two,
+and never exposes the other player's hand.
 
-The fusion assistant follows the **local seat**, including player two, and is
-suppressed whenever the hand currently on screen belongs to the other player.
-Save-changing mods and the FM Editor are unavailable during a stock netplay
-session so both peers remain deterministic; offline choices stay saved for the
-next local game.
+Save-changing mods and the FM Editor are unavailable during stock netplay so
+both peers remain deterministic. Offline choices remain saved.
 
-### Widescreen (`VIEW → WIDESCREEN`, experimental)
+### Gameplay additions
 
-16:9, contributed by [yamyi](https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp/pull/1).
-The duel field renders genuinely wider; flat 2D screens stay 4:3 and are
-pillarboxed rather than stretched. Experimental: culling pop-in at the wide
-edges has not been fully checked for this title.
+Everything below is available from the `F10` menu and takes effect without
+patching the disc or restarting:
 
-### Cheats (`CHEATS`)
+| Feature | Summary |
+|---|---|
+| Duel rank | Live POW/TEC grade, optionally with the raw score |
+| Fusion assistant | Marks the best fusion order and can name the result |
+| Card drops | Awards 0-99 cards and adds a pageable results screen |
+| Drop missing cards | Gives sources to the 82 cards absent from stock drop tables |
+| Library placeholders | Reveals card information without granting ownership |
+| Free Duel completion | Shows owned/obtainable progress per opponent |
+| Card Effects set | Adds adapted effects to the original cards; off by default |
+| Widescreen | Experimental native 16:9 duel field with 4:3 menus |
+| Cheats | LP, opponent-hand visibility, StarChips, free spending and inventory controls |
 
-| Row | Range | Notes |
-|---|---|---|
-| `LIFE POINTS` | 1-9999 | 8000 is stock. Applies to both duellists |
-| `SHOW OPPONENT HAND` | on / off | their hand is drawn face-up, like yours |
-| `FORCE FACE UP` | on / off | their set cards play face-up, and stay face-up |
-| `STARCHIPS` | 0-999999 | written straight to your save |
-| `FREE SPENDING` | on / off | purchases succeed, the deduction is undone |
-| `ALL CARDS` | 1, 2 or 3 of each | fills the trunk. Apply with the chest closed |
+The runtime also provides save states (`F7`), rewind (`F8`), turbo, speed
+control and fast loading. **Native-rate rendering** keeps presentation at
+59.94 FPS while simulation and audio run at the selected accelerated speed,
+making 2x-4x play much lighter at high resolutions.
 
-Neither reveal is an overlay: they clear the actual flags, so a monster revealed
-face-up genuinely is face-up and will not flip when attacked. The first three
-rows are preferences restored on every launch; the other three write live save
-data, so they are not re-applied at startup and decline until a save is loaded.
+### MOD packages
 
-### Heals count past 8000
+`MODS → EXPORT MOD PACKAGE…` saves the complete authored mod as one shareable
+`.ygomods` file: cards and images, effects, fusions, dialogue, drops, StarChip
+rules, CPU data, portraits, Card Shop data and mod settings. Import validates
+the whole package before replacing the current layer. `Revert to Stock`
+restores every manager and setting after a two-step confirmation.
 
-Stock, a heal card stops at the LP the duel began with, so Mooyan Curry at
-8000 LP does nothing. Here a heal carries LP up to 9999, the most the counter
-shows. Both duelists.
-
-### From the runtime
-
-Also in the `F10` menu, courtesy of PSXRecomp: save states, rewind (`F8`), an
-emulation-speed multiplier, and **`GAME → FAST LOADING`**, which cuts disc loads
-to near-instant. That one ships **off**. Directly below Speed,
-**`GAME → NATIVE-RATE RENDERING`** keeps full-resolution presentation at
-59.94 FPS while accelerated simulation and audio continue at the selected
-speed. It ships **on** to avoid redundant 4K rendering and can be turned off
-when every accelerated frame is wanted.
-
----
+For a generated overhaul, `python3 tools/randomizer.py --seed 2026` creates a
+deterministic `.ygomods` package with randomized cards, effects, duelists,
+drops and fusions. Run `python3 tools/randomizer.py --help` for its difficulty
+and drop-table options.
 
 ## Controls
 
-### Controller
+Xbox, PS4 and PS5 controllers work out of the box, as does Steam Input. The
+game starts in digital-pad mode, so analog sticks map to the D-pad.
 
-**Xbox controllers work out of the box**, no setup. So do PS4 and
-PS5 pads (rumble on DualSense) and Steam Input. The game is a PS1 title, so it
-starts in **digital** pad mode and the sticks map to the d-pad.
-
-> Very old DirectInput-only pads are the exception. DirectInput is off by
-> default because enumerating it stalled startup by up to 40 seconds on some
-> machines. Set `SDL_JOYSTICK_DIRECTINPUT=1` to bring it back.
-
-### Keyboard
-
-| PlayStation | Key | | PlayStation | Key |
+| PlayStation | Keyboard | | PlayStation | Keyboard |
 |---|---|---|---|---|
-| D-pad | Arrow keys | | L1 | `Q` |
-| ✕ Cross | `X` | | R1 | `W` |
-| ○ Circle | `S` | | L2 | `E` |
-| □ Square | `Z` | | R2 | `R` |
-| △ Triangle | `A` | | L3 / R3 | `T` / `Y` |
-| Start | `Enter` | | Select | `Right Shift` |
+| D-pad | Arrow keys | | L1 / R1 | `Q` / `W` |
+| Cross | `X` | | L2 / R2 | `E` / `R` |
+| Circle | `S` | | L3 / R3 | `T` / `Y` |
+| Square | `Z` | | Start | `Enter` |
+| Triangle | `A` | | Select | `Right Shift` |
 
-Mostly you need **arrows** to move, **`X`** to confirm, **`S`** to cancel.
-
-### Hotkeys
-
-| Key | Does |
+| Key | Action |
 |---|---|
-| `F10` | Open the overlay menu, where every feature on this page lives |
-| `F7` | Save / load state |
+| `F10` | Overlay menu and FM Editor |
+| `F7` | Save/load state |
 | `F8` | Rewind |
-| `Tab` | Turbo (hold) |
+| `Tab` | Hold for turbo |
 | `Alt`+`Enter` or `Ctrl`+`F` | Fullscreen |
-| `F` | Show performance stats |
+| `F` | Performance statistics |
 | Numpad `+` / `-` | Volume |
 
-Keys live in `keybinds.ini` in the player-data folder (`Documents\My Games\Yu-Gi-Oh
-Forbidden Memories Recompiled`, or next to the executable on a portable install),
-with the accepted names at the top. The launcher's controller page edits the same file. Each input takes a second binding after a comma: `cross = X, Mouse1`.
+Bindings live in `keybinds.ini` in the player-data folder. The launcher can
+edit them, and each input accepts a second binding after a comma.
 
----
+Very old DirectInput-only controllers may require
+`SDL_JOYSTICK_DIRECTINPUT=1`; DirectInput is disabled by default because device
+enumeration can cause long startup delays on some machines.
 
 ## First run
 
-The download is a **setup host**: a small executable plus the recompiler and
-the framework source. It has no game code in it until you supply a disc.
+The release is a setup host containing the recompiler and framework source,
+not game code:
 
 1. Run `Yu_Gi_Oh_Forbidden_Memories_Recompiled.exe`.
-2. It asks for your disc image and checks it against the CRC32 this build
-   expects. A mismatch is **refused**, naming the release it needs.
-3. It downloads a compiler if you have none, translates the game to C from your
-   copy, and compiles it.
-4. It builds into `build-release/` and starts the game.
+2. Select your disc image. The required release is verified by CRC32.
+3. The setup downloads a compiler if needed, recompiles your copy and builds
+   into `build-release/`.
+4. The game launches. Later starts are immediate.
 
-Nothing needs installing first. The setup brings its own compiler and Python,
-and uses yours if you already have them.
+The first build takes a few minutes. `.cue` is preferred with its `.bin`
+beside it; `.bin`, `.img`, `.iso` and `.car` are also accepted. PAL, Japanese
+and Greatest Hits releases contain different programs and are not supported.
 
-> ### The first run takes a few minutes, let it finish
->
-> A compiler download, a whole game translated to C and a real compile happen
-> before you see anything; the console working away is not hanging. **Every run
-> after the first starts immediately.**
-
-### Which dump
-
-`.cue` is preferred, with its `.bin` beside it; `.bin`, `.img`, `.iso` and
-`.car` also work.
-
-This build is compiled from the USA release, serial **SLUS-01411**. A PAL,
-Japanese or Greatest Hits disc is a different program and cannot run here. The
-expected data-track CRC32 is recorded in `game.toml` as `disc_crc`. To repoint
-it, use `FILE → CHANGE GAME DISC`.
-
-### Command line
-
-Scripted and headless runs have no picker and must be told:
+For a scripted or headless launch:
 
 ```bash
 Yu_Gi_Oh_Forbidden_Memories_Recompiled.exe --disc "/path/to/game.cue"
 ```
 
-Also available: `--memcard-dir <path>`, `--no-launcher`.
-
----
+Also available: `--memcard-dir <path>` and `--no-launcher`.
 
 ## Building from source
 
-The framework is a submodule at `psxrecomp/`, so clone recursively:
+Clone recursively, generate the BIOS/game C from your disc, then build:
 
 ```bash
 git clone --recurse-submodules https://github.com/Unchiga/YuGiOhForbiddenMemoriesRecomp.git
-```
-
-`generate` produces **both** the recompiled BIOS and the game's C. A fresh
-clone has no BIOS backend until this runs:
-
-```bash
+cd YuGiOhForbiddenMemoriesRecomp
 python3 psxrecomp/psxrecomp_cli.py generate \
   --config game.toml --project-root . --disc /path/to/your.cue
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target psx-runtime
 ```
 
-(The setup host does exactly this for you, see [First run](#first-run).)
+On Apple Silicon, install the Xcode Command Line Tools and
+`brew install cmake ninja pkg-config sdl3`; use `-j4` on an 8 GB machine. Add
+`-DPSX_DEBUG_TOOLS=ON` for a debug build with the local inspection server.
 
-`generated/` and the baked sprite and font sources come from **your** disc; they
-are gitignored and must not be published, see [NOTICE](NOTICE). CMake must know
-where your disc is: running `generate` first is enough, failing that
-`-DYGOFM_DISC=<path>`.
-
-### macOS
-
-Builds and runs natively on Apple Silicon with the commands above. Needs the
-Xcode Command Line Tools plus `brew install cmake ninja pkg-config sdl3`. Use
-`-j4` on an 8 GB machine, as the generated C includes shards of 400k+ lines.
-
-Add `-DPSX_DEBUG_TOOLS=ON` for a debug build with the TCP inspection server on
-`127.0.0.1:4370`.
-
-### Packaging a release
-
-```bash
-cmake -S psxrecomp/recompiler -B build-recompiler -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-recompiler --target psxrecomp-game psxrecomp-bios
-cmake -S . -B build-setup -G Ninja -DCMAKE_BUILD_TYPE=Release -DPSXRECOMP_FORCE_SETUP_HOST=ON
-cmake --build build-setup --target psx-runtime
-scripts/package_setup_release.sh build-setup <artifact-tag>
-```
-
-Writes `dist/ygofm-<version>-<tag>.zip`. Needs `objdump` on `PATH`, and the
-build directory must be a **setup host** build, not the game.
-
----
-
-## Framework and symbols
-
-`psxrecomp/` is pinned to the
-[`ygofm`](https://github.com/Unchiga/psxrecomp/tree/ygofm) branch of a fork of
-[PSXRecomp](https://github.com/mstan/psxrecomp), for framework work not upstream
-yet: the disc-identity gate, registration APIs so a title owns its own debug
-commands and overlays, the hooks the manager windows run on, and a
-launcher-less setup host. All additive and intended for upstream.
-
-Symbols: `symbols.toml` → `python3 tools/sync_symbols.py` → `psx_symbols.h`
-(`PSX_FN_*`). See `psxrecomp/docs/SYMBOLS.md`.
-
----
+See [the PSXRecomp build documentation](psxrecomp/docs/BUILDING.md) for
+framework details.
 
 ## Licence and legal
 
-PolyForm Noncommercial License 1.0.0, see [LICENSE](LICENSE). Noncommercial use
-only, and it cannot be sublicensed or swapped for a permissive one, because the
-framework it builds on is offered on the same terms (Copyright © 2026 Matthew
-Stan). It grants nothing in respect of the game, which is Konami's. Use only a
-disc image you obtained legally.
+PolyForm Noncommercial License 1.0.0; see [LICENSE](LICENSE). Noncommercial use
+only. Nothing here grants rights to Konami's game, and generated game code or
+assets must not be redistributed. Read [NOTICE](NOTICE) before sharing a
+compiled build.
 
-Read [NOTICE](NOTICE) before redistributing anything, particularly before
-sharing a *compiled build*, which is not the same as sharing this repository.
+## Community
 
-## How to Help
-
-Join our newly created Discord, https://discord.gg/SR8qWG9Ve
+Join the project Discord: https://discord.gg/SR8qWG9Ve
