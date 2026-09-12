@@ -10,9 +10,9 @@ executable, not interpreted by an emulator.
 box are this project's, drawn in the game's own art.*
 
 On top sits a set of quality-of-life features: a live duel-rank meter, a fusion
-assistant, a card-drop multiplier, managers for the drop tables, the cards, the
-CPU duelists and every fusion in the game, a cheat menu, and MOD packages that
-export and import all of it as one file to share. All toggleable at runtime.
+assistant, a card-drop multiplier, the all-in-one FM Editor, a full Card Shop,
+netplay, a cheat menu, and MOD packages that export and import a complete mod
+as one file to share. All gameplay options are toggleable at runtime.
 
 Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
@@ -30,10 +30,40 @@ Built on [PSXRecomp](https://github.com/mstan/psxrecomp).
 
 ---
 
+## Version 0.6.0
+
+**0.6.0 is the FM Editor + netplay update.** Existing saves, save states and
+settings carry over when the new release is extracted over an existing install.
+
+- One resizable **FM Editor** now owns Cards, Drop Tables, Fusions, Dialogue and
+  CPU duelists, including every card effect and all 117 drop tables.
+- The Card Shop now supports selling with bulk selection, a review screen and
+  prices protected against direct-card and pack resale exploits.
+- Netplay has more accurate hidden-card covers, and the fusion assistant now
+  follows the local player when playing as player two.
+- Monster effect queues, custom StarChip result screens and accelerated
+  high-resolution rendering have all been hardened.
+
+See [Release notes](RELEASE_NOTES.md#060) for the exhaustive change list.
+
 ## What this adds
 
-Everything below lives in the overlay menu on **`F10`**, and every setting takes
-effect immediately. No restart, no patched save.
+Gameplay options live in the overlay menu on **`F10`** and take effect
+immediately. The FM Editor opens from `VIEW → FM EDITOR`; netplay is launched
+from the pre-game launcher. No patched save is required.
+
+### FM Editor (`VIEW → FM EDITOR`)
+
+Cards, Drop Tables, Fusions, Dialogue and CPU duelists now live as persistent
+tabs in **one resizable editor**. Move freely between them while authoring a
+mod; each tab keeps its place, and the interface adapts to both compact windows
+and high-resolution displays.
+
+Together the five tabs cover card data, artwork and effects; all 117 drop
+tables, Smart Drops and StarChip rules; fusion recipes; campaign dialogue; and
+CPU decks, AI, names, portraits and Free Duel progress. `MODS → EXPORT MOD
+PACKAGE…` bundles the complete project into one shareable `.ygomods` file, and
+the matching import validates a package before replacing the current mod.
 
 ### Duel rank meter (`VIEW → DUEL RANK`)
 
@@ -62,7 +92,7 @@ its answers are the game's answers.
 
 `VIEW → SUGGEST FUSION BY` chooses **ATTACK** or **DEFENSE**.
 
-### Fusion Manager (`VIEW → FUSION MANAGER`)
+### Fusion editor (`VIEW → FM EDITOR → FUSIONS`)
 
 > **Experimental, expect bugs.** Much newer than the rest of this list. It
 > cannot hurt your save: every change is a file beside your saves, and `Restore
@@ -96,7 +126,7 @@ as you make them.
 **MODS → FUSION EDITS** replaces the fusion table's **disc sectors**, so the
 game's own loader brings your table in and everything reads it, the AI planners
 included; a duel already running is patched in memory too. The table is read off
-the disc rather than duel RAM, so the window works from boot with no duel. It
+the disc rather than duel RAM, so the editor works from boot with no duel. It
 also shows the fifteen *glitch fusions* the packed format produces by accident
 and the game really performs. The format holds 65 535 bytes and stock uses 65 002,
 so there is room for about a hundred new recipes; an edit that would not fit is
@@ -157,13 +187,14 @@ the campaign - Free Duel is untouched. Pairs are kept in
 `drop_table_edits.ini` alongside your weight edits, so one `Save` keeps them
 and the bulk export shares them.
 
-### Drop Table Manager (`VIEW → DROP TABLE MANAGER`)
+### Drop Table editor (`VIEW → FM EDITOR → DROP TABLES`)
 
 ![The Drop Table Manager](docs/screenshots/drop-table-manager.png)
 
-A **separate window** you can leave open on another monitor while you play. It
-knows every card and every duelist's drop table, and **you can rewrite any
-duelist's drops and the game rolls what you wrote.**
+The Drop Tables tab knows every card and every duelist's drop table, and **you
+can rewrite any duelist's drops and the game rolls what you wrote.** Leave the
+resizable FM Editor open on another monitor while you play, or switch between
+its tabs as you build the rest of a mod.
 
 | View | What you get |
 |---|---|
@@ -215,9 +246,7 @@ Card names and ATK/DEF come from the running game; the drop tables are baked
 from your disc when you build. Duelist portraits are Konami art and, like
 everything here, **never shipped**. The manager reads them off your own disc.
 
-### CPU Manager (`VIEW → CPU MANAGER (EXPERIMENTAL)`)
-
-> **Experimental, expect bugs.** The newest window here; the menu row says so.
+### CPU editor (`VIEW → FM EDITOR → CPU`)
 
 Every opponent, and the four things that make them: their portrait, their
 `WIN`/`LOSS` record, the pool their deck is drawn from, and the nine bytes the
@@ -248,7 +277,7 @@ job we can read off it:
 | `Combo width` | handed to the best-combo search |
 | `Fusion depth` | minus one, how far the fusion evaluator looks |
 
-The rest are editable but not understood, so the window leaves them unnamed
+The rest are editable but not understood, so the editor leaves them unnamed
 and shows the disc's value beside yours for every byte.
 
 **Record.** The `WIN` and `LOSS` boxes on the title line are the save's own,
@@ -302,24 +331,23 @@ marked complete. The fraction, scrolling portrait positions, unlock state and
 animation are present-only, and the whole completion overlay is disabled in
 stock netplay.
 
-### Card Manager (`VIEW → CARD MANAGER`)
+### Card editor (`VIEW → FM EDITOR → CARDS`)
 
-> **Experimental, expect bugs.** Much newer than the rest of this list. It
-> cannot hurt your save: edits live in `cards/`, and `Restore stock` puts a card
-> back.
+Card edits live in `cards/`, never in your save, and `Restore stock` puts an
+individual card back.
 
 Change any of the 722 cards: **name, description, face art, duel thumbnail, ATK,
-DEF, both Guardian Stars, type, level, attribute, price and password**. The
-change shows up **everywhere the card is drawn**, because it is applied where
-the game reads, not where it draws.
+DEF, both Guardian Stars, type, level, attribute, password price, sell price and
+password**. The change shows up **everywhere the card is drawn**, because it is
+applied where the game reads, not where it draws.
+
+![The FM Editor Cards tab editing Dark Magician, with its card data and artwork visible.](media/fm-editor-cards-dark-magician.png)
 
 The effective eight-digit password is also shown in white at the bottom-right
 of the common full-card detail view used in duels, the Library, deck building
 and other card viewers. It appears only after the card has flipped into view
 and disappears as soon as that view starts closing, without taking one of the
-description's seven lines.
-
-![The Card Manager on Time Wizard: face art and duel thumbnail, then name, description, stats, stars, type, level, attribute, price, password and frame color](docs/screenshots/card-manager-time-wizard.png)
+description's eight lines.
 
 Green marks your edit and the `x` puts it back; the frame row is why an effect
 monster comes out orange, and `Name color` tints the card's name wherever the
@@ -342,7 +370,8 @@ cards/<id>/card.ini     name = Blue-eyes Ultimate Dragon
                         attack = 4500        defense = 3800
                         star1 = Sun          star2 = Mars
                         type = Dragon        level = 12      attribute = Light
-                        price = 999999       password = 12345678
+                        price = 999999       sell_price = 500
+                        password = 12345678
 cards/<id>/art.png      any size, becomes the 102x96 / 256-color card face
 cards/<id>/thumb.png    optional; the 40x32 / 64-color duel card, the middle 80x64 of art.png when absent
 cards/<id>/title.png    optional 96x14 title strip; rendered from `name` when absent
@@ -409,6 +438,11 @@ the Magic list above plus `gamble` (Time Wizard's coin) and `destroy_own` /
 and sound the matching spell would show. A monster with any of these draws with
 the orange effect frame unless `color` says otherwise.
 
+Effects are queued rather than replacing one another: monsters with multiple
+summon or flip rules finish the complete sequence. Spell behavior attached to
+a monster uses the same guarded path, including Dark Hole and Dragon Capture
+Jar, without the crashes those combinations caused in earlier builds.
+
 #### The Card Effects mod
 
 `MODS → Card set` (or `Dev Card Effects` in the manager, the same switch)
@@ -439,19 +473,19 @@ delivering punishing
 blows.
 ```
 
-Edit it in any editor (a card shows seven lines of twenty characters) and `Import
-Descriptions` reads it back: only the cards that differ are written. It shows
-live.
+Edit it in any text editor (a card shows eight lines of 21 characters) and
+`Import Descriptions` reads it back: only the cards that differ are written.
+Long descriptions use a separate safe arena, so they no longer overflow into
+adjacent game data. It shows live.
 
-### Dialogue Manager (`VIEW → DIALOGUE MANAGER`)
+### Dialogue editor (`VIEW → FM EDITOR → DIALOGUE`)
 
-> **Experimental, expect bugs.** Much newer than the rest of this list. It
-> cannot hurt your save: translations live in `dialogue/`, and `Back to
-> original` removes them.
+Translations live in `dialogue/`, never in your save, and `Back to original`
+removes them.
 
 For translations: the campaign's dialogue (150 texts) exports to one plain text
 file and a translated file imports back at runtime, without touching the disc.
-The window lists them with a search box, original beside current. The file is
+The tab lists them with a search box, original beside current. The file is
 just words:
 
 ```
@@ -485,13 +519,23 @@ character instead of being rendered as the wrong symbol.
 
 ![The card shop's pack panel: MONSTER, MAGIC, EQUIP and TRAP rows, each set to its own rarity and price, over a RESULTS box listing the three cards the pack just yielded.](docs/screenshots/card-shop.png)
 
-The card shop has never sold a card. This makes it one: the shopkeeper's menu
-grows a fifth row that **buys card packs** with your starchips.
+The stock shop only exchanges a password and StarChips for one direct card.
+This turns it into a complete shop: the shopkeeper's menu grows a fifth row
+that **buys card packs**, and `TRIANGLE` opens a Sell screen for your own
+collection.
 
 Four pack types (monster, magic, equip, trap) across four rarities, priced
 20 / 80 / 200 / 800, with **all 722 cards in the pool**. A pack deals its cards
 one at a time: **X** turns over the next slot, **TRIANGLE** opens the game's own
 card viewer. Bought cards land in your trunk marked **New!**, like a duel drop.
+
+On the Sell screen, Left/Right changes a quantity, L1/R1 moves ten cards,
+Square selects every copy, Start or R2 selects the trunk, L2 clears the
+selection, and Triangle opens the card viewer. Nothing is sold until the
+separate review screen is confirmed. Deck cards are never included, and the
+transaction is rejected if the save changed after the review was prepared.
+The tighter layout keeps the card list, quantities and six-digit totals sharp
+without repeating labels that do not help make the decision.
 
 Selling cannot turn either purchase route into free starchips: a card's sell
 value cannot exceed its direct password price, and is also capped at the
@@ -588,6 +632,27 @@ hand, combo width and fusion depth. `--difficulty 2` makes that ramp steep
 from the first duelist, `--difficulty 0` flattens it. Same seed, same
 package, so a seed is enough to share a run. Import it with `MODS → IMPORT MOD PACKAGE…`, after
 exporting your own package if you want your edits back.
+
+### Netplay
+
+Open **Netplay** in the pre-game launcher to host or join through the online
+lobby, on a LAN or by direct address. Each peer supplies their own matching
+game disc; the match runs one synchronized game while each player controls
+their own seat.
+
+![A netplay duel with the remote player's five-card hand hidden behind card backs and a message reading “Unchiga is choosing.”](media/netplay-card-privacy.png)
+
+Hidden information is covered only for the player who must not see it. The
+opponent's hand is hidden from its first draw-slide frame, and private
+full-card views remain covered through their closing animation; ordinary
+public card views remain visible. The status message uses the remote player's
+name so waiting never looks like a frozen game.
+
+The fusion assistant follows the **local seat**, including player two, and is
+suppressed whenever the hand currently on screen belongs to the other player.
+Save-changing mods and the FM Editor are unavailable during a stock netplay
+session so both peers remain deterministic; offline choices stay saved for the
+next local game.
 
 ### Widescreen (`VIEW → WIDESCREEN`, experimental)
 
