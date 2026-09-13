@@ -1,5 +1,39 @@
 # Release notes
 
+## 0.6.1
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
+
+### Card frame colors
+
+Card Manager can give a card one of four new frame colors (red, white, dark
+yellow and navy) in addition to the six on the disc. The new colors show on
+the card preview, the hand card and the Library grid, and keep the game's
+palette blending. They are drawn through their own palettes rather than
+written into spare-looking VRAM, which had been corrupting the title wall, the
+duel results screen and the Free Duel portraits.
+
+### Fixed
+
+- Monster bonuses no longer stack up again on every battle. A monster lifted
+  out of its zone for the battle animation was treated as re-summoned, so its
+  bonus was added again, summon effects fired again, and a face-down defender
+  that survived fired its summon effect instead of its flip effect.
+- A card or type bonus now counts the card itself when it matches ("each Beast
+  you control" on a Beast), as the TCG wording reads. "Each monster you
+  control" still means its allies, and Card Manager now labels it "each other
+  monster you control".
+- Destruction-immunity effects can no longer loop.
+- Importing a MOD package now applies its Card Shop rarity floors and pack
+  prices immediately, without a restart.
+
+### Netplay
+
+- The Create Lobby window's Allow Spectators checkbox no longer switches itself
+  off.
+- Lobby authentication matches the current lobby server.
+
 ## 0.6.0
 
 Test release. Extract this over your existing install as usual. Your saves,

@@ -1,7 +1,7 @@
 [submodule "psxrecomp"]
 	path = psxrecomp
 	url = https://github.com/Unchiga/psxrecomp.git
-	branch = community-fixes-2026-09-10
+	branch = auth-lobby-fix-2026-09-12
 [submodule "recomp-ui"]
 	path = recomp-ui
 	url = https://github.com/mstan/recomp-ui.git
