@@ -558,11 +558,14 @@ jobs:
             exit 1
           fi
           # The GitHub Release must contain the install tree directly. Reject
-          # an accidentally re-wrapped package before upload (zip-in-a-zip).
+          # any zip inside the package before upload: a re-wrapped release, or
+          # a zip-format file carried in from the tree (.ygomods, .ygocards and
+          # .ygoduelists are zips; v0.6.0 shipped a .ygomods test fixture).
+          NESTED='\.(zip|ygomods|ygocards|ygoduelists|7z|rar)$'
           if [[ "${{ runner.os }}" == "Windows" || "${{ runner.os }}" == "Linux" ]] && \
-             unzip -Z1 "${PACKAGES[0]}" | grep -Eiq '(^|/)ygofm-[^/]*\.zip$'; then
-            echo "::error::${PACKAGES[0]} contains a nested zip"
-            unzip -Z1 "${PACKAGES[0]}" | grep -Ei '(^|/)ygofm-[^/]*\.zip$'
+             unzip -Z1 "${PACKAGES[0]}" | grep -Eiq "${NESTED}"; then
+            echo "::error::${PACKAGES[0]} contains a nested archive"
+            unzip -Z1 "${PACKAGES[0]}" | grep -Ei "${NESTED}"
             exit 1
           fi
           ls -la dist/
