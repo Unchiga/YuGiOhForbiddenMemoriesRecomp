@@ -13,8 +13,9 @@
  * printed by the retail build), two stubs at 0x800122C0, two hook words
  * each at 0x8002940C and 0x80016BBC, and the rewritten grid loop. One
  * word differs: the small-card stub accepts all ten slots. The four slots
- * after orange use authored palettes derived from recolored stock artwork and
- * are uploaded to CLUT locations selected by the extended slot arithmetic.
+ * after orange use authored palettes derived from recolored stock artwork,
+ * drawn through tag CLUTs the extended slot arithmetic selects (see
+ * sync_overrides).
  *
  * The code words go in with psx_mod_write_code_word (those three functions
  * then run in the interpreter) and are re-asserted every frame, since a
@@ -40,6 +41,7 @@
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
 #include "psx_ygo_netplay.h"
+#include "gpu.h"
 #include "gpu_render.h"
 
 #define CARD_COUNT 722
@@ -59,10 +61,16 @@
 #define PAL_BLOCK    512
 #define PAL_ENTRIES  72
 
+/* The preview renderer draws the frame through CLUT (256 * (n >> 8), 240 + (n & 0xFF))
+ * with n = selector + 8: stock slots are n = 0x108.. at (256,248..253). Word 12
+ * (addiu s3,s3,-0x106) gives the four authored slots n = 8..11, tag CLUTs
+ * (0,248..251) that sync_overrides() resolves; nothing is stored there. */
+#define PREVIEW_CLUT_Y 248
+
 /* TEA-Online cardcolor v2 patch (process-cardcolor/patch/v2_*.bin), little-endian words. */
 static const uint32_t STUBS[44] = {
     0x00139842,0x3C028001,0x24422150,0x00531021,0x90420000,0x30930001,0x12600002,0x3053000F,
-    0x00029902,0x2A620006,0x14400002,0x26730100,0x2673FEF6,0x3C03801D,0x0800A505,0x24635332,
+    0x00029902,0x2A620006,0x14400002,0x26730100,0x2673FEFA,0x3C03801D,0x0800A505,0x24635332,
     0x8FA20028,0x3C038001,0x9442000C,0x24632150,0x24440000,0x2442FFFF,0x00021042,0x00621821,
     0x90630000,0x30840001,0x10800002,0x3062000F,0x00031102,0x00021040,0x3C040000,0x24840000,
     0x00822021,0x94830018,0xA6230012,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
@@ -216,8 +224,10 @@ static int make_custom_small_palette(int custom)
 }
 
 /* The Library grid is a third texture again: 4-bpp, with six adjacent
- * 16-entry CLUTs at (352,240). Wait until that screen has loaded all six,
- * then recolour only the entries that differ between its stock palettes. */
+ * 16-entry CLUTs at (352,247); the grid selector is the CLUT x. Wait until
+ * that screen has loaded all six, then recolour only the entries that differ
+ * between its stock palettes. */
+#define GRID_CLUT_Y 247
 static uint16_t s_grid_custom[4][16];
 static uint8_t s_grid_ready;
 
@@ -225,7 +235,7 @@ static int make_custom_grid_palettes(void)
 {
     uint16_t stock[6][16];
     if (!load_palettes()) return 0;
-    gr_vram_transfer_out(0x160, 240, 6 * 16, 1, stock[0]);
+    gr_vram_transfer_out(0x160, GRID_CLUT_Y, 6 * 16, 1, stock[0]);
     for (int slot = 0; slot < 6; slot++) {
         unsigned real = 0;
         for (int i = 1; i < 16; i++)
@@ -248,29 +258,61 @@ static int make_custom_grid_palettes(void)
     return 1;
 }
 
-static void upload_custom_palettes(void)
+/* The authored palettes never live in guest VRAM: rows that look empty on one
+ * screen hold another screen's palettes (the title wall reads (0,244), the
+ * duel results (0..255,248), the Free Duel portraits (128,496..506)).
+ * Each custom slot's primitives instead carry a tag CLUT, and the GPU draws
+ * the primitives that use it on the card texture pages through the authored
+ * palette (gpu_clut_override_set), borrowing the empty seventh card palette
+ * row only for those primitives. Tags: the preview frame and its name glyphs
+ * (0,248..251) on pages (768,256)/(896,256), the hand card (256,504..507) on
+ * (896,256), the Library grid icons (448..496,247) at 4 bpp on (704,256).
+ * The four 16-entry grid palettes sit side by side, so a page of mixed icons
+ * needs no rewrites. */
+#define CARD_PAGE(x, y) (1u << ((x) / 64 + 16 * ((y) / 256)))
+#define SCRATCH_X 256
+#define SCRATCH_Y 254               /* seventh card palette: empty on the disc */
+enum { OV_PREVIEW = 0, OV_HAND = 4, OV_GRID = 8, OV_COUNT = 12 };
+static unsigned s_ov_set;           /* override slots handed to the GPU */
+
+static void set_override(int slot, uint16_t tag_x, uint16_t tag_y, int depth,
+                         uint32_t pages, uint16_t scratch_x, const uint16_t *pal, int n)
+{
+    if ((s_ov_set >> slot) & 1u) return;
+    if (gpu_clut_override_set(slot, tag_x, tag_y, depth, pages,
+                              scratch_x, SCRATCH_Y, pal, n) == 0)
+        s_ov_set |= 1u << slot;
+}
+
+static void clear_overrides(void)
+{
+    for (int slot = 0; slot < OV_COUNT; slot++)
+        if ((s_ov_set >> slot) & 1u) gpu_clut_override_clear(slot);
+    s_ov_set = 0;
+}
+
+static void sync_overrides(void)
 {
     uint16_t pal[256];
-    if (!s_has_custom) return;
-    if (psx_mod_read_word(SERVICE_SLOT3) == LIBRARY_UPDATE &&
-        (s_grid_ready || make_custom_grid_palettes()))
-        for (int custom = 0; custom < 4; custom++)
-            gr_vram_transfer_in(0x1C0 + custom * 16, 240, 16, 1,
-                                s_grid_custom[custom]);
-    for (int slot = PSX_CARD_COLOR_RED; slot < PSX_CARD_COLOR_COUNT; slot++) {
-        const int custom = slot - PSX_CARD_COLOR_RED;
-        make_custom_palette(slot, pal);
-        /* cx=256 is fixed by the hand-card renderer; its mapped cy values are
-         * 504..507. Upload its independently derived palette only after the
-         * stock duel palettes have arrived. */
+    if (!s_has_custom || !s_patched) {
+        clear_overrides();
+        return;
+    }
+    if (psx_mod_read_word(SERVICE_SLOT3) == LIBRARY_UPDATE && !s_grid_ready)
+        make_custom_grid_palettes();
+    for (int custom = 0; custom < 4; custom++) {
+        make_custom_palette(PSX_CARD_COLOR_RED + custom, pal);
+        set_override(OV_PREVIEW + custom, 0, PREVIEW_CLUT_Y + custom, 8,
+                     CARD_PAGE(768, 256) | CARD_PAGE(896, 256), SCRATCH_X, pal, 256);
+        /* The hand palette is derived from the duel's own, so it waits for
+         * the duel resources. */
         if (s_small_ready[custom] || make_custom_small_palette(custom))
-            gr_vram_transfer_in(256, 504 + custom, 256, 1,
-                                s_small_custom[custom]);
-        /* Keep custom preview palettes in the four unused rows immediately
-         * below the 240-line framebuffer. The preview renderer's attribute
-         * primitive is patched to keep using its independent stock CLUTs at
-         * (256,255), so these uploads cannot flatten the attribute tile. */
-        gr_vram_transfer_in(0, 244 + custom, 256, 1, pal);
+            set_override(OV_HAND + custom, 256, SMALL_CLUT_Y[PSX_CARD_COLOR_RED + custom], 8,
+                         CARD_PAGE(896, 256), SCRATCH_X, s_small_custom[custom], 256);
+        if (s_grid_ready)
+            set_override(OV_GRID + custom, GRID_SELECTOR[PSX_CARD_COLOR_RED + custom],
+                         GRID_CLUT_Y, 4, CARD_PAGE(704, 256), SCRATCH_X + 16 * custom,
+                         s_grid_custom[custom], 16);
     }
 }
 
@@ -349,7 +391,10 @@ static void patch_assert(int on)
 
 static void tick(void)
 {
-    if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
+    if (psx_ygo_netplay_session()) {         /* netplay: per-machine layer, peers must stay bit-identical */
+        clear_overrides();
+        return;
+    }
     if (!psx_mod_game_started()) return;
     if (!s_map_addr) return;
     take_stock();
@@ -360,16 +405,22 @@ static void tick(void)
         rebuild();
     }
     patch_assert(s_non_stock);
-    upload_custom_palettes();
+    sync_overrides();
 }
 
 int psx_card_colors_state_json(char *out, unsigned cap)
 {
     int counts[PSX_CARD_COLOR_COUNT] = { 0 };
+    uint64_t hits, installs, restores;
     for (int id = 1; id <= CARD_COUNT; id++) counts[s_slot[id]]++;
+    gpu_clut_override_stats(&hits, &installs, &restores);
     unsigned n = (unsigned)snprintf(out, cap,
-                                    "\"ready\":%d,\"patched\":%d,\"non_stock\":%d,\"custom\":%d,\"counts\":[",
-                                    s_stock_ok, s_patched, s_non_stock, s_has_custom);
+                                    "\"ready\":%d,\"patched\":%d,\"non_stock\":%d,\"custom\":%d,"
+                                    "\"overrides\":\"0x%03X\",\"ov_hits\":%llu,\"ov_installs\":%llu,"
+                                    "\"ov_restores\":%llu,\"counts\":[",
+                                    s_stock_ok, s_patched, s_non_stock, s_has_custom, s_ov_set,
+                                    (unsigned long long)hits, (unsigned long long)installs,
+                                    (unsigned long long)restores);
     for (int i = 0; i < PSX_CARD_COLOR_COUNT && n < cap; i++)
         n += (unsigned)snprintf(out + n, cap - n, "%s%d", i ? "," : "", counts[i]);
     if (n < cap) n += (unsigned)snprintf(out + n, cap - n, "]");
