@@ -309,11 +309,15 @@ static const char *const FX_LABELS[PSX_CARD_FX_COUNT] = {
 };
 static const char *const TERRAIN_NAMES[7] = { "None", "Forest", "Wasteland", "Mountain", "Sogen", "Umi", "Yami" };
 static const char *const COLOR_NAMES[PSX_CARD_COLOR_COUNT] = {
-    "Yellow (normal)", "Green (spell)", "Pink (trap)", "Blue (ritual)", "Purple (fusion)", "Orange (effect)"
+    "Yellow (normal)", "Green (spell)", "Pink (trap)", "Blue (ritual)", "Purple (fusion)", "Orange (effect)",
+    "Red", "White", "Dark yellow", "Navy blue"
 };
 static const char *const COLOR_KEYS[PSX_CARD_COLOR_COUNT][4] = {
     { "yellow", "normal", "monster", "" }, { "green", "spell", "magic", "" }, { "pink", "trap", "magenta", "" },
-    { "blue", "ritual", "", "" }, { "purple", "fusion", "violet", "" }, { "orange", "effect", "", "" }
+    { "blue", "ritual", "", "" }, { "purple", "fusion", "violet", "" }, { "orange", "effect", "", "" },
+    { "red", "crimson", "", "" }, { "white", "silver", "", "" },
+    { "dark_yellow", "dark yellow", "gold", "olive" },
+    { "navy", "navy_blue", "navy blue", "dark_blue" }
 };
 static int match_name(const char *v, const char *const *names, int n, int first);
 static void seterr(char *err, unsigned cap, const char *m);
@@ -534,13 +538,14 @@ int psx_card_packs_parse_name_color(const char *v)
 }
 
 const char *psx_card_packs_color_name(int slot) { return (slot >= 0 && slot < PSX_CARD_COLOR_COUNT) ? COLOR_NAMES[slot] : "?"; }
+static unsigned char color_fold(unsigned char c) { return c >= 'A' && c <= 'Z' ? (unsigned char)(c + ('a' - 'A')) : c; }
 int psx_card_packs_parse_color(const char *v)
 {
     if (*v >= '0' && *v <= '9') { const int x = atoi(v); return (x >= 0 && x < PSX_CARD_COLOR_COUNT) ? x : -1; }
     for (int i = 0; i < PSX_CARD_COLOR_COUNT; i++)
         for (int k = 0; k < 4 && COLOR_KEYS[i][k][0]; k++) {
             const char *a = v, *b = COLOR_KEYS[i][k];
-            while (*a && *b && (*a | 32) == *b) { a++; b++; }
+            while (*a && *b && color_fold((unsigned char)*a) == color_fold((unsigned char)*b)) { a++; b++; }
             if (!*b && (!*a || *a == ' ' || *a == '(')) return i;
         }
     return -1;

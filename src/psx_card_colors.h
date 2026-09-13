@@ -1,11 +1,10 @@
 /* psx_card_colors.h -- per-card frame colors.
  *
  * Stock derives a card's frame from its type (monster yellow, magic green,
- * trap pink, ritual blue). This gives every card its own slot out of seven
- * palettes: the disc's six (the unused purple and orange included) and a
- * generated red. A monster with any monster effect defaults to orange, the
- * way effect monsters look in the real card game, unless card.ini says
- * otherwise. See psx_card_colors.c. */
+ * trap pink, ritual blue). The recomp also exposes both unused stock colors
+ * and four additional authored palettes. A monster with any monster effect
+ * defaults to orange, the way effect monsters look in the real card game,
+ * unless card.ini says otherwise. See psx_card_colors.c. */
 #ifndef PSX_CARD_COLORS_H
 #define PSX_CARD_COLORS_H
 

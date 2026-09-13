@@ -65,7 +65,8 @@ sys.path.insert(0, HERE)
 
 NCARDS, TOTAL, NDUEL = 722, 2048, 39
 TYPE_MAGIC, TYPE_TRAP, TYPE_RITUAL, TYPE_EQUIP = 20, 21, 22, 23
-COLORS = ['yellow', 'green', 'pink', 'blue', 'purple', 'orange']
+COLORS = ['yellow', 'green', 'pink', 'blue', 'purple', 'orange',
+          'red', 'white', 'dark_yellow', 'navy']
 ATTRS = ['Light', 'Dark', 'Earth', 'Water', 'Fire', 'Wind']
 TYPES = ['Dragon', 'Spellcaster', 'Zombie', 'Warrior', 'Beast-Warrior', 'Beast', 'Winged Beast', 'Fiend',
          'Fairy', 'Insect', 'Dinosaur', 'Reptile', 'Fish', 'Sea Serpent', 'Machine', 'Thunder', 'Aqua',

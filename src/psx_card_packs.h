@@ -129,7 +129,8 @@ void psx_card_packs_quantize(const uint8_t *rgb, int n_pixels, int ncolors,
 
 /* Frame colors: the disc carries six palettes (only four are used in stock:
  * monsters yellow, magic green, traps pink, rituals blue; purple and orange
- * sit unused). See psx_card_colors.c. */
+ * sit unused). The recomp supplies four additional authored palettes. See
+ * psx_card_colors.c. */
 enum {
     PSX_CARD_COLOR_YELLOW = 0,    /* normal monster */
     PSX_CARD_COLOR_GREEN,         /* spell */
@@ -137,7 +138,11 @@ enum {
     PSX_CARD_COLOR_BLUE,          /* ritual */
     PSX_CARD_COLOR_PURPLE,        /* fusion */
     PSX_CARD_COLOR_ORANGE,        /* effect monster */
-    PSX_CARD_COLOR_COUNT          /* the disc's seventh palette is empty and the grid has no sprite for it */
+    PSX_CARD_COLOR_RED,
+    PSX_CARD_COLOR_WHITE,
+    PSX_CARD_COLOR_DARK_YELLOW,
+    PSX_CARD_COLOR_NAVY,
+    PSX_CARD_COLOR_COUNT
 };
 const char *psx_card_packs_color_name(int slot);   /* "Yellow (normal)" */
 int  psx_card_packs_parse_color(const char *v);
