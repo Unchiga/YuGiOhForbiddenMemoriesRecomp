@@ -450,7 +450,7 @@ static const char *per_label(int enemy, int filter)
 {
     static char b[96];
     if (filter < 0) return "always";
-    if (filter == 0) return enemy ? "each monster the opponent controls" : "each monster you control";
+    if (filter == 0) return enemy ? "each monster the opponent controls" : "each other monster you control";
     if (filter == PSX_CARD_PACK_FILTER_HAND) return enemy ? "each card in the opponent's hand" : "each card in your hand";
     snprintf(b, sizeof b, "each %s", psx_card_packs_filter_name(filter, enemy));
     return b;

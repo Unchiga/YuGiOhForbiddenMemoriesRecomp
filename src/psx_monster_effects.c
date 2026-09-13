@@ -33,7 +33,8 @@
  *   per-side turn counter at side+0x01, which action 2 increments.
  * BONUS: the row modifier +0x12 (the field equips and curses use) gets the
  *   difference between the wanted bonus (flat + per ally + per enemy) and
- *   what this row already carries, tracked per row and card.
+ *   what this row already carries, tracked per row and card. The rows a
+ *   battle lifts out of their zones stay on the field for this.
  * IMMUNE: traps -- the trap check's entry hook zeroes the six ceilings for
  *   an immune attacker (the effects layer restores them next frame);
  *   magic -- the destroy helper's entry hook, while an effect runs, points
@@ -337,8 +338,22 @@ static void casts_tick(void)
 }
 
 /* ---- bonuses -------------------------------------------------------------------- */
+/* The battle action lifts the attacker and the defender out of their zones:
+ * from its first frame their rows lose the occupied bit and keep the card id
+ * and the +0x12 modifier, and they come back before the action ends (2D at
+ * state 0xB, 3D before the scene) unless destroyed. Such a row is still on
+ * the field. Read as empty, its return was a fresh summon: the bonus it
+ * still carried was added again on every battle, and on_summon fired again. */
+static int lifted_by_battle(int row, unsigned fl)
+{
+    return !(fl & 0x8000u) && s_present[row] && row_id(row) == s_bonus[row].id &&
+           (psx_mod_read_half(ACTION) & 0xFu) == 9u;
+}
+
 /* How many of side s's field monsters a filter counts: any monster, or
- * (identity known only face-up) that card / that type. `self` is left out. */
+ * (identity known only face-up) that card / that type. `self` is left out
+ * of "any monster" (its allies), and counts for a card or type it matches,
+ * as "each Beast you control" does for a Beast. */
 static int count_matching(int s, int filter, int self_row)
 {
     int n = 0;
@@ -348,9 +363,9 @@ static int count_matching(int s, int filter, int self_row)
     }
     for (int r = 5; r <= 9; r++) {
         const int row = 15 * s + r;
-        if (row == self_row) continue;
+        if (row == self_row && filter <= 0) continue;
         const unsigned fl = row_flags(row);
-        if (!(fl & 0x8000u)) continue;
+        if (!(fl & 0x8000u) && !lifted_by_battle(row, fl)) continue;
         if (filter <= 0) { n++; continue; }
         if (fl & 0x1000u) continue;
         const int id = row_id(row);
@@ -369,6 +384,7 @@ static void bonus_tick(void)
         const unsigned fl = row_flags(row);
         const int id = row_id(row);
         Bonus *b = &s_bonus[row];
+        if (lifted_by_battle(row, fl)) continue;   /* frozen as it was when the battle began */
         if (!(fl & 0x8000u) || id < 1 || id > CARD_COUNT) {
             b->id = id; b->applied = 0; s_facedown[row] = 0; s_present[row] = 0;
             continue;
