@@ -127,10 +127,24 @@ plays once and the idle loop resumes. The game starts a sequence with
 
 The extractor writes one glTF clip per sequence id: `seq0` is the idle loop,
 `seq2`..`seq8` the one-shot sections (transition from idle, the section, and
-the cut back to idle). Which id is which action is not pinned down yet; the
-duel's action dispatcher (`duel_action_resolution_dispatch`) picks them from
-state, so the safe way to learn the mapping is to watch the model object's
-current id byte (`D_800F2C40[slot] + 0xBF5`) during an attack.
+the cut back to idle). Measured live on 2026-09-13 by watching the id byte
+(`D_800F2C40[slot] + 0xBF5`) of both models through a Blue-Eyes attack in
+the 3D battle (mode 0xC1):
+
+| id | seen on | when |
+| --- | --- | --- |
+| 1 | both | idle, the default the whole time |
+| 2 | both | entrance, right after each model appears |
+| 3 | attacker | the attack itself |
+| 5 | defender | taking the hit |
+| 6 | defender | destroyed; the model stays in this pose |
+| 7 | attacker | victory pose after the kill |
+| 4, 8 | not seen | presumably the defender's survive/block and the attacker's loss |
+
+The same snapshot confirmed the VRAM layout the loader implies: the player's
+texture columns at (0,256), the opponent's at (256,256), and the 8 palette
+rows present both at y=240 (where the relocated CLUT ids point) and y=248
+(where the stage uploads them).
 
 ## Attack effects
 
