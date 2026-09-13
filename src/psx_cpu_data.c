@@ -81,15 +81,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
 #define rmdir _rmdir
 #else
-#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 #include "mod_plugins.h"
+#include "texture_pack.h"          /* texpack_active_dir() -- the shared pack folder */
+#include "psx_texture_export.h"    /* psx_texture_export_mkdir_p() */
 #include "psx_card_packs.h"
 #include "psx_card_share.h"      /* the zip container a .ygoduelists file is */
 #include "psx_drop_db.h"
@@ -145,14 +147,14 @@
 typedef char cpu_name_arena_fits[(NAME_ARENA + 39u * NAME_SLOT <= 0x801DA000u) ? 1 : -1];
 typedef char cpu_name_arena_above_packs[(NAME_ARENA >= PSX_CARD_PACKS_NAMES_LIMIT) ? 1 : -1];
 
-/* the portrait tiles: WA_MRG sector 0x1EAA, forty 2432-byte tiles */
-#define TILE_LBA      17952u
-#define TILE_BYTES    2432u
+/* the portrait tile size (48x48). The disc-side layout this used to also
+ * describe -- WA_MRG sector 0x1EAA, forty 2432-byte tiles, TILE_LBA/
+ * TILE_SECTORS/TILE_CLUT -- went away with the TILE_LBA override itself
+ * (see portraits_install()'s own comment): every portrait now comes from
+ * the shared Textures folder alone, decoded straight to RGB with no
+ * quantized disc copy to size or address. */
 #define TILE_W        48
-#define TILE_PIXELS   (TILE_W * TILE_W)          /* 2304 indices */
-#define TILE_CLUT     64
-#define TILES         40u
-#define TILE_SECTORS  ((TILES * TILE_BYTES + SECTOR - 1u) / SECTOR)   /* 48 */
+#define TILE_PIXELS   (TILE_W * TILE_W)          /* 2304 pixels */
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -170,6 +172,7 @@ typedef struct {
 } CpuEdit;
 
 static CpuEdit  g_edit[NDUEL];
+static long     s_portrait_mtime[NDUEL];   /* hot-reload watch, see tick() */
 static uint8_t  g_ai_stock[NDUEL][PSX_CPU_AI_BYTES];
 static int      g_ai_stock_ready;
 static uint16_t g_name_stock[NDUEL];     /* the stock offset-table entries */
@@ -414,16 +417,19 @@ static int install_deck(int duelist)
 
 /* ---- the portrait ----------------------------------------------------------
  *
- * Replacing one is the card-art pipeline pointed at a different target: the
- * PNG is scaled to 48x48, quantised to 64 colors and written back as indices
- * plus a CLUT. The whole 48-sector block is rebuilt from the stock sectors
- * every time, so the overrides are always stock plus exactly the portraits
- * the player has replaced -- there is no accumulated state to get wrong.
- *
- * The STP bit goes on every CLUT entry because the stock tiles carry it (the
- * portraits are solid squares, and black without STP keys out), and
- * psx_duelist_portraits.c refuses a block that does not have it. */
+ * Lives in the active HD texture pack's shared folder alone (see
+ * portrait_png_shared() below) -- nothing there means stock, no per-duelist
+ * folder to check first. The disc's own tile block is never touched any
+ * more (see portraits_install()'s own comment for why): the picture only
+ * ever reaches the windows as an in-memory override, at its real decoded
+ * colors, and reaches the actual Free Duel select screen through the raw
+ * VRAM injector, which is registered for this same file. */
 
+/* The pre-2026-09-13 location. No longer read or written to -- every
+ * portrait lookup goes through portrait_png_shared() now, same single
+ * folder as the Asset Manager, with nothing there meaning stock and no
+ * second folder to fall back to. Kept only so psx_cpu_portrait_clear() can
+ * tidy away a leftover file/folder from before this change. */
 static void portrait_dir(int duelist, char *out, size_t cap)
 {
     const char *dir = psx_mod_player_data_dir();
@@ -445,6 +451,50 @@ static int file_exists(const char *p)
     return 1;
 }
 
+static long file_mtime(const char *p)
+{
+    struct stat st;
+    if (stat(p, &st) != 0) return 0;
+    return (long)st.st_mtime ^ (long)(st.st_size << 8);
+}
+
+/* The active HD texture pack's own slot for this portrait -- "Free duel/
+ * portraits/%03d.png" under the active pack's folder, from psx_wa_catalog.c's
+ * DISPLAY_RULES ("free_duel/portrait_%03d", first=0, so record d+1 is this
+ * duelist's -- the same +1 the duelists/<id> folder above already uses).
+ * Uploading a duelist's portrait through the CPU Manager and through the
+ * Asset Manager now land on the one file. */
+static void portrait_png_shared(int duelist, char *out, size_t cap)
+{
+    char root[1024];
+    texpack_active_dir(root, (unsigned)sizeof root);
+    /* "portrait_" is part of the LEAF, not a separator -- psx_wa_catalog.c's
+     * DISPLAY_RULES has this row's name_fmt as "free_duel/portrait_%03d", and
+     * the leaf is everything after the family's own slash, so it really is
+     * "portrait_001.png", not "001.png". Dropping that prefix here (as an
+     * earlier pass did) meant this never matched a single file the Asset
+     * Manager actually wrote. */
+    snprintf(out, cap, "%s/Free duel/portraits/portrait_%03d.png", root, duelist + 1);
+}
+
+/* Where this duelist's portrait actually is: the shared folder, full stop --
+ * same rule psx_card_packs.c uses for card art, for the same reason. Nothing
+ * there means stock; there is no second folder to check first any more. */
+static void portrait_path_resolve(int duelist, char *out, size_t cap)
+{
+    portrait_png_shared(duelist, out, cap);
+}
+
+/* Where a NEW portrait upload is written: always the shared folder, creating
+ * whatever directories that needs. */
+static void portrait_path_dest(int duelist, char *out, size_t cap)
+{
+    portrait_png_shared(duelist, out, cap);
+    char dir[1200]; snprintf(dir, sizeof dir, "%s", out);
+    char *slash = strrchr(dir, '/');
+    if (slash) { *slash = 0; psx_texture_export_mkdir_p(dir); }
+}
+
 int psx_cpu_portrait_edited(int duelist)
 {
     psx_cpu_ensure_loaded();
@@ -459,60 +509,38 @@ int psx_cpu_portraits_count(void)
     return n;
 }
 
-/* Rebuild the whole tile block from stock, paint every replaced portrait into
- * it, and override the sectors. Returns how many portraits were painted, or
- * -1 when the stock sectors could not be read. */
+/* Feed every replaced portrait to the windows (CPU Manager, Drop Table
+ * Viewer, and psx_duelist_portraits_get() generally) as an in-memory
+ * override, and clear the rest back to none. Returns how many were painted.
+ *
+ * This used to ALSO quantize each one to 64 colors and bake it into a
+ * TILE_LBA disc-sector override, the classic "one folder or the other"
+ * per-duelist choice build_disc_side() makes for cards (psx_card_packs.c).
+ * Removed 2026-09-13 along with the legacy duelists/<id>/portrait.png
+ * folder itself: there is only one on-disc copy of this picture (unlike
+ * cards' art record vs. duel-stream split), and it IS registered with the
+ * raw VRAM injector ("free_duel/portrait_%03d", psx_wa_catalog.c), so
+ * leaving the disc bytes at stock unconditionally is what lets the injector
+ * (or plain stock, when the "HD textures" toggle is off) own the Free Duel
+ * select screen outright -- no override left to fight it, and no need to
+ * quantize down to 64 colors for a picture that never touches the disc any
+ * more. The windows get the true decoded colors instead of that quantized
+ * copy, for the same reason psx_card_packs_art_rgb() does. */
 static int portraits_install(void)
 {
-    static uint8_t block[TILE_SECTORS * SECTOR];
-    int painted = 0, any = 0;
-    for (int d = 0; d < NDUEL; d++) any += g_edit[d].portrait_set != 0;
-    if (!any) {
-        for (uint32_t sct = 0; sct < TILE_SECTORS; sct++) psx_mod_cd_override_clear(TILE_LBA + sct);
-        return 0;
-    }
-    for (uint32_t sct = 0; sct < TILE_SECTORS; sct++)
-        if (!psx_mod_cd_read_stock_sector(TILE_LBA + sct, block + sct * SECTOR)) return -1;
+    int painted = 0;
     for (int d = 0; d < NDUEL; d++) {
-        if (!g_edit[d].portrait_set) continue;
+        if (!g_edit[d].portrait_set) { psx_duelist_portraits_override(d, NULL); continue; }
         char png[1200];
-        portrait_png(d, png, sizeof png);
+        portrait_path_resolve(d, png, sizeof png);
         static uint8_t rgb[TILE_PIXELS * 3];
-        if (!psx_card_packs_load_png_rgb(png, TILE_W, TILE_W, rgb)) continue;
-        static uint8_t idx[TILE_PIXELS];
-        uint16_t clut[TILE_CLUT];
-        /* PIXELS, not bytes. With the byte count the quantiser ran over
-         * 6912 "pixels": it read on past rgb into the tile block, and wrote
-         * indices past idx into rgb -- which sits right after it -- so the
-         * first 32 rows of the picture were being replaced by index bytes
-         * while it was still being read. On the grid that was green specks
-         * across the face with a one-pass quantiser, and 30-40 rows of
-         * noise over a face once the quantiser made a second pass (found
-         * 2026-09-08, from a player's Duel Master K). */
-        psx_card_packs_quantize(rgb, TILE_PIXELS, TILE_CLUT, idx, clut);
-        uint8_t *tile = block + (uint32_t)(d + 1) * TILE_BYTES;
-        for (int i = 0; i < TILE_PIXELS; i++) tile[i] = (uint8_t)(idx[i] & 63u);
-        for (int k = 0; k < TILE_CLUT; k++) {
-            const uint16_t c = (uint16_t)(clut[k] | 0x8000u);   /* STP, as stock */
-            tile[TILE_PIXELS + 2 * k]     = (uint8_t)(c & 0xFFu);
-            tile[TILE_PIXELS + 2 * k + 1] = (uint8_t)(c >> 8);
-        }
-        {   /* hand the same pixels to the windows, in the colours the game
-             * will draw: they decode the STOCK sectors and cannot see an
-             * override. */
-            static uint32_t argb[TILE_PIXELS];
-            for (int i = 0; i < TILE_PIXELS; i++) {
-                const unsigned c = clut[idx[i] & 63u];
-                const unsigned r = (c & 31u) << 3, g = ((c >> 5) & 31u) << 3, b = ((c >> 10) & 31u) << 3;
-                argb[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
-            }
-            psx_duelist_portraits_override(d, argb);
-        }
+        if (!psx_card_packs_load_png_rgb(png, TILE_W, TILE_W, rgb)) { psx_duelist_portraits_override(d, NULL); continue; }
+        static uint32_t argb[TILE_PIXELS];
+        for (int i = 0; i < TILE_PIXELS; i++)
+            argb[i] = 0xFF000000u | ((uint32_t)rgb[i * 3] << 16) | ((uint32_t)rgb[i * 3 + 1] << 8) | rgb[i * 3 + 2];
+        psx_duelist_portraits_override(d, argb);
         painted++;
     }
-    for (uint32_t sct = 0; sct < TILE_SECTORS; sct++)
-        if (!psx_mod_cd_override_set(TILE_LBA + sct, block + sct * SECTOR, SECTOR)) return -1;
-    psx_duelist_portraits_reload();
     return painted;
 }
 
@@ -529,24 +557,13 @@ int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned 
         if (msg && cap) snprintf(msg, cap, "That file is not a picture this can read");
         return 0;
     }
-    /* Keep the player's own PNG: it is what survives a restart, and what
-     * they can replace by hand. */
-    char dir[1024], dest[1200];
-    const char *pd = psx_mod_player_data_dir();
-    char base[1100];
-    snprintf(base, sizeof base, "%s/duelists", pd && pd[0] ? pd : ".");
-#ifdef _WIN32
-    (void)_mkdir(base);
-#else
-    (void)mkdir(base, 0755);
-#endif
-    portrait_dir(duelist, dir, sizeof dir);
-#ifdef _WIN32
-    (void)_mkdir(dir);
-#else
-    (void)mkdir(dir, 0755);
-#endif
-    portrait_png(duelist, dest, sizeof dest);
+    /* Keep the player's own PNG, in the active HD texture pack's own shared
+     * folder -- the same "Free duel/portraits/<id>.png" the Asset Manager
+     * reads and writes -- so picking a portrait here and uploading one there
+     * are the same action on the same file. It is what survives a restart,
+     * and what they can replace by hand. */
+    char dest[1200];
+    portrait_path_dest(duelist, dest, sizeof dest);
     {   /* copy it in, unless it is already the file we would write */
         FILE *in = psx_fopen_utf8(png_path, "rb");
         if (!in) { if (msg && cap) snprintf(msg, cap, "Could not read that file"); return 0; }
@@ -559,6 +576,17 @@ int psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned 
         }
         fclose(in);
     }
+    /* Arm the raw VRAM injector on this same folder (a no-op if it already
+     * is) and ask it to re-read its files, the same reasoning as
+     * psx_card_manager.c's install_pick(): without this the injector would
+     * not know this file exists until something else triggered a rescan,
+     * and the Free Duel select screen would keep drawing stock in the
+     * meantime even though portraits_install() (just below) already has the
+     * picture. */
+    char root[1024];
+    texpack_active_dir(root, sizeof root);
+    texpack_set_active_dir(root);
+    texpack_request_reload();
     g_edit[duelist].portrait_set = 1;
     const int painted = portraits_install();
     g_gen++;
@@ -575,6 +603,10 @@ int psx_cpu_portrait_clear(int duelist)
     psx_cpu_ensure_loaded();
     if (duelist < 0 || duelist >= NDUEL || !g_edit[duelist].portrait_set) return 0;
     char png[1200], dir[1024];
+    /* Both possible locations: "restore stock" means stock everywhere, not
+     * stock in the legacy folder while a shared-pack upload keeps drawing. */
+    portrait_png_shared(duelist, png, sizeof png);
+    (void)psx_remove_utf8(png);
     portrait_png(duelist, png, sizeof png);
     (void)psx_remove_utf8(png);
     portrait_dir(duelist, dir, sizeof dir);
@@ -893,8 +925,9 @@ void psx_cpu_ensure_loaded(void)
     ini_path(g_ini_path, sizeof g_ini_path);
     for (int d = 0; d < NDUEL; d++) {
         char png[1200];
-        portrait_png(d, png, sizeof png);
-        g_edit[d].portrait_set = (uint8_t)file_exists(png);
+        portrait_path_resolve(d, png, sizeof png);
+        s_portrait_mtime[d] = file_mtime(png);
+        g_edit[d].portrait_set = (uint8_t)(s_portrait_mtime[d] != 0);
     }
     const int n = read_ini(g_ini_path);
     snprintf(g_status, sizeof g_status, n < 0 ? "no ini" : "%d entries from ini", n < 0 ? 0 : n);
@@ -1026,7 +1059,7 @@ int psx_cpu_export_file(const char *path, char *msg, unsigned cap)
     int packed = 0;
     for (int d = 0; ok && d < NDUEL; d++) {
         if (!g_edit[d].portrait_set) continue;
-        char png[1200]; portrait_png(d, png, sizeof png);
+        char png[1200]; portrait_path_resolve(d, png, sizeof png);
         long sz = 0; unsigned char *b = psx_zip_read_file(png, &sz);
         if (!b) continue;                      /* the PNG went missing: the ini still travels */
         char name[64]; snprintf(name, sizeof name, "duelists/%d/portrait.png", d + 1);
@@ -1052,15 +1085,6 @@ static int portrait_entry(const char *name)
     while (*q >= '0' && *q <= '9') id = id * 10 + (*q++ - '0');
     if (id < 1 || id > NDUEL || strcmp(q, "/portrait.png")) return -1;
     return id - 1;
-}
-
-static void ensure_dir(const char *d)
-{
-#ifdef _WIN32
-    (void)_mkdir(d);
-#else
-    (void)mkdir(d, 0755);
-#endif
 }
 
 int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
@@ -1111,20 +1135,13 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
         /* the portraits: the file's replace the player's, and the ones it
          * does not carry go, the same way its ini replaces every edit */
         uint8_t in_file[NDUEL]; memset(in_file, 0, sizeof in_file);
-        char base[1100];
-        {
-            const char *pd = psx_mod_player_data_dir();
-            snprintf(base, sizeof base, "%s/duelists", pd && pd[0] ? pd : ".");
-        }
-        ensure_dir(base);
         for (int i = 0; i < k; i++) {
             const int d = portrait_entry(ents[i].name);
             if (d < 0) continue;
             long sz = 0; unsigned char *px = psx_zip_extract(b, n, &ents[i], &sz);
             if (!px) { bad++; continue; }
-            char ddir[1024], png[1200];
-            portrait_dir(d, ddir, sizeof ddir); ensure_dir(ddir);
-            portrait_png(d, png, sizeof png);
+            char png[1200];
+            portrait_path_dest(d, png, sizeof png);   /* the shared folder, same as a Change portrait pick */
             FILE *f = psx_fopen_utf8(png, "wb");
             const int ok = f && fwrite(px, 1, (size_t)sz, f) == (size_t)sz;
             if (f) fclose(f);
@@ -1133,11 +1150,17 @@ int psx_cpu_import_file(const char *path, char *msg, unsigned cap)
             in_file[d] = 1; portraits_in++;
         }
         free(b);
+        if (portraits_in) {
+            char root[1024];
+            texpack_active_dir(root, sizeof root);
+            texpack_set_active_dir(root);
+            texpack_request_reload();
+        }
         for (int d = 0; d < NDUEL; d++) {
             if (in_file[d]) { g_edit[d].portrait_set = 1; continue; }
             if (!g_edit[d].portrait_set) continue;
-            char png[1200]; portrait_png(d, png, sizeof png);
-            (void)psx_remove_utf8(png);
+            char png[1200];
+            portrait_png_shared(d, png, sizeof png); (void)psx_remove_utf8(png);
             g_edit[d].portrait_set = 0;
             psx_duelist_portraits_override(d, NULL);
         }
@@ -1183,8 +1206,27 @@ static void tick(void)
     if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     static unsigned seen_gen;
     static int seen_ai_ready;
+    static unsigned frames;
     if (!psx_mod_game_started()) return;
     psx_cpu_ensure_loaded();
+    /* Hot reload: a portrait dropped in, replaced, or uploaded through the
+     * Asset Manager (which does not go through psx_cpu_portrait_set) while
+     * this session is already running -- once a second, not every frame.
+     * Without this the CPU Manager only ever saw a portrait that existed at
+     * the moment psx_cpu_ensure_loaded() first ran. */
+    if ((++frames % 60u) == 0u) {
+        int changed = 0;
+        for (int d = 0; d < NDUEL; d++) {
+            char png[1200];
+            portrait_path_resolve(d, png, sizeof png);
+            const long mt = file_mtime(png);
+            if (mt == s_portrait_mtime[d]) continue;
+            s_portrait_mtime[d] = mt;
+            g_edit[d].portrait_set = (uint8_t)(mt != 0);
+            changed = 1;
+        }
+        if (changed) { (void)portraits_install(); g_gen++; }
+    }
     ai_snapshot();
     names_apply();        /* every frame: the table comes back stock with the EXE data */
     if (g_gen == seen_gen && g_ai_stock_ready == seen_ai_ready) return;

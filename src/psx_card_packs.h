@@ -252,6 +252,21 @@ typedef struct {
 
 /* Player folder holding the packs (".../cards"); "" before boot. */
 const char *psx_card_packs_dir(void);
+
+/* Which of the three pictures: matches psx_card_manager.c's existing Pick
+ * art/thumb/title button kinds, so a caller does not need a second enum. */
+enum { PSX_CARD_ART_FACE = 1, PSX_CARD_ART_THUMB = 2, PSX_CARD_ART_TITLE = 3 };
+/* Where this card's art/thumb/title actually is: the active HD texture
+ * pack's own shared folder -- "Card assets/card artworks/<id>.png" and its
+ * two siblings, the exact slot the Asset Manager reads and writes. Always
+ * fills `out`, whether or not the file actually exists there (a missing
+ * file is stock; there is no second folder checked first any more). */
+void psx_card_packs_art_path(int id, int kind, char *out, unsigned cap);
+/* Where a NEW upload of that kind should be written: the active pack's
+ * shared folder (creating whatever directories that needs), so uploading a
+ * card's art through the Card Manager and through the Asset Manager land on
+ * the one file. */
+void psx_card_packs_art_dest_path(int id, int kind, char *out, unsigned cap);
 /* The player's OWN set, <player-data>/cards, whichever set is live. What a
  * share file or a revert must address: the Dev Card Effects set is a
  * shipped mod and is never what a player means by "my cards". */

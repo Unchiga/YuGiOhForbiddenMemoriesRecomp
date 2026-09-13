@@ -10,15 +10,25 @@
  *                  level = 12             attribute = Light  (name or 0..7)
  *                  price = 999999         password = 12345678
  *                  Every key is optional; a missing key keeps the stock value.
- *     art.png      the card face art. Any size; scaled to 102x96, 256 colors.
- *     thumb.png    the duel thumbnail. Any size; scaled to 40x32, 64 colors.
- *                  Without one, the middle 80x64 of the art, halved (the
- *                  stock thumbnails are zooms, not the face squashed).
- *                  Derived from art.png when absent.
- *     title.png    the baked title strip, 96x14, dark ink on white or with
- *                  alpha. Rendered from `name` when absent (Times New Roman
- *                  Bold from <player-data>/cards/timesbd.ttf, or the old
- *                  card_skins/ copy, or the duel text font as a last resort).
+ *
+ * PICTURES (since 2026-09-13, no longer part of the folder above)
+ *     Card art, the duel thumbnail, and the title strip live in the active
+ *     HD texture pack's own shared folder -- <player-data>/textures/Card
+ *     assets/card artworks|thumbnails|Titles/<id>.png -- the exact slots
+ *     psx_wa_catalog.c's DISPLAY_RULES already curate and the Asset Manager
+ *     already reads and writes, so uploading through either window is one
+ *     file, and nothing in a card's own folder is a picture any more.
+ *     Nothing there means stock; there is no second (legacy per-card)
+ *     folder checked first. See art_shared_path()/psx_card_packs_art_path()
+ *     for the exact layout, and build_disc_side() for why the disc's own
+ *     bytes are left at stock even when a picture exists -- that is what
+ *     lets the raw VRAM injector do the actual substituting, at whatever
+ *     resolution the file really is, instead of a 256-or-64-color disc
+ *     record. The one true fallback-to-generated-content that remains: a
+ *     renamed card with no title picture still gets its name rendered into
+ *     a strip (Times New Roman Bold from <player-data>/cards/timesbd.ttf,
+ *     or the old card_skins/ copy, or the duel text font as a last resort),
+ *     since there is no on-disc "stock title" for a name that never existed.
  *
  * WHERE EACH FIELD LIVES, MEASURED (2026-09-04, sector history + RAM):
  *
@@ -74,6 +84,8 @@
 
 #include "cdrom.h"
 #include "mod_plugins.h"
+#include "texture_pack.h"          /* texpack_active_dir() -- the shared pack folder */
+#include "psx_texture_export.h"    /* psx_texture_export_mkdir_p() */
 #include "psx_game_hooks.h"
 #include "psx_card_db.h"
 #include "psx_card_extend.h"
@@ -111,12 +123,9 @@
 #define TITLE_W 96
 #define TITLE_H 14
 #define TITLE_BYTES    (TITLE_W / 2 * TITLE_H)      /* 672 */
-#define THUMB_OFF      10976
 #define THUMB_W 40
 #define THUMB_H 32
 #define THUMB_BYTES    (THUMB_W * THUMB_H)          /* 1280 */
-#define THUMB_CLUT_OFF (THUMB_OFF + THUMB_BYTES)    /* 12256 */
-#define THUMB_TOTAL    (THUMB_BYTES + 128)          /* 1408 */
 
 #define STATS_STOCK    0x801D4244u
 #define AUX_STOCK      0x801D5332u
@@ -706,6 +715,60 @@ static long file_mtime(const char *path)
     if (stat(path, &st) != 0) return 0;
     return (long)st.st_mtime ^ (long)(st.st_size << 8);
 }
+
+/* ---- where art.png / thumb.png / title.png actually live -----------------
+ *
+ * Before 2026-09-12 all three lived in this card's own folder alongside
+ * card.ini. Since 2026-09-13 that per-card folder no longer carries pictures
+ * at all: the only place any of the three is ever looked for is the Asset
+ * Manager's HD texture pack's own curated slot -- "Card assets/card
+ * artworks|thumbnails|Titles/%03d.png" under the active pack's own folder,
+ * from psx_wa_catalog.c's DISPLAY_RULES -- so uploading a card's art through
+ * either window is the same file, and a player's whole mod is one pack
+ * folder, not that plus a second one just for cards. Nothing there for a
+ * given field means stock; there is no second folder to fall back to first
+ * any more.
+ *
+ * The card's own folder is still where card.ini (its text/stats edit) lives
+ * -- that is not a picture, and is unaffected by any of this. */
+static const char *const ART_SUB[4]  = { "", "Card assets/card artworks",
+                                         "Card assets/card thumbnails", "Card assets/card Titles" };
+
+static void art_shared_path(int id, int kind, char *out, size_t cap)
+{
+    char root[1024];
+    texpack_active_dir(root, (unsigned)sizeof root);
+    snprintf(out, cap, "%s/%s/%03d.png", root, ART_SUB[kind], id);
+}
+
+/* The card's own per-id folder no longer carries pictures at all (removed
+ * 2026-09-13, along with duelists/<id>/portrait.png for CPU -- see
+ * psx_cpu_data.c): every picture lookup is now exactly one place, the
+ * shared Textures folder, same as the Asset Manager's own browsing tree.
+ * Whatever is not there is stock -- no second folder to fall back to first.
+ * card.ini (name/stats/effects) is unaffected; it is not a picture and still
+ * lives in the card's own folder (pack_path()). */
+void psx_card_packs_art_path(int id, int kind, char *out, unsigned cap)
+{
+    if (!out || !cap) return;
+    if (kind < 1 || kind > 3) { out[0] = 0; return; }
+    art_shared_path(id, kind, out, cap);
+}
+
+void psx_card_packs_art_dest_path(int id, int kind, char *out, unsigned cap)
+{
+    if (!out || !cap) return;
+    if (kind < 1 || kind > 3) { out[0] = 0; return; }
+    art_shared_path(id, kind, out, cap);
+    char dir[1200]; snprintf(dir, sizeof dir, "%s", out);
+    char *slash = strrchr(dir, '/');
+    if (slash) { *slash = 0; psx_texture_export_mkdir_p(dir); }
+}
+
+/* Local shorthand for the three call sites below that used to pass a literal
+ * "art.png"/"thumb.png"/"title.png" straight to pack_path(): resolve through
+ * the shared-then-own-folder rule above instead. */
+static void art_path(int id, int kind, char *out, size_t cap) { psx_card_packs_art_path(id, kind, out, (unsigned)cap); }
 
 static unsigned char *read_file(const char *path, long *size)
 {
@@ -1476,48 +1539,59 @@ static int build_disc_side(Pack *pk)
 {
     const int id = pk->cfg.id;
     static uint8_t rec[REC_SECTORS * SECTOR];
-    static uint8_t art_rgb[ART_BYTES * 3], thumb_rgb[THUMB_BYTES * 3];
-    static uint8_t idx[ART_BYTES];
-    static uint16_t clut[256];
+    static uint8_t thumb_rgb[THUMB_BYTES * 3];
+    static uint8_t thumb_idx[THUMB_BYTES];
+    static uint16_t thumb_clut[64];
     char path[1200];
     int have_art = 0, have_thumb = 0, have_title = 0;
+    int title_override = 0, thumb_duel_override = 0;
 
     if (!read_stock_record(id, rec)) return 0;
 
-    pack_path(id, "art.png", path, sizeof path);
-    if (load_png_rgb(path, ART_W, ART_H, art_rgb)) {
-        quantize(art_rgb, ART_BYTES, 256, idx, clut);
-        memcpy(rec, idx, ART_BYTES);
-        for (int i = 0; i < 256; i++) { rec[ART_CLUT_OFF + i * 2] = (uint8_t)clut[i]; rec[ART_CLUT_OFF + i * 2 + 1] = (uint8_t)(clut[i] >> 8); }
-        have_art = 1;
-    }
-    pack_path(id, "thumb.png", path, sizeof path);
-    if (load_png_rgb(path, THUMB_W, THUMB_H, thumb_rgb)) have_thumb = 1;
-    else if (have_art) {
-        /* The stock thumbnails are not the face shrunk: each is a zoom on the
-         * monster, a 5:4 window that is the whole face on a few cards and a
-         * third of it on others. Measured over 68 cards (2026-09-07, the
-         * crop of the stock face that best matches the stock thumbnail), the
-         * window is 74 px wide in the median, centred at x 50 and y 40, so
-         * a little above the middle where the heads are. This takes the
-         * 80x64 window on that centre, which is exactly a 2x2 average, and
-         * which beat the whole-face squash on every card measured. A card
-         * whose subject sits elsewhere gets its own thumb.png. */
-        shrink_rgb(art_rgb, ART_W, (ART_W - THUMB_W * 2) / 2, 8, THUMB_W * 2, THUMB_H * 2, thumb_rgb, THUMB_W, THUMB_H);
-        have_thumb = 1;
-    }
+    /* FACE: exists in the shared Textures folder, or it is stock -- there is
+     * no second folder to fall back to any more, and no quantized override
+     * either way. Leaving the art record's bytes at stock regardless is what
+     * lets the raw VRAM injector ("cards/art/%03d", psx_wa_catalog.c)
+     * substitute the shared file at full resolution wherever the face is
+     * actually drawn; "nothing to substitute" is exactly what should read as
+     * stock. */
+    psx_card_packs_art_path(id, PSX_CARD_ART_FACE, path, sizeof path);
+    have_art = file_mtime(path) != 0;
+
+    /* THUMBNAIL: two on-disc copies of the very same picture (see the file
+     * header). The art record's own copy -- what the password screen, card
+     * chest and library page draw, registered as "cards/mini/%03d" -- gets
+     * the same stock-bytes-stay-stock treatment as the face. The DUEL's copy
+     * (THUMB_LBA, a separate stream in a different layout entirely -- WA_MRG
+     * sector id-1, nothing to do with the art record's byte offsets) has no
+     * injector registration of its own, so it is the one place a picture
+     * still gets quantized into a classic override -- but only from this
+     * card's own "cards/mini" file. No more deriving one from the face when
+     * there is no dedicated thumbnail: nothing there means stock. */
+    psx_card_packs_art_path(id, PSX_CARD_ART_THUMB, path, sizeof path);
+    have_thumb = load_png_rgb(path, THUMB_W, THUMB_H, thumb_rgb);
     if (have_thumb) {
-        quantize(thumb_rgb, THUMB_BYTES, 64, idx, clut);
-        memcpy(rec + THUMB_OFF, idx, THUMB_BYTES);
-        for (int i = 0; i < 64; i++) { rec[THUMB_CLUT_OFF + i * 2] = (uint8_t)clut[i]; rec[THUMB_CLUT_OFF + i * 2 + 1] = (uint8_t)(clut[i] >> 8); }
+        quantize(thumb_rgb, THUMB_BYTES, 64, thumb_idx, thumb_clut);
+        thumb_duel_override = 1;
     }
-    pack_path(id, "title.png", path, sizeof path);
-    if (load_title_png(path, rec + TITLE_OFF)) have_title = 1;
-    else if (pk->cfg.name[0]) { render_title(pk->cfg.name, rec + TITLE_OFF); have_title = 1; }
+
+    /* TITLE: same "stock unless the shared file exists" rule as the face,
+     * with one exception -- a renamed card has no on-disc "stock title for a
+     * name that never existed" to fall back to, so the name is still
+     * rendered into a strip whenever there is no shared file AND the name
+     * has actually been edited. That is not a picture fallback; it is text
+     * the disc genuinely cannot already have a picture of. */
+    psx_card_packs_art_path(id, PSX_CARD_ART_TITLE, path, sizeof path);
+    have_title = file_mtime(path) != 0;
+    if (!have_title && pk->cfg.name[0]) {
+        render_title(pk->cfg.name, rec + TITLE_OFF);
+        title_override = 1;
+        have_title = 1;
+    }
 
     pk->cfg.has_art = have_art; pk->cfg.has_thumb = have_thumb; pk->cfg.has_title = have_title;
 
-    if (have_art || have_thumb || have_title) {
+    if (title_override) {
         for (int s = 0; s < REC_SECTORS; s++)
             psx_mod_cd_override_set(REC_LBA(id) + (uint32_t)s, rec + s * SECTOR, SECTOR);
         pk->rec_override = 1;
@@ -1525,10 +1599,11 @@ static int build_disc_side(Pack *pk)
         for (int s = 0; s < REC_SECTORS; s++) psx_mod_cd_override_clear(REC_LBA(id) + (uint32_t)s);
         pk->rec_override = 0;
     }
-    if (have_thumb) {
+    if (thumb_duel_override) {
         static uint8_t sec[SECTOR];
         if (psx_mod_cd_read_stock_sector(THUMB_LBA(id), sec)) {
-            memcpy(sec, rec + THUMB_OFF, THUMB_TOTAL);
+            memcpy(sec, thumb_idx, THUMB_BYTES);
+            for (int i = 0; i < 64; i++) { sec[THUMB_BYTES + i * 2] = (uint8_t)thumb_clut[i]; sec[THUMB_BYTES + i * 2 + 1] = (uint8_t)(thumb_clut[i] >> 8); }
             psx_mod_cd_override_set(THUMB_LBA(id), sec, SECTOR);
             pk->thumb_override = 1;
         }
@@ -1742,19 +1817,24 @@ static void assert_ram(void)
     }
 }
 
+/* mtime[0] is card.ini, in the card's own folder as always; mtime[1..3] are
+ * art/thumb/title, resolved through art_path() so a file appearing in (or
+ * vanishing from, or the active pack switching under) the shared folder is
+ * noticed exactly like an edit to the card's own copy always was. */
 static void note_mtimes(Pack *pk)
 {
-    static const char *const files[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
     char path[1200];
-    for (int i = 0; i < 4; i++) { pack_path(pk->cfg.id, files[i], path, sizeof path); pk->mtime[i] = file_mtime(path); }
+    pack_path(pk->cfg.id, "card.ini", path, sizeof path); pk->mtime[0] = file_mtime(path);
+    for (int i = 1; i < 4; i++) { art_path(pk->cfg.id, i, path, sizeof path); pk->mtime[i] = file_mtime(path); }
 }
 
 static int mtimes_changed(const Pack *pk)
 {
-    static const char *const files[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
     char path[1200];
-    for (int i = 0; i < 4; i++) {
-        pack_path(pk->cfg.id, files[i], path, sizeof path);
+    pack_path(pk->cfg.id, "card.ini", path, sizeof path);
+    if (file_mtime(path) != pk->mtime[0]) return 1;
+    for (int i = 1; i < 4; i++) {
+        art_path(pk->cfg.id, i, path, sizeof path);
         if (file_mtime(path) != pk->mtime[i]) return 1;
     }
     return 0;
@@ -1777,9 +1857,9 @@ static void load_pack(int id)
     cfg_reset(&pk->cfg, id);
     const int ini = read_ini(id, &pk->cfg);
     char path[1200];
-    pack_path(id, "art.png", path, sizeof path);   const int art = file_mtime(path) != 0;
-    pack_path(id, "thumb.png", path, sizeof path); const int thumb = file_mtime(path) != 0;
-    pack_path(id, "title.png", path, sizeof path); const int title = file_mtime(path) != 0;
+    art_path(id, PSX_CARD_ART_FACE, path, sizeof path);  const int art = file_mtime(path) != 0;
+    art_path(id, PSX_CARD_ART_THUMB, path, sizeof path); const int thumb = file_mtime(path) != 0;
+    art_path(id, PSX_CARD_ART_TITLE, path, sizeof path); const int title = file_mtime(path) != 0;
     pk->present = ini || art || thumb || title;
     take_stock(pk);
     note_mtimes(pk);
@@ -1965,6 +2045,10 @@ int psx_card_packs_remove(int id)
     static const char *const files[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
     char path[1200];
     for (int i = 0; i < 4; i++) { pack_path(id, files[i], path, sizeof path); remove(path); }
+    /* Also whichever of the three the shared pack folder is holding: "restore
+     * stock" means stock everywhere, not stock in this card's own folder
+     * while the Asset Manager's copy quietly keeps drawing. */
+    for (int k = 1; k < 4; k++) { art_shared_path(id, k, path, sizeof path); remove(path); }
     pack_path(id, NULL, path, sizeof path);
 #ifdef _WIN32
     _rmdir(path);
@@ -1981,11 +2065,20 @@ void psx_card_packs_reload(int id)
     if (s_pw_dirty) rebuild_password_table();
 }
 
+/* The face preview: the resolved PNG's own pixels first -- whether or not
+ * this card's disc bytes are actually overridden with them, since a shared
+ * HD file deliberately is NOT written into the disc record any more (see
+ * build_disc_side()) so the raw VRAM injector can substitute it in the real
+ * game instead. Reading only the disc would show "stock" for exactly the
+ * cards this player has replaced. Falls back to the disc (override, else
+ * stock) only when there is no file to decode at all. */
 int psx_card_packs_art_rgb(int id, uint8_t *out)
 {
     if (id < 1 || id > CARD_COUNT || !out) return 0;
+    char path[1200];
+    psx_card_packs_art_path(id, PSX_CARD_ART_FACE, path, sizeof path);
+    if (load_png_rgb(path, ART_W, ART_H, out)) return 1;
     static uint8_t rec[REC_SECTORS * SECTOR];
-    /* the override when present, else stock: read through the same LBAs */
     for (int s = 0; s < REC_SECTORS; s++) {
         const uint32_t lba = REC_LBA(id) + (uint32_t)s;
         int ok = 0;
@@ -1998,9 +2091,15 @@ int psx_card_packs_art_rgb(int id, uint8_t *out)
     return 1;
 }
 
+/* Same idea as psx_card_packs_art_rgb(), and for the same reason -- plus it
+ * shows the source picture instead of the 64-color quantized copy the duel
+ * stream actually carries, which is a truer preview of "yours" either way. */
 int psx_card_packs_thumb_rgb(int id, uint8_t *out)
 {
     if (id < 1 || id > CARD_COUNT || !out) return 0;
+    char path[1200];
+    psx_card_packs_art_path(id, PSX_CARD_ART_THUMB, path, sizeof path);
+    if (load_png_rgb(path, THUMB_W, THUMB_H, out)) return 1;
     static uint8_t sec[SECTOR];
     int ok = 0;
     if (s_packs[id] && s_packs[id]->thumb_override) {
@@ -2212,21 +2311,45 @@ static void card_packs_tick(void)
         { extern int psx_host_menu_settings_save(void); (void)psx_host_menu_settings_save(); }
     }
     frames++;
-    /* Hot reload: known packs every second, the whole tree every ten. */
+    /* Hot reload, known cards: every second. Cheap -- only the cards already
+     * tracked as present, normally a handful. */
     if ((frames % 60u) == 0u) {
         int changed = 0;
         for (int id = 1; id <= CARD_COUNT; id++)
             if (s_packs[id] && s_packs[id]->present && mtimes_changed(s_packs[id])) { load_pack(id); changed = 1; }
-        if ((frames % 600u) == 0u) {
-            for (int id = 1; id <= CARD_COUNT; id++) {
-                if (s_packs[id] && s_packs[id]->present) continue;
-                char path[1200];
-                pack_path(id, NULL, path, sizeof path);
-                struct stat st;
-                if (stat(path, &st) == 0) { load_pack(id); changed = 1; }
-            }
-        }
         if (changed || s_pw_dirty) rebuild_password_table();
+    }
+    /* Hot reload, brand-new cards: a small batch every frame instead of the
+     * whole table on a timer. A card whose only content is a shared-pack
+     * upload (no card.ini, no folder of its own) has no Pack struct at all
+     * until this notices it -- doing that check for all 722 cards at once,
+     * even on a once-a-second timer, is a burst of 700+ stat() calls in a
+     * single frame that got worse the longer a player had been testing (more
+     * files on disk to stat). NOTICE_PER_TICK cards a frame instead spreads
+     * the exact same total cost thin enough that no one frame notices it,
+     * while still covering the whole table roughly twice a second at 60 fps. */
+    {
+        enum { NOTICE_PER_TICK = 8 };
+        static int cursor = 1;
+        int changed = 0;
+        for (int n = 0; n < NOTICE_PER_TICK; n++) {
+            if (cursor > CARD_COUNT) cursor = 1;
+            const int id = cursor++;
+            if (s_packs[id] && s_packs[id]->present) continue;
+            char path[1200];
+            struct stat st;
+            pack_path(id, NULL, path, sizeof path);
+            int found = stat(path, &st) == 0;
+            for (int k = 1; !found && k < 4; k++) {
+                art_path(id, k, path, sizeof path);
+                found = file_mtime(path) != 0;
+            }
+            if (found) { load_pack(id); changed = 1; }
+        }
+        /* s_pw_dirty alone is already covered by the once-a-second block
+         * above within a second; this loop only needs to react to what it
+         * itself just found. */
+        if (changed) rebuild_password_table();
     }
     assert_ram();
 }

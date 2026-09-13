@@ -41,6 +41,7 @@
 
 #include "host_osd.h"
 #include "mod_plugins.h"
+#include "texture_pack.h"          /* arms the raw HD injector after a Pick art/thumb/title */
 #include "psx_card_db.h"
 #include "psx_card_packs.h"
 #include "psx_card_effects.h"
@@ -1788,13 +1789,14 @@ static void do_open_folder(void)
     say("Opened the card's folder");
 }
 
+/* Writes into the active HD texture pack's own shared folder -- the same
+ * "Card assets/card artworks|thumbnails|Titles/<id>.png" the Asset Manager
+ * reads and writes -- so picking a card's art here and uploading it there are
+ * the same action on the same file, not two folders quietly disagreeing. */
 static int install_pick(const char *src, int kind)
 {
-    static const char *const names[4] = { "", "art.png", "thumb.png", "title.png" };
     char dst[1200];
-    card_folder(dst, sizeof dst, 1);
-    const size_t n = strlen(dst);
-    snprintf(dst + n, sizeof dst - n, "/%s", names[kind]);
+    psx_card_packs_art_dest_path(s_sel, kind, dst, sizeof dst);
     FILE *in = psx_fopen_utf8(src, "rb");
     if (!in) return 0;
     FILE *out = psx_fopen_utf8(dst, "wb");
@@ -1803,6 +1805,18 @@ static int install_pick(const char *src, int kind)
     size_t got;
     while ((got = fread(buf, 1, sizeof buf, in)) > 0) fwrite(buf, 1, got, out);
     fclose(in); fclose(out);
+    /* Arm the raw VRAM injector on this same folder (a no-op if it already
+     * is) and ask it to re-read its files: the pick above just wrote a new
+     * one, and without this the injector's cached listing would not know it
+     * exists until something else happened to trigger a rescan. This is
+     * what lets the picture show at full resolution instead of stock (see
+     * build_disc_side() in psx_card_packs.c) -- deliberately only done here
+     * and on the Textures page opening, both explicit player actions, not
+     * at boot. */
+    char root[1024];
+    texpack_active_dir(root, sizeof root);
+    texpack_set_active_dir(root);
+    texpack_request_reload();
     return 1;
 }
 
@@ -2120,7 +2134,7 @@ static void draw_editor(void)
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_art ? "Face art: yours" : "Face art: stock", s_edit.has_art ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_thumb ? "Duel thumbnail: yours" : "Duel thumbnail: stock", s_edit.has_thumb ? COL_EDITED : COL_DIM, fs); y += lh;
         psx_ui_text(&s_cv, L->info_x, y + psx_ui_font_ascent(fs), s_edit.has_title ? "Title strip: yours (96x14)" : "Title strip: from the name (96x14)", s_edit.has_title ? COL_EDITED : COL_DIM, fs); y += lh + px(4.0f);
-        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in 256 colors. The duel thumbnail is 40x32 in 64 colors and is made from the face unless you pick one. The title strip is the 96x14 name banner and is drawn from the name unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
+        draw_wrapped(L->info_x, y, iw, "Any PNG works for the face; it becomes 102x96 in the Textures folder. The duel thumbnail is 40x32 and needs its own picture -- nothing is derived from the face any more. The title strip is the 96x14 name banner and is drawn from the name unless you pick one. A change shows on the next screen that draws the card.", COL_DIM, fs, 5);
     }
     }
     /* fields */
