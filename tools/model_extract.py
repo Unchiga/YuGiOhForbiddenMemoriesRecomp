@@ -8,8 +8,6 @@
           'scenes' (the seven duel backdrops in SU.MRG), or 'all'.
   --formats gltf,obj,json,png,raw    what to write (default: all of them)
   --preview                          also render a quick PNG of the bind pose
-  --side N                           which duel slot's texture layout to model
-                                     (only changes the documentation strings)
 
 Everything here is derived from the disc the way generated/ is derived from the
 EXE, so the output is build output, not source: nothing it writes is committed.
