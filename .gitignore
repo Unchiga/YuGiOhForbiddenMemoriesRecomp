@@ -124,6 +124,11 @@ starvation_dump.jsonl
 /src/psx_cd_sprites.c
 /src/psx_fusion_font.c
 
+# Card-frame PNGs: the disc's own card-body pixels through its palettes, plus
+# recolours of them. Reference material for authoring frame colours; the
+# game's palettes live in src/psx_card_color_palettes.h.
+/artifacts/card-frame-pngs/
+
 # Junction the setup host creates to the shared portable cmake/clang cache
 # (%LOCALAPPDATA%/retcomm/toolchains). Not ours and not shippable.
 /toolchain
