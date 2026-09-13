@@ -582,7 +582,6 @@ typedef struct {
     uint32_t desc_addr;
     /* disc-side */
     int      rec_override;            /* the 7 record sectors are overridden */
-    int      thumb_override;
     /* change detection */
     long     mtime[4];                /* card.ini art thumb title */
 } Pack;
@@ -1539,12 +1538,9 @@ static int build_disc_side(Pack *pk)
 {
     const int id = pk->cfg.id;
     static uint8_t rec[REC_SECTORS * SECTOR];
-    static uint8_t thumb_rgb[THUMB_BYTES * 3];
-    static uint8_t thumb_idx[THUMB_BYTES];
-    static uint16_t thumb_clut[64];
     char path[1200];
     int have_art = 0, have_thumb = 0, have_title = 0;
-    int title_override = 0, thumb_duel_override = 0;
+    int title_override = 0;
 
     if (!read_stock_record(id, rec)) return 0;
 
@@ -1559,21 +1555,17 @@ static int build_disc_side(Pack *pk)
     have_art = file_mtime(path) != 0;
 
     /* THUMBNAIL: two on-disc copies of the very same picture (see the file
-     * header). The art record's own copy -- what the password screen, card
-     * chest and library page draw, registered as "cards/mini/%03d" -- gets
-     * the same stock-bytes-stay-stock treatment as the face. The DUEL's copy
-     * (THUMB_LBA, a separate stream in a different layout entirely -- WA_MRG
-     * sector id-1, nothing to do with the art record's byte offsets) has no
-     * injector registration of its own, so it is the one place a picture
-     * still gets quantized into a classic override -- but only from this
-     * card's own "cards/mini" file. No more deriving one from the face when
-     * there is no dedicated thumbnail: nothing there means stock. */
+     * header) -- the art record's own ("cards/mini/%03d") and the DUEL's
+     * separate stream ("cards/duel_thumb/%03d", psx_wa_catalog.c). Both are
+     * registered with the raw injector now (2026-09-14: the duel stream used
+     * to have no registration of its own, so this field was the one place
+     * still stuck quantizing a picture into a classic disc override -- the
+     * exact thing this whole system exists to avoid). Both get the same
+     * stock-bytes-stay-stock treatment as the face: nothing to decode any
+     * more, just "does a file exist", since the injector does the actual
+     * substituting in every context a thumbnail is drawn, duel included. */
     psx_card_packs_art_path(id, PSX_CARD_ART_THUMB, path, sizeof path);
-    have_thumb = load_png_rgb(path, THUMB_W, THUMB_H, thumb_rgb);
-    if (have_thumb) {
-        quantize(thumb_rgb, THUMB_BYTES, 64, thumb_idx, thumb_clut);
-        thumb_duel_override = 1;
-    }
+    have_thumb = file_mtime(path) != 0;
 
     /* TITLE: same "stock unless the shared file exists" rule as the face,
      * with one exception -- a renamed card has no on-disc "stock title for a
@@ -1599,19 +1591,7 @@ static int build_disc_side(Pack *pk)
         for (int s = 0; s < REC_SECTORS; s++) psx_mod_cd_override_clear(REC_LBA(id) + (uint32_t)s);
         pk->rec_override = 0;
     }
-    if (thumb_duel_override) {
-        static uint8_t sec[SECTOR];
-        if (psx_mod_cd_read_stock_sector(THUMB_LBA(id), sec)) {
-            memcpy(sec, thumb_idx, THUMB_BYTES);
-            for (int i = 0; i < 64; i++) { sec[THUMB_BYTES + i * 2] = (uint8_t)thumb_clut[i]; sec[THUMB_BYTES + i * 2 + 1] = (uint8_t)(thumb_clut[i] >> 8); }
-            psx_mod_cd_override_set(THUMB_LBA(id), sec, SECTOR);
-            pk->thumb_override = 1;
-        }
-    } else if (pk->thumb_override) {
-        psx_mod_cd_override_clear(THUMB_LBA(id));
-        pk->thumb_override = 0;
-    }
-    return pk->rec_override || pk->thumb_override;
+    return pk->rec_override;
 }
 
 /* The price/password table is one block for all cards, so it is rebuilt
@@ -1867,8 +1847,7 @@ static void load_pack(int id)
         build_disc_side(pk);
     } else {
         if (pk->rec_override) for (int s = 0; s < REC_SECTORS; s++) psx_mod_cd_override_clear(REC_LBA(id) + (uint32_t)s);
-        if (pk->thumb_override) psx_mod_cd_override_clear(THUMB_LBA(id));
-        pk->rec_override = pk->thumb_override = 0;
+        pk->rec_override = 0;
     }
     if (had_pw || pk->cfg.price >= 0 || pk->cfg.password[0]) s_pw_dirty = 1;
     layout_names();
@@ -2092,8 +2071,10 @@ int psx_card_packs_art_rgb(int id, uint8_t *out)
 }
 
 /* Same idea as psx_card_packs_art_rgb(), and for the same reason -- plus it
- * shows the source picture instead of the 64-color quantized copy the duel
- * stream actually carries, which is a truer preview of "yours" either way. */
+ * shows the real source picture rather than a stock fallback for exactly the
+ * cards this player has replaced -- the duel stream is never overridden any
+ * more (see build_disc_side()), so a stock read is the honest fallback here
+ * too. */
 int psx_card_packs_thumb_rgb(int id, uint8_t *out)
 {
     if (id < 1 || id > CARD_COUNT || !out) return 0;
@@ -2101,11 +2082,7 @@ int psx_card_packs_thumb_rgb(int id, uint8_t *out)
     psx_card_packs_art_path(id, PSX_CARD_ART_THUMB, path, sizeof path);
     if (load_png_rgb(path, THUMB_W, THUMB_H, out)) return 1;
     static uint8_t sec[SECTOR];
-    int ok = 0;
-    if (s_packs[id] && s_packs[id]->thumb_override) {
-        ok = cdrom_override_get(THUMB_LBA(id), sec);
-    }
-    if (!ok && !psx_mod_cd_read_stock_sector(THUMB_LBA(id), sec)) return 0;
+    if (!psx_mod_cd_read_stock_sector(THUMB_LBA(id), sec)) return 0;
     rgb_from_indexed(sec, sec + THUMB_BYTES, THUMB_BYTES, out);
     return 1;
 }
@@ -2119,7 +2096,7 @@ int psx_card_packs_state_json(char *out, unsigned cap)
         const Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
         n += (unsigned)snprintf(out + n, cap - n, "%s{\"id\":%d,\"name\":\"%s\",\"rec\":%d,\"thumb\":%d,\"renamed\":%d,\"desc\":%d}",
-                                first ? "" : ",", id, pk->cfg.name, pk->rec_override, pk->thumb_override, pk->enc_len > 0, pk->denc_len > 0);
+                                first ? "" : ",", id, pk->cfg.name, pk->rec_override, pk->cfg.has_thumb, pk->enc_len > 0, pk->denc_len > 0);
         first = 0;
     }
     n += (unsigned)snprintf(out + n, cap - n, "]");
@@ -2205,7 +2182,6 @@ static void unload_all(void)
         if (pk->present) {
             restore_ram(pk);
             if (pk->rec_override) for (int s = 0; s < REC_SECTORS; s++) psx_mod_cd_override_clear(REC_LBA(id) + (uint32_t)s);
-            if (pk->thumb_override) psx_mod_cd_override_clear(THUMB_LBA(id));
         }
         free(pk);
         s_packs[id] = NULL;
