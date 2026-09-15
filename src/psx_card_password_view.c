@@ -21,12 +21,13 @@
  * over the list or floating beside a card back. Circle's new-press bit is an
  * immediate additional close edge for the non-animated Library view.
  *
- * The eight white digits sit at the bottom-right of the description panel.
- * The common animated card and the shorter static Library card have different
- * panel bottoms, so their Y origins differ. Both positions are below the
- * seventh description baseline and just inside the panel's lower gray frame.
- * A compact, transparent 3x5 digit face needs no label or background badge and
- * keeps even a full seven-line description reachable and unobscured.
+ * The eight white digits sit in the lower-right corner of the Guardian Star
+ * panel, right of the two star names, with the same inset from the panel's
+ * lower gray frame that the old description-panel spot used. The animated card
+ * (duel, deck, chest) draws its right column 20 rows lower than the static
+ * Library card (Guardian Star frame bottom at y 107 against 87, measured), so
+ * their Y origins differ. The description panel stays entirely free for text.
+ * A compact, transparent 3x5 digit face needs no label or background badge.
  * It stays in 320x240 guest coordinates through
  * psx_guest_overlay. No guest RAM, VRAM, save data or RNG state is changed.
  */
@@ -65,8 +66,8 @@
 #define CANVAS_W 31
 #define CANVAS_H 5
 #define ORIGIN_X 280
-#define ORIGIN_Y_LIBRARY 185
-#define ORIGIN_Y_ANIMATED 205
+#define ORIGIN_Y_LIBRARY 81
+#define ORIGIN_Y_ANIMATED 101
 #define COL_VALUE 0xFFFFFFFFu
 
 static uint32_t s_px[CANVAS_W * CANVAS_H];
