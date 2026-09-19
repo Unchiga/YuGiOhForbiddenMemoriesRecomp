@@ -102,6 +102,7 @@ static int      s_stock_ok, s_patched;
 static uint32_t s_map_addr;
 
 static uint8_t  s_slot[CARD_COUNT + 1];      /* wanted slot per card */
+static uint8_t  s_type_slot[CARD_COUNT + 1]; /* stock_slot() when s_slot was built */
 static uint8_t  s_table[361];
 static unsigned s_seen_gen = (unsigned)-1;
 static int      s_non_stock, s_has_custom;
@@ -127,6 +128,7 @@ static void rebuild(void)
     for (int id = 1; id <= CARD_COUNT; id++) {
         PsxCardPack c;
         int slot = stock_slot(id);
+        s_type_slot[id] = (uint8_t)slot;
         if (psx_card_packs_get(id, &c)) {
             if (c.color >= 0 && c.color < PSX_CARD_COLOR_COUNT) slot = c.color;
             else if (slot == 0 && psx_card_effects_monster_has_effect(id)) slot = PSX_CARD_COLOR_ORANGE;
@@ -399,8 +401,15 @@ static void tick(void)
     if (!s_map_addr) return;
     take_stock();
     if (!s_stock_ok) return;
+    /* A card.ini type edit reaches the stats word a frame or more after the
+     * generation bump (the card-pack layer asserts it on its own tick), and
+     * a removed pack's stock type comes back the same way. Rebuild on either
+     * signal, or a ritual turned monster keeps its blue frame. */
     const unsigned gen = psx_card_packs_generation();
-    if (gen != s_seen_gen) {
+    int stale = gen != s_seen_gen;
+    for (int id = 1; id <= CARD_COUNT && !stale; id++)
+        if (stock_slot(id) != s_type_slot[id]) stale = 1;
+    if (stale) {
         s_seen_gen = gen;
         rebuild();
     }

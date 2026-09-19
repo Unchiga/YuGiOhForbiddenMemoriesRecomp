@@ -660,7 +660,7 @@ static int field_fits(int f)
     case F_RITUAL:  return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_RITUAL;
     case F_EQUIP_BONUS: case F_EQUIPS: return t == 23;
     case F_BOOST: case F_FIELD_TARGETS: return s_sel >= 330 && s_sel <= 335;
-    case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686;
+    case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686 && t == 21;   /* a trap turned into anything else never springs */
     case F_IMMUNE: return is_monster();
     default:
         if (is_rulef(f)) {
