@@ -34,7 +34,8 @@
  * BONUS: the row modifier +0x12 (the field equips and curses use) gets the
  *   difference between the wanted bonus (flat + per ally + per enemy) and
  *   what this row already carries, tracked per row and card. The rows a
- *   battle lifts out of their zones stay on the field for this.
+ *   battle, a fusion or an equip lifts out of their zones stay on the field
+ *   for this, and do not summon again when they land.
  * IMMUNE: traps -- the trap check's entry hook zeroes the six ceilings for
  *   an immune attacker (the effects layer restores them next frame);
  *   magic -- the destroy helper's entry hook, while an effect runs, points
@@ -125,7 +126,8 @@ static Battle s_bat;
 typedef struct { int id, applied; } Bonus;
 static Bonus s_bonus[30];
 static int   s_facedown[30];      /* card id of a monster set face-down in this row (its flip is still to come) */
-static uint8_t s_present[30];     /* occupied last frame: makes summon detection independent of dispatcher aliases */
+static uint8_t s_present[30];     /* occupied last frame: makes summon detection independent of dispatcher aliases;
+                                   * 2 = lifted as a fusion or equip material (see lifted()) */
 static uint8_t s_turn_last[2];
 static int s_in_duel;
 
@@ -343,11 +345,17 @@ static void casts_tick(void)
  * and the +0x12 modifier, and they come back before the action ends (2D at
  * state 0xB, 3D before the scene) unless destroyed. Such a row is still on
  * the field. Read as empty, its return was a fresh summon: the bonus it
- * still carried was added again on every battle, and on_summon fired again. */
-static int lifted_by_battle(int row, unsigned fl)
+ * still carried was added again on every battle, and on_summon fired again.
+ * A field monster picked as a fusion or equip material (row flag 0x400) is
+ * lifted the same way, from the confirmed pick through actions 7 and 8. The
+ * landing (action 8 state 4) copies the result's record and +0x12 into the
+ * row: an equip returns the same monster, its bonus added in place, and
+ * enters action 8 with 0x4000 set (no Guardian Star to choose); a fusion
+ * result or a card played over it is a new monster, entered without it. */
+static int lifted(int row, unsigned fl)
 {
     return !(fl & 0x8000u) && s_present[row] && row_id(row) == s_bonus[row].id &&
-           (psx_mod_read_half(ACTION) & 0xFu) == 9u;
+           ((fl & 0x0400u) || (psx_mod_read_half(ACTION) & 0xFu) == 9u);
 }
 
 /* How many of side s's field monsters a filter counts: any monster, or
@@ -365,7 +373,7 @@ static int count_matching(int s, int filter, int self_row)
         const int row = 15 * s + r;
         if (row == self_row && filter <= 0) continue;
         const unsigned fl = row_flags(row);
-        if (!(fl & 0x8000u) && !lifted_by_battle(row, fl)) continue;
+        if (!(fl & 0x8000u) && !lifted(row, fl)) continue;
         if (filter <= 0) { n++; continue; }
         if (fl & 0x1000u) continue;
         const int id = row_id(row);
@@ -384,12 +392,17 @@ static void bonus_tick(void)
         const unsigned fl = row_flags(row);
         const int id = row_id(row);
         Bonus *b = &s_bonus[row];
-        if (lifted_by_battle(row, fl)) continue;   /* frozen as it was when the battle began */
+        if (lifted(row, fl)) {            /* frozen as it was when it was lifted */
+            if (fl & 0x0400u) s_present[row] = 2;
+            continue;
+        }
         if (!(fl & 0x8000u) || id < 1 || id > CARD_COUNT) {
             b->id = id; b->applied = 0; s_facedown[row] = 0; s_present[row] = 0;
             continue;
         }
-        if (!s_present[row] || id != b->id) {
+        const int landed_new = s_present[row] == 2 && !(psx_mod_read_half(ACTION) & 0x4000u);
+        if (s_present[row] == 2) s_present[row] = 1;
+        if (!s_present[row] || id != b->id || landed_new) {
             const Mfx *placed = mfx(id);
             b->id = id; b->applied = 0; s_present[row] = 1;
             if (fl & 0x1000u) {
@@ -601,10 +614,33 @@ static void hook_action11(struct CPUState *cpu, uint32_t address)
     s_bat.pathA = 0;
 }
 
+/* The trap check picks its traps by card id (681..686 on the field), not
+ * by type, so one of them edited into an equip or a spell still fired from
+ * the field. Hide such rows from this one check; hook_after_fx puts the
+ * flags back before the next action dispatch, as for magic immunity. */
+static void hide_retyped_traps(void)
+{
+    for (int row = 0; row < 30; row++) {
+        if (row % 15 < 5) continue;                   /* the hand is never scanned */
+        const int id = row_id(row);
+        const unsigned fl = row_flags(row);
+        if (id < 681 || id > 686 || !(fl & 0x8000u)) continue;
+        const uint32_t w = psx_mod_read_word(0x801D4244u + (uint32_t)(id - 1) * 4u);
+        if (((w >> 26) & 0x1Fu) == 21u) continue;
+        const uint32_t bit = 1u << row;
+        if (s_magic_hidden & bit) continue;
+        s_magic_hidden_flags[row] = (uint16_t)fl;
+        s_magic_hidden |= bit;
+        psx_mod_write_half(ROWS + (uint32_t)row * ROW_STRIDE + ROW_FLAGS, (uint16_t)(fl & ~0x8000u));
+        ev("trap_retyped", id, row, 0);
+    }
+}
+
 static void hook_trap(struct CPUState *cpu, uint32_t address)
 {
     if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
     (void)address;
+    hide_retyped_traps();
     const uint32_t obj = cpu->gpr[4];
     if (!obj) return;
     const int row = psx_mod_read_byte(obj + 0x6A);
