@@ -1696,6 +1696,27 @@ static void restore_ram(Pack *pk)
     if (ab != AUX_STOCK)   psx_mod_write_byte(ab + (uint32_t)id, pk->stock_aux);
 }
 
+/* Magic, Trap, Ritual and Equip (types 20..23) carry no ATK, DEF, Guardian
+ * Stars or level: all 101 stock non-monsters hold 0 in every one of those
+ * fields, and their attribute is the label the card frame prints — Trap for
+ * type 21, Magic for the rest (checked across SLUS_014.11's whole table).
+ *
+ * The game's screens do NOT gate those fields on the type. The build-deck row
+ * draws a Guardian-Star icon for any nonzero nibble, so a monster given
+ * type = Equip kept showing the monster's own pair beside the Equip icon
+ * (reported 2026-09-19: card 701 as "Spell Tag" still wearing Sun/Saturn).
+ * Stock never exposes that because stock never puts a star on a non-monster.
+ *
+ * So the monster-only bits are cleared alongside the type, which makes a
+ * converted card read exactly like a stock card of its new type everywhere at
+ * once. Nothing is lost: the pack's stock snapshot is untouched, so putting
+ * the monster type back brings the original numbers back with it. */
+#define TYPE_FIRST_NON_MONSTER 20
+#define TYPE_TRAP              21
+#define ATTR_MAGIC              6      /* ATTR_NAMES[6] */
+#define ATTR_TRAP               7      /* ATTR_NAMES[7] */
+static int word_type(uint32_t w) { return (int)((w >> 26) & 0x1Fu); }
+
 static uint32_t target_word(const Pack *pk)
 {
     uint32_t w = pk->stock_word;
@@ -1705,14 +1726,18 @@ static uint32_t target_word(const Pack *pk)
     if (c->star2 >= 0)   w = (w & ~(0xFu << 18))   | (((uint32_t)c->star2 & 0xFu) << 18);
     if (c->star1 >= 0)   w = (w & ~(0xFu << 22))   | (((uint32_t)c->star1 & 0xFu) << 22);
     if (c->type >= 0)    w = (w & ~(0x1Fu << 26))  | (((uint32_t)c->type & 0x1Fu) << 26);
+    if (word_type(w) >= TYPE_FIRST_NON_MONSTER)
+        w &= ~0x03FFFFFFu;                        /* ATK, DEF and both stars */
     return w;
 }
 
-static uint8_t target_aux(const Pack *pk)
+static uint8_t target_aux(const Pack *pk, uint32_t word)
 {
     uint8_t a = pk->stock_aux;
     if (pk->cfg.level >= 0)     a = (uint8_t)((a & 0xF0u) | ((uint32_t)pk->cfg.level & 0xFu));
     if (pk->cfg.attribute >= 0) a = (uint8_t)((a & 0x0Fu) | (((uint32_t)pk->cfg.attribute & 0xFu) << 4));
+    if (word_type(word) >= TYPE_FIRST_NON_MONSTER)
+        a = (uint8_t)((word_type(word) == TYPE_TRAP ? ATTR_TRAP : ATTR_MAGIC) << 4);
     return a;
 }
 
@@ -1729,7 +1754,7 @@ static void assert_ram(void)
         if (!pk || !pk->present) continue;
         if (!take_stock(pk)) continue;
         const uint32_t w = target_word(pk);
-        const uint8_t  a = target_aux(pk);
+        const uint8_t  a = target_aux(pk, w);
         if (psx_mod_read_word(STATS_STOCK + (uint32_t)(id - 1) * 4u) != w) psx_mod_write_word(STATS_STOCK + (uint32_t)(id - 1) * 4u, w);
         if (sb != STATS_STOCK && psx_mod_read_word(sb + (uint32_t)(id - 1) * 4u) != w) psx_mod_write_word(sb + (uint32_t)(id - 1) * 4u, w);
         if (psx_mod_read_byte(AUX_STOCK + (uint32_t)id) != a) psx_mod_write_byte(AUX_STOCK + (uint32_t)id, a);
