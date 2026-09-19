@@ -30,7 +30,7 @@
 #endif
 
 #include "mod_plugins.h"
-#include "psx_card_db.h"        /* the randomizer draws monsters, so it needs each card's type */
+#include "psx_card_db.h"        /* the randomizer draws by kind, so it needs each card's type */
 #include "psx_cpu_data.h"
 #include "psx_drop_db.h"
 #include "psx_drop_missing.h"
@@ -997,9 +997,10 @@ int psx_drop_edits_load_file(const char *name_or_path)
 /* --- randomize -------------------------------------------------------------
  *
  * Every duelist's three bands rebuilt from STOCK: each band keeps its number
- * of drops, every monster slot gets a monster drawn from all the monsters in
- * the game (no repeats within a band), the magic, trap, equip and ritual
- * slots keep their card, and every slot gets a fresh weight. The band still
+ * of drops and its mix of kinds. Every slot gets a card of the same kind as
+ * the stock one (monster, magic, trap, ritual or equip) drawn from all the
+ * cards of that kind in the game, no repeats within a band, and a fresh
+ * weight. Keeping the kinds keeps a duelist's share of spells and rituals. The band still
  * totals 2048 by construction, and each finished table is trial-applied over
  * the stock tier through the one renormalizer before anything is kept, so a
  * table the game could not roll is never recorded.
@@ -1024,11 +1025,35 @@ static uint32_t rnd_below(uint32_t n) { return n ? rnd() % n : 0; }
  * in psx_card_db's table. */
 #define TYPE_MAGIC 20
 
-static int is_monster(int id)
+#define KINDS 5          /* monster, then magic, trap, ritual, equip */
+
+/* 0 monster, 1..4 the type codes 20..23, -1 unreadable */
+static int kind_of(int id)
 {
     int a = 0, d = 0, ty = -1;
-    if (!psx_card_db_stats(id, &a, &d, &ty)) return 0;
-    return ty >= 0 && ty < TYPE_MAGIC;
+    if (!psx_card_db_stats(id, &a, &d, &ty) || ty < 0 || ty > TYPE_MAGIC + 3) return -1;
+    return ty < TYPE_MAGIC ? 0 : ty - TYPE_MAGIC + 1;
+}
+
+/* A card of the kind not yet in this band; when every one is taken (a band
+ * cannot hold more of a kind than exist, so only a pool emptied by edited
+ * types), the stock card itself if free, else a monster. */
+static uint16_t draw_card(uint16_t pools[KINDS][NCARDS], const int *pool_n, int kind,
+                          int stock, const uint8_t *used)
+{
+    if (kind >= 0) {
+        int free_n = 0;
+        for (int i = 0; i < pool_n[kind]; i++) if (!used[pools[kind][i]]) free_n++;
+        if (free_n) {
+            int k = (int)rnd_below((uint32_t)free_n);
+            for (int i = 0; i < pool_n[kind]; i++)
+                if (!used[pools[kind][i]] && k-- == 0) return pools[kind][i];
+        }
+    }
+    if (stock >= 1 && stock <= NCARDS && !used[stock]) return (uint16_t)stock;
+    uint16_t c;
+    do c = pools[0][rnd_below((uint32_t)pool_n[0])]; while (used[c]);
+    return c;
 }
 
 /* n random weights that total 2048, each at least 1. The draw is a square,
@@ -1060,12 +1085,14 @@ int psx_drop_edits_randomize(uint32_t seed, char *msg, unsigned cap)
         if (msg && cap) snprintf(msg, cap, "Card types are not readable yet: start the game first");
         return 0;
     }
-    uint16_t pool[NCARDS];
-    int pool_n = 0;
-    for (int id = 1; id <= NCARDS; id++)
-        if (is_monster(id)) pool[pool_n++] = (uint16_t)id;
-    if (pool_n < 160) {          /* a stock band holds up to 149 drops */
-        if (msg && cap) snprintf(msg, cap, "Only %d monsters readable, cannot randomize", pool_n);
+    static uint16_t pools[KINDS][NCARDS];
+    int pool_n[KINDS] = { 0 };
+    for (int id = 1; id <= NCARDS; id++) {
+        const int k = kind_of(id);
+        if (k >= 0) pools[k][pool_n[k]++] = (uint16_t)id;
+    }
+    if (pool_n[0] < 160) {       /* a stock band holds up to 149 drops */
+        if (msg && cap) snprintf(msg, cap, "Only %d monsters readable, cannot randomize", pool_n[0]);
         return 0;
     }
 
@@ -1088,18 +1115,10 @@ int psx_drop_edits_randomize(uint32_t seed, char *msg, unsigned cap)
             memset(used, 0, sizeof used);
             /* the stock cards leave the band unless drawn again */
             for (int i = 0; i < n; i++) touched[D->tier[t][i].card] = 1;
-            /* the kept (non-monster) slots claim their cards first */
             for (int i = 0; i < n; i++) {
-                const int c = D->tier[t][i].card;
-                cards[i] = 0;
-                if (c >= 1 && c <= NCARDS && !is_monster(c)) { cards[i] = (uint16_t)c; used[c] = 1; }
-            }
-            for (int i = 0; i < n; i++) {
-                if (cards[i]) continue;
-                uint16_t c;
-                do c = pool[rnd_below((uint32_t)pool_n)]; while (used[c]);
-                used[c] = 1;
-                cards[i] = c;
+                const int stock = D->tier[t][i].card;
+                cards[i] = draw_card(pools, pool_n, kind_of(stock), stock, used);
+                used[cards[i]] = 1;
             }
             if (n) random_weights(weights, n);
             for (int i = 0; i < n; i++) { vec[cards[i]][t] = weights[i]; touched[cards[i]] = 1; }
