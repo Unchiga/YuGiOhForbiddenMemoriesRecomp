@@ -93,6 +93,7 @@
 #define EQ_WORD_MM_P   0x8001A82Cu   /* addiu v0,v0,500     Megamorph extra pending */
 #define HOOK_MAGIC     0x80026BA4u
 #define HOOK_EQUIP     0x80019A08u
+#define KILL_ATK       0x8009B1ACu   /* s16: the kill handler's ATK threshold, byte x10 copied on its first call */
 #define STATS_STOCK    0x801D4244u
 #define DUEL_ROWS      0x801A7AD8u
 #define DUEL_ROW_SIZE  0x1Cu
@@ -549,8 +550,16 @@ static void hold_apply(void)
     case PSX_CARD_FX_HEAL:   assert_byte(HEAL_TAB, s_hold.heal); break;
     case PSX_CARD_FX_DAMAGE: assert_byte(BURN_TAB, s_hold.burn); break;
     case PSX_CARD_FX_DESTROY_TYPE:
-    case PSX_CARD_FX_DESTROY_ATK:
-    case PSX_CARD_FX_DESTROY_STRONGEST: assert_byte(KILL_TAB, s_hold.kill_id); assert_byte(KILL_TAB + 1, s_hold.kill_arg); break;
+    case PSX_CARD_FX_DESTROY_ATK: assert_byte(KILL_TAB, s_hold.kill_id); assert_byte(KILL_TAB + 1, s_hold.kill_arg); break;
+    case PSX_CARD_FX_DESTROY_STRONGEST:
+        assert_byte(KILL_TAB, s_hold.kill_id); assert_byte(KILL_TAB + 1, s_hold.kill_arg);
+        /* The handler's first call copies the byte x10 into KILL_ATK and sets
+         * FX_STATE bit 1; its scan starts some 40 frames later. The byte caps
+         * at 2550 and rounds down, so a 4000-ATK strongest took every monster
+         * from 2550 up with it: give the scan the exact ATK. */
+        if ((psx_mod_read_half(FX_STATE) & 1u) && psx_mod_read_half(KILL_ATK) != (uint16_t)s_hold_amount)
+            psx_mod_write_half(KILL_ATK, (uint16_t)s_hold_amount);
+        break;
     case PSX_CARD_FX_WEAKEN: s_malus_dirty = 1; assert_code(MALUS_WORD, s_hold.malus); break;
     default: break;
     }
@@ -650,7 +659,10 @@ static int fx_prepare(int fx, int amount, int target, int terrain, int phase)
             if (atk < 0) atk = 0; if (atk > 9999) atk = 9999;
             if (atk > best) best = atk;
         }
+        /* the byte only reaches 2550: hold_apply puts the exact ATK in the
+         * handler's 16-bit threshold once it has copied the byte */
         long a = best / 10; if (a < 21) a = 21; if (a > 255) a = 255;
+        s_hold_amount = best;
         ev(0x653u, best, (int)a, side);
         proxy = 653; s_hold.kill_id = 53; s_hold.kill_arg = (uint8_t)a; break;
     }
