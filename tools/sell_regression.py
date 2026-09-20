@@ -561,12 +561,22 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     # Every card has a maximum trunk. Bulk-select sells every trunk byte while
     # the 40 active deck card IDs and their multiplicities remain untouched.
     # Eighteen maximum legal explicit prices make the >32-bit accumulator case
-    # deterministic instead of depending on the stock price distribution.
+    # deterministic instead of depending on the stock price distribution. The
+    # temporary pack economy is raised too; otherwise its anti-arbitrage cap
+    # correctly lowers even an explicit card sell price.
+    shop_ini = player / "card_shop.ini"
+    stock_shop_ini = shop_ini.read_text(encoding="utf-8")
+    shop_ini.write_text(
+        "[prices]\ncommon = 999999\nuncommon = 999999\n"
+        "rare = 999999\nlegendary = 999999\n\n[packs]\ncards = 1\n",
+        encoding="utf-8")
     wide_cards = list(range(600, 618))
     for card in wide_cards:
         path = player / "cards" / str(card)
         path.mkdir(parents=True, exist_ok=True)
-        path.joinpath("card.ini").write_text("sell_price = 999999\n", encoding="utf-8")
+        path.joinpath("card.ini").write_text(
+            "price = 999999\nsell_price = 999999\n", encoding="utf-8")
+    time.sleep(0.1)  # allow the out-of-shop frame to invalidate cached pools
     runner.query("card_packs_reload")
     all_deck = list(range(1, DECK_SLOTS + 1))
     all_trunk = bytes([255]) * CARD_COUNT
@@ -598,6 +608,8 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
     evidence.check("all-722 commit caps starchips", all_after["chips"] == STARCHIP_CAP)
     for card in wide_cards:
         shutil.rmtree(player / "cards" / str(card))
+    shop_ini.write_text(stock_shop_ini, encoding="utf-8")
+    time.sleep(0.1)
     runner.query("card_packs_reload")
 
     evidence.data["cases"]["controlled"] = {
@@ -624,16 +636,27 @@ def exercise_backend(runner: Runner, evidence: Evidence, player: Path) -> None:
 def exercise_sell_price_data(runner: Runner, evidence: Evidence, player: Path) -> None:
     """Qualify the single card.ini field through reload and both containers."""
     card = 24
-    deck = deterministic_deck({card: 0})
-    trunk = bytearray(CARD_COUNT)
-    trunk[card - 1] = 1
     card_dir = player / "cards" / str(card)
     ini = card_dir / "card.ini"
     card_dir.mkdir(parents=True, exist_ok=True)
 
+    runner.query("card_manager_set", open=1)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        state = runner.query("card_manager_set", card=card)
+        if state.get("open") and state.get("card") == card and state.get("name"):
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"Cards page did not open for sell-price checks: {state!r}")
+
     def quoted_entry() -> dict[str, Any]:
-        install_inventory(runner, deck, bytes(trunk), 0)
-        return entry_map(sale_state(runner, "preview"))[card]
+        state = runner.query("card_manager_set", card=card)
+        return {
+            "id": card,
+            "sell_price": int(state["sell_price"]),
+            "price_source": state["sell_price_source"],
+        }
 
     ini.write_text("price = 10\n", encoding="utf-8")
     runner.query("card_packs_reload", card=card)
@@ -641,10 +664,17 @@ def exercise_sell_price_data(runner: Runner, evidence: Evidence, player: Path) -
     evidence.check("old card file without sell_price derives floor(price / 8)",
                    old_file["sell_price"] == 1 and old_file["price_source"] == "derived", old_file)
 
+    ini.write_text("price = 35000\n", encoding="utf-8")
+    runner.query("card_packs_reload", card=card)
+    expensive = quoted_entry()
+    evidence.check("ordinary expensive purchase price caps its default sale value at 500",
+                   expensive["sell_price"] == 500 and
+                   expensive["price_source"] == "derived", expensive)
+
     ini.write_text("price = 999999\n", encoding="utf-8")
     runner.query("card_packs_reload", card=card)
     sentinel = quoted_entry()
-    evidence.check("999999 purchase sentinel derives the capped 500 sale value",
+    evidence.check("999999 purchase sentinel also derives the capped 500 sale value",
                    sentinel["sell_price"] == 500 and sentinel["price_source"] == "derived", sentinel)
 
     # A sell-price-only pack must count as edited and survive export.

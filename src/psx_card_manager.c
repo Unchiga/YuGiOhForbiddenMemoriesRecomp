@@ -2234,7 +2234,7 @@ static void draw_editor(void)
             if (effective >= 0 && effective < derived)
                 snprintf(note, sizeof note, "derived; shop cap: %d", effective);
             else
-                snprintf(note, sizeof note, "derived: floor(Price / 8)");
+                snprintf(note, sizeof note, "derived: min(floor(Price / 8), 500)");
             psx_ui_text_clip(&s_cv, sx, psx_ui_baseline_in(v->y, v->h, fs),
                              note, COL_DIM, fs, right - sx);
         }

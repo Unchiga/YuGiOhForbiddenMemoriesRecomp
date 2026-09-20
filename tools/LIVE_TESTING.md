@@ -195,6 +195,13 @@ live deck `0x801D0200` (40
 u16 card IDs), live trunk `0x801D0250` (722 bytes), and live starchips
 `0x801D07E0` (u32); the save mirror is `+0x3000`. The title cap is 999,999.
 
+Default sell-price cap (verified live 2026-09-19): stock Ookazi (No.346,
+password price 35000) and Tremendous Fire (No.347, price 999999) both report
+`sell_price: "500"` and `sell_price_source: "derived"` through Card Manager.
+Before the fix Ookazi reported 4375. A scratch `sell_price = 777` on Ookazi
+reported 777 with source `override`, and removing/reloading that file restored
+the derived 500, confirming that the cap applies only to defaults.
+
 Free Duel and duels: `tools/goto_freeduel.py`, `tools/goto_duel.py`,
 `tools/duel_turns.py`. From the loaded-save menu: FREE DUEL, cross 20,
 cross 40 (clears the SELECT OPPONENT prompt) -> grid (mode 0xC6) with the

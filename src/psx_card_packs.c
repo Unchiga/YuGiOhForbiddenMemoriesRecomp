@@ -1897,9 +1897,10 @@ int psx_card_packs_derive_sell_price(int purchase)
     if (purchase < 0 || purchase > 999999) return -1;
     /* Password costs are exact integers. Floor division by eight is
      * deterministic, cannot overflow, and never produces a negative value.
-     * The game's 999999 "not realistically purchasable" sentinel gets a
-     * useful but bounded sale value of 500 instead of 124999. */
-    return purchase == 999999 ? 500 : purchase / 8;
+     * Cap the default at 500 so every expensive card gets the same bounded
+     * sale value; explicit sell_price overrides remain unrestricted. */
+    const int derived = purchase / 8;
+    return derived > 500 ? 500 : derived;
 }
 
 int psx_card_packs_sell_price(int id, int *overridden)

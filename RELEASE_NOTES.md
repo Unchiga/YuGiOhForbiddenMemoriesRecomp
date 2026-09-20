@@ -16,6 +16,9 @@ duel results screen and the Free Duel portraits.
 
 ### Fixed
 
+- Default card sell prices are now capped at 500 StarChips in FM Editor and
+  the Card Shop, including expensive cards such as Ookazi. Explicit sell-price
+  overrides remain available for mods that intentionally exceed that default.
 - Large edited-card sets no longer lose later cards' renamed titles in Build
   Deck or the Library after a reload. Renamed card text is no longer limited
   to the 1.2 KB of spare space in the game's original name bank.
