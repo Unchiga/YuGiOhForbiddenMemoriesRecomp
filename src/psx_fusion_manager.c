@@ -576,7 +576,8 @@ static void build_effective_equips(void)
     s_eq_groups = 0;
     for (int id = 1; id <= MAXID; id++) {
         PsxCardPack pk;
-        if (!psx_card_packs_get(id, &pk) || !(pk.equips_set || pk.equip_types)) continue;
+        if (!is_equip_id(id) || !psx_card_packs_get(id, &pk) ||
+            !(pk.equips_set || pk.equip_types)) continue;
         overridden[id] = 1;
         int any = 0;
         for (int m = 1; m <= MAXID; m++) {
@@ -587,7 +588,7 @@ static void build_effective_equips(void)
     }
     int last_key = 0;
     for (int i = 0; st && i < n_stock; i++) {
-        if (overridden[st[i].equip]) continue;
+        if (overridden[st[i].equip] || !is_equip_id(st[i].equip)) continue;
         if (st[i].equip != last_key) { s_eq_groups++; last_key = st[i].equip; }
         n = eq_push(n, st[i].equip, st[i].mon);
     }

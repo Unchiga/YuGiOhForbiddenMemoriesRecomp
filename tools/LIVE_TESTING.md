@@ -350,6 +350,16 @@ pairing at once. Verified 2026-09-07 on Elegant Egotist (318): add, duplicate
 refused, remove, a stock pairing removed down to 0 monsters, and `card_effects`
 reported `equip_override` 1 with nothing dropped.
 
+Equip-to-monster conversion (verified live 2026-09-19): Legendary Sword 301
+was given type Dinosaur without an `equips` key. Before the fix its Card JSON
+still exposed 63 stock equip rows alongside three genuine fusion recipes;
+clearing the card's fusions removed only the three recipes and left the stale
+equip rows. After the fix it exposes zero equip rows, clear-card reaches zero
+rows, and a fresh duel reports `fusion_try` 301+12 and 12+301 as result 0/kind
+0. The streamed table had 34 remaining groups, 3979 members and no dropped
+groups. Unedited Sword of Dark Destruction 302 still had 60 equip rows and
+302+374 resolved as result 374/kind 2, covering the unaffected stock path.
+
 The Fusions page now also exposes `Clear equips...`, explicitly meaning every
 Equip card, independently of `Clear fusions...`. The confirmation's first
 activation only opens the modal; cancel changes nothing, and confirm writes an

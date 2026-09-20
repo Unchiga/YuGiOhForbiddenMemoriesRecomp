@@ -185,6 +185,8 @@ static int equip_scratch_resident(void)
  * edited equip answers from its card.ini list, the way the game's hook does. */
 static uint16_t equip_lookup(uint16_t key, uint16_t member)
 {
+    int type = -1;
+    if (psx_fusion_db_stats(key, NULL, NULL, &type) && type != 23) return 0;
     const int edited = psx_card_effects_equip_fits(key, member);
     if (edited >= 0) return edited ? member : 0;
     uint32_t p = equip_groups_start();
@@ -389,9 +391,11 @@ int psx_fusion_db_walk_equips(PsxFusionEquipFn fn, void *ud)
         if (key == 0) break;
         const uint16_t count = psx_mod_read_half(p + 2u);
         p += 4u;
+        int type = -1;
+        const int enabled = !psx_fusion_db_stats(key, NULL, NULL, &type) || type == 23;
         for (uint16_t i = 0; i < count; i++) {
             const uint16_t member = psx_mod_read_half(p + (uint32_t)i * 2u);
-            if (member < 1 || member > PSX_FUSION_CARD_ID_MAX) continue;
+            if (!enabled || member < 1 || member > PSX_FUSION_CARD_ID_MAX) continue;
             seen++;
             if (!fn(ud, key, member)) return seen;
         }

@@ -16,6 +16,10 @@ duel results screen and the Free Duel portraits.
 
 ### Fixed
 
+- Equip cards converted into monsters no longer retain their stock usable-
+  monster list. Fusion Manager no longer shows those stale equip pairings,
+  and the converted card now resolves as a creature instead of powering up
+  and replacing another monster in a duel.
 - Default card sell prices are now capped at 500 StarChips in FM Editor and
   the Card Shop, including expensive cards such as Ookazi. Explicit sell-price
   overrides remain available for mods that intentionally exceed that default.

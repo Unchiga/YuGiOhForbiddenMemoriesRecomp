@@ -397,6 +397,25 @@ const char *psx_card_effects_note(int id, int type)
 }
 
 /* ---- rebuild: read the packs, redo the overrides and the wanted tables ----- */
+static int pack_disables_equip_group(int id)
+{
+    PsxCardPack c;
+    return psx_card_packs_get(id, &c) && c.type >= 0 && c.type != 23;
+}
+
+static int stock_has_disabled_equip(const uint8_t *stock)
+{
+    for (int p = 0; p + 4 <= EQUIP_USED; ) {
+        const int key = stock[p] | (stock[p + 1] << 8);
+        if (key == 0) break;
+        const int cnt = stock[p + 2] | (stock[p + 3] << 8);
+        if (cnt < 0 || p + 4 + 2 * cnt > EQUIP_USED) break;
+        if (pack_disables_equip_group(key)) return 1;
+        p += 4 + 2 * cnt;
+    }
+    return 0;
+}
+
 static void rebuild_equip_override(void)
 {
     static uint8_t stock[EQUIP_SECTORS * SECTOR], out[EQUIP_SECTORS * SECTOR];
@@ -404,6 +423,18 @@ static void rebuild_equip_override(void)
     for (int id = 1; id <= CARD_COUNT; id++) {
         const Fx *f = fx_of(id);
         if (f && (f->cfg.equips_set || f->cfg.equip_types)) { any = 1; break; }
+    }
+    /* A type edit can turn a stock Equip into a monster without leaving an
+     * authored equip list behind. Its stock group must still be removed from
+     * every terrain's streamed table or the guest continues to resolve it as
+     * an Equip after drawing it as a monster. */
+    if (!any) {
+        int ok = 1;
+        for (int s = 0; s < EQUIP_SECTORS && ok; s++)
+            ok = psx_mod_cd_read_stock_sector(EQUIP_LBA(0) + (uint32_t)s,
+                                               stock + s * SECTOR);
+        if (!ok) return;
+        any = stock_has_disabled_equip(stock);
     }
     if (!any) {
         if (s_equip_override) for (int k = 0; k < TERRAINS; k++) for (int s = 0; s < EQUIP_SECTORS; s++) psx_mod_cd_override_clear(EQUIP_LBA(k) + (uint32_t)s);
@@ -426,7 +457,9 @@ static void rebuild_equip_override(void)
             const int cnt = stock[p + 2] | (stock[p + 3] << 8);
             const int glen = 4 + 2 * cnt;
             const Fx *f = (key >= 1 && key <= CARD_COUNT) ? fx_of(key) : NULL;
-            if (f && (f->cfg.equips_set || f->cfg.equip_types)) {
+            if (pack_disables_equip_group(key)) {
+                /* Its effective card type is no longer Equip. */
+            } else if (f && (f->cfg.equips_set || f->cfg.equip_types)) {
                 /* The entry hook answers every overridden group through the
                  * scratch record. Omitting it here is both exact for an empty
                  * list and lets a 621-monster batch list fit: expanding that
@@ -791,7 +824,9 @@ int psx_card_effects_equip_fits(int equip, int mon)
      * editor show the previous list until the intro finished. The guest hook
      * and every editor view now answer from the same current data. */
     PsxCardPack c;
-    if (!psx_card_packs_get(equip, &c) || !(c.equips_set || c.equip_types)) return -1;
+    if (!psx_card_packs_get(equip, &c)) return -1;
+    if (c.type >= 0 && c.type != 23) return 0;
+    if (!(c.equips_set || c.equip_types)) return -1;
     for (int i = 0; i < c.equip_n; i++) if (c.equip_ids[i] == mon) return 1;
     const uint32_t m = c.equip_types;
     if (!m) return 0;
