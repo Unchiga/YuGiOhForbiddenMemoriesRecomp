@@ -1,5 +1,49 @@
 # Release notes
 
+## 0.6.2
+
+Extract this over your existing install as usual. Your saves, save states and
+settings all carry over.
+
+This update focuses on FM Editor type conversions and fixes several gameplay
+issues reported after 0.6.1.
+
+### FM Editor and cards
+
+- Cards converted into field spells now show the Boosts and Field creatures
+  controls. Their custom boosts and allow-lists work in duels and stay tied to
+  the card that set the terrain.
+- Equip cards converted into monsters no longer keep their old equip targets.
+  Fusion Manager no longer lists those stale pairings, and the converted card
+  behaves as a monster instead of playing the power-up animation and replacing
+  another card.
+- Cards converted from monsters into Magic, Trap, Ritual or Equip cards no
+  longer retain monster ATK, DEF, level or Guardian Stars. Their frame color
+  and trap-only settings now follow the edited type as well.
+- Large edited-card sets keep every renamed card title after a reload. Names
+  now remain correct in Build Deck and the Library as well as the full card
+  view.
+- Default sell prices are capped at 500 StarChips for every card, including
+  Ookazi and Tremendous Fire. Explicit mod overrides may still exceed 500.
+- Randomizing drop tables now randomizes every slot within its original kind,
+  including Magic, Trap, Ritual and Equip cards, while preserving each
+  duelist's original mix of card kinds.
+- Card-view passwords were moved into the Guardian Star panel so long
+  descriptions have the full description panel available.
+
+### Gameplay and interface
+
+- The intro story scene no longer stalls for roughly 14 seconds after Cross is
+  pressed. XA audio reads continue through EOF sectors, and affected existing
+  save states are repaired when loaded.
+- Returning from the mode-select menu now displays the **RETURN TO TITLE?**
+  confirmation prompt instead of appearing to ignore Circle.
+- Field bonuses no longer stack or re-trigger summon effects when a monster is
+  temporarily lifted for a fusion or equip animation. Retyped stock Trap cards
+  also no longer activate as traps.
+- Destroy-the-strongest effects now use the monster's exact ATK above 2550
+  instead of truncating the threshold and destroying additional monsters.
+
 ## 0.6.1
 
 Extract this over your existing install as usual. Your saves, save states and
@@ -16,20 +60,6 @@ duel results screen and the Free Duel portraits.
 
 ### Fixed
 
-- Equip cards converted into monsters no longer retain their stock usable-
-  monster list. Fusion Manager no longer shows those stale equip pairings,
-  and the converted card now resolves as a creature instead of powering up
-  and replacing another monster in a duel.
-- Default card sell prices are now capped at 500 StarChips in FM Editor and
-  the Card Shop, including expensive cards such as Ookazi. Explicit sell-price
-  overrides remain available for mods that intentionally exceed that default.
-- Large edited-card sets no longer lose later cards' renamed titles in Build
-  Deck or the Library after a reload. Renamed card text is no longer limited
-  to the 1.2 KB of spare space in the game's original name bank.
-- A monster or other card converted into a field spell now exposes the Boosts
-  and Field creatures controls in Card Manager. Its saved boost and allow-list
-  settings are applied when that card changes the terrain, without leaking to
-  another field spell that selects the same terrain.
 - Monster bonuses no longer stack up again on every battle. A monster lifted
   out of its zone for the battle animation was treated as re-summoned, so its
   bonus was added again, summon effects fired again, and a face-down defender
