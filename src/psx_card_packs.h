@@ -273,6 +273,9 @@ void psx_card_packs_art_dest_path(int id, int kind, char *out, unsigned cap);
  * assets" button, the only caller. Skips a card whose shared slot is already
  * occupied. Both out-params are optional. */
 void psx_card_packs_migrate_legacy_art(int *out_migrated, int *out_skipped);
+/* 1 if any card has a legacy picture waiting to be migrated. Cheap enough
+ * for a one-time check (see psx_asset_manager.c), not a per-frame poll. */
+int  psx_card_packs_has_legacy_art(void);
 /* The player's OWN set, <player-data>/cards, whichever set is live. What a
  * share file or a revert must address: the Dev Card Effects set is a
  * shipped mod and is never what a player means by "my cards". */

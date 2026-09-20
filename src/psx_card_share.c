@@ -16,14 +16,7 @@ extern void starvation_watchdog_heartbeat(void);
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <sys/stat.h>
-#ifdef _WIN32
-#include <direct.h>
-#define MKDIR(p) _mkdir(p)
-#else
-#include <unistd.h>
-#define MKDIR(p) mkdir(p, 0755)
-#endif
+#define MKDIR(p) psx_mkdir_utf8(p)
 
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
@@ -512,7 +505,7 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
         const int wrote = d && write_file(p, d, (size_t)sz);
         free(d);
         const int loaded = wrote ? psx_drop_edits_load_file(p) : -1;
-        remove(p);
+        (void)psx_remove_utf8(p);
         if (loaded < 0) {
             free(b);
             if (msg) snprintf(msg, cap,
@@ -524,21 +517,29 @@ int psx_card_share_import(const char *path, char *msg, unsigned cap)
     }
     char dir[1024]; cards_dir(dir, sizeof dir);
     MKDIR(dir);
-    /* the file's cards replace the player's: clear those first. card.ini
-     * (j==0) is still this card's own folder; the three pictures moved to
-     * the active pack's shared Textures folder in 2026-09-13 --
-     * psx_card_packs_art_path() reports wherever a picture actually is right
-     * now (the shared copy, or a not-yet-migrated legacy one), so removing
-     * THAT path is what "replace this card's picture" means today. */
-    for (int i = 0; i < info.card_n; i++) {
+    /* Clear only the exact file each archive ENTRY is about to replace, not
+     * every file type for every card id the archive merely mentions. An id
+     * can appear here for card.ini alone -- removing that same card's
+     * shared-folder pictures too (files this archive says nothing about)
+     * deleted art belonging to whatever HD pack happened to be active, not
+     * to this import (caught: importing a card.ini-only share for card 22
+     * deleted the active pack's 022.png). card.ini (file==0) is still this
+     * card's own folder; the three pictures resolve through
+     * psx_card_packs_art_path(), which reports wherever a picture actually
+     * is right now (the shared copy, or a not-yet-migrated legacy one). */
+    for (int i = 0; i < k; i++) {
+        int id, file;
+        if (!parse_card_name(ents[i].name, &id, &file)) continue;
         char p[1200];
-        for (int j = 0; j < 4; j++) {
-            if (j == 0) snprintf(p, sizeof p, "%s/%d/%s", dir, info.card_ids[i], CARD_FILES[j]);
-            else        psx_card_packs_art_path(info.card_ids[i], j, p, sizeof p);
-            remove(p);
+        if (file == 0) {
+            snprintf(p, sizeof p, "%s/%d/%s", dir, id, CARD_FILES[file]);
+            (void)psx_remove_utf8(p);
+            char cd[1200]; snprintf(cd, sizeof cd, "%s/%d", dir, id);
+            MKDIR(cd);
+        } else {
+            psx_card_packs_art_path(id, file, p, sizeof p);
+            (void)psx_remove_utf8(p);
         }
-        snprintf(p, sizeof p, "%s/%d", dir, info.card_ids[i]);
-        MKDIR(p);
     }
     int files = 0, bad = 0;
     for (int i = 0; i < k; i++) {

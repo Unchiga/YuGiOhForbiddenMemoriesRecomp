@@ -17,11 +17,19 @@ FILE *psx_fopen_utf8(const char *path, const char *mode);
  * fails leaves the file to be read back on the next launch. Returns 0 on
  * success, like remove(). */
 int psx_remove_utf8(const char *path);
+/* rename() for a UTF-8 path pair, same reason as the above. 0 on success,
+ * like rename(). */
+int psx_rename_utf8(const char *from, const char *to);
 /* 1 if a file or directory exists at a UTF-8 path, 0 otherwise (including
  * "could not tell"). Same ANSI-code-page problem as the above: on Windows,
  * plain stat() on an unspellable name reports "missing" for something that
  * is actually there. */
 int psx_path_exists_utf8(const char *path);
+/* mtime and size of a UTF-8 path. 1 on success; 0 (leaving both outputs
+ * untouched) if the path does not exist or could not be read -- same
+ * ANSI-code-page problem as the rest of this file. Either output pointer
+ * may be NULL. */
+int psx_stat_utf8(const char *path, long *out_mtime, long *out_size);
 /* mkdir() for a UTF-8 path -- same signature and "don't care, best effort"
  * usage as mkdir()/_mkdir() (every caller in this codebase ignores the
  * return and is really doing mkdir -p one segment at a time), just resolved

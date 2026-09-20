@@ -83,6 +83,10 @@ int  psx_cpu_portraits_count(void);
  * "Migrate assets" button, the only caller. Skips a duelist whose shared
  * slot is already occupied. Both out-params are optional. */
 void psx_cpu_migrate_legacy_portraits(int *out_migrated, int *out_skipped);
+/* 1 if any duelist has a legacy portrait waiting to be migrated. Cheap
+ * enough for a one-time check (see psx_asset_manager.c), not a per-frame
+ * poll. */
+int  psx_cpu_has_legacy_portraits(void);
 
 /* ---- the name ------------------------------------------------------------
  * What the FREE DUEL grid prints under the portrait, and what the campaign

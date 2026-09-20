@@ -81,7 +81,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
 #define rmdir _rmdir
@@ -453,9 +452,9 @@ static int file_exists(const char *p)
 
 static long file_mtime(const char *p)
 {
-    struct stat st;
-    if (stat(p, &st) != 0) return 0;
-    return (long)st.st_mtime ^ (long)(st.st_size << 8);
+    long mtime, size;
+    if (!psx_stat_utf8(p, &mtime, &size)) return 0;
+    return mtime ^ (size << 8);
 }
 
 /* The active HD texture pack's own slot for this portrait -- "Free duel/
@@ -509,7 +508,7 @@ static int move_file(const char *from, const char *to)
     char dir[1200]; snprintf(dir, sizeof dir, "%s", to);
     char *slash = strrchr(dir, '/');
     if (slash) { *slash = 0; psx_texture_export_mkdir_p(dir); }
-    if (rename(from, to) == 0) return 1;
+    if (psx_rename_utf8(from, to) == 0) return 1;
     /* Different filesystems/drives: rename() can't cross them, so fall back
      * to a plain read + write + delete of the original. */
     FILE *in = psx_fopen_utf8(from, "rb");
@@ -526,9 +525,22 @@ static int move_file(const char *from, const char *to)
     const int ok = fwrite(data, 1, (size_t)size, out) == (size_t)size;
     fclose(out);
     free(data);
-    if (!ok) { remove(to); return 0; }
-    remove(from);
+    if (!ok) { (void)psx_remove_utf8(to); return 0; }
+    (void)psx_remove_utf8(from);
     return 1;
+}
+
+/* 1 if any duelist has a legacy portrait waiting to be migrated. Same
+ * one-time-nudge purpose as psx_card_packs_has_legacy_art(), not a
+ * per-frame poll. */
+int psx_cpu_has_legacy_portraits(void)
+{
+    for (int d = 0; d < NDUEL; d++) {
+        char legacy[1200];
+        portrait_png(d, legacy, sizeof legacy);
+        if (file_mtime(legacy) != 0) return 1;
+    }
+    return 0;
 }
 
 /* Moves every legacy per-duelist portrait that still exists into the active
@@ -545,7 +557,14 @@ void psx_cpu_migrate_legacy_portraits(int *out_migrated, int *out_skipped)
         char shared[1200];
         portrait_png_shared(d, shared, sizeof shared);
         if (file_mtime(shared) != 0) { skipped++; continue; }
-        if (move_file(legacy, shared)) migrated++;
+        if (move_file(legacy, shared)) {
+            /* Same reasoning as psx_card_packs.c's migrate_legacy_art(): a
+             * portrait from before the injector required an exact multiple
+             * of the native tile size would otherwise migrate, be refused,
+             * and show stock with no visible reason why. */
+            (void)psx_texture_export_fit_native(shared, TILE_W, TILE_W);
+            migrated++;
+        }
     }
     if (out_migrated) *out_migrated = migrated;
     if (out_skipped) *out_skipped = skipped;
@@ -845,11 +864,7 @@ void psx_cpu_share_dir(char *out, unsigned cap)
     if (!out || !cap) return;
     if (dir && dir[0]) snprintf(out, cap, "%s/cpu_decks", dir);
     else               snprintf(out, cap, "cpu_decks");
-#ifdef _WIN32
-    (void)_mkdir(out);
-#else
-    (void)mkdir(out, 0755);
-#endif
+    (void)psx_mkdir_utf8(out);
 }
 
 static char *trim(char *s)

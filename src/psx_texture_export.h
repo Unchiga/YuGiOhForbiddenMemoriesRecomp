@@ -40,6 +40,19 @@ int psx_texture_export_one(const PsxWaAsset *a, int index, const char *root);
 int  psx_texture_export_write_png(const char *path, const uint8_t *rgba, int w, int h);
 void psx_texture_export_mkdir_p(char *path);
 
+/* If the PNG at `path` is not an exact integer multiple of native_w x
+ * native_h, bilinear-resamples it to the nearest one and overwrites it in
+ * place; a no-op (still returns 1) when the size already fits. Older
+ * builds accepted a picture of any size and resized it while building the
+ * quantized disc record; the raw-VRAM injector (texture_pack.c's
+ * entry_load()) is stricter -- an exact multiple only, see its own scale
+ * check -- so a picture from before that requirement needs this before it
+ * can ever actually be shown. Exists for psx_card_packs_migrate_legacy_art()
+ * / psx_cpu_migrate_legacy_portraits(), the only callers: a picture that
+ * only just moved into the shared folder is exactly the case a player has
+ * no other way to fix. Returns 0 on decode or write failure. */
+int  psx_texture_export_fit_native(const char *path, int native_w, int native_h);
+
 #ifdef __cplusplus
 }
 #endif

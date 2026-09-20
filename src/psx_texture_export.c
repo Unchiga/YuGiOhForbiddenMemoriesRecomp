@@ -56,6 +56,16 @@
 #include "psx_wa_catalog.h"
 #include "texture_pack.h"
 
+/* Only for psx_texture_export_fit_native() -- decoding an arbitrary picture
+ * back in, to resample it. Same defines as texture_pack.c's load_png(): the
+ * stb_image IMPLEMENTATION lives in one TU (psx_window_icon.cpp) built with
+ * STBI_NO_STDIO, so only stbi_load_from_memory() exists, and these defines
+ * must match that TU or the declarations here promise a function nothing
+ * ever compiled. */
+#define STBI_NO_STDIO
+#define STBI_ONLY_PNG
+#include "../psxrecomp/runtime/third_party/stb_image.h"
+
 #define PATH_MAX_   1024
 /* The largest image in the catalog, in TEXELS: the 256x768 UI sheet. The
  * RGBA scratch below is 768 KB of static storage -- big, but paid once and
@@ -729,3 +739,69 @@ int  psx_texture_export_write_png(const char *path, const uint8_t *rgba, int w, 
     return write_png_rgba(path, rgba, w, h);
 }
 void psx_texture_export_mkdir_p(char *path) { mkdir_p(path); }
+
+/* Bilinear-resamples src (sw x sh RGBA8) into a freshly malloc'd dw x dh
+ * RGBA8 buffer. Caller frees. NULL on allocation failure. */
+static uint8_t *resample_rgba(const uint8_t *src, int sw, int sh, int dw, int dh)
+{
+    uint8_t *dst = (uint8_t *)malloc((size_t)dw * (size_t)dh * 4u);
+    if (!dst) return NULL;
+    for (int y = 0; y < dh; y++) {
+        const double fy = (dh > 1) ? (double)y * (sh - 1) / (dh - 1) : 0.0;
+        const int y0 = (int)fy;
+        const int y1 = (y0 + 1 < sh) ? y0 + 1 : y0;
+        const double ty = fy - y0;
+        for (int x = 0; x < dw; x++) {
+            const double fx = (dw > 1) ? (double)x * (sw - 1) / (dw - 1) : 0.0;
+            const int x0 = (int)fx;
+            const int x1 = (x0 + 1 < sw) ? x0 + 1 : x0;
+            const double tx = fx - x0;
+            for (int c = 0; c < 4; c++) {
+                const double p00 = src[((size_t)y0 * sw + x0) * 4 + c];
+                const double p10 = src[((size_t)y0 * sw + x1) * 4 + c];
+                const double p01 = src[((size_t)y1 * sw + x0) * 4 + c];
+                const double p11 = src[((size_t)y1 * sw + x1) * 4 + c];
+                const double top = p00 + (p10 - p00) * tx;
+                const double bot = p01 + (p11 - p01) * tx;
+                dst[((size_t)y * dw + x) * 4 + c] = (uint8_t)(top + (bot - top) * ty + 0.5);
+            }
+        }
+    }
+    return dst;
+}
+
+int psx_texture_export_fit_native(const char *path, int native_w, int native_h)
+{
+    if (!path || native_w <= 0 || native_h <= 0) return 0;
+    FILE *f = psx_fopen_utf8(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END); const long len = ftell(f); fseek(f, 0, SEEK_SET);
+    if (len <= 0 || (unsigned long)len > 64u * 1024u * 1024u) { fclose(f); return 0; }
+    unsigned char *buf = (unsigned char *)malloc((size_t)len);
+    if (!buf) { fclose(f); return 0; }
+    const size_t got = fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    if (got != (size_t)len) { free(buf); return 0; }
+    int w = 0, h = 0, comp = 0;
+    stbi_uc *px = stbi_load_from_memory(buf, (int)len, &w, &h, &comp, 4);
+    free(buf);
+    if (!px) return 0;
+
+    /* Same shape entry_load() itself requires (texture_pack.c) -- already
+     * fits, nothing to do. */
+    if (w % native_w == 0 && h % native_h == 0 &&
+        w / native_w == h / native_h && w >= native_w) {
+        stbi_image_free(px);
+        return 1;
+    }
+
+    int scale = (int)(((double)w / native_w + (double)h / native_h) / 2.0 + 0.5);
+    if (scale < 1) scale = 1;
+    const int dw = native_w * scale, dh = native_h * scale;
+    uint8_t *rs = resample_rgba(px, w, h, dw, dh);
+    stbi_image_free(px);
+    if (!rs) return 0;
+    const int ok = write_png_rgba(path, rs, dw, dh);
+    free(rs);
+    return ok;
+}

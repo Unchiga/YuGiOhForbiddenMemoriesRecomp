@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <wchar.h>
 #include <direct.h>
+#include <sys/stat.h>
 #else
 #include <sys/stat.h>
 #include <dirent.h>
@@ -45,6 +46,26 @@ int psx_path_exists_utf8(const char *path)
 #else
     struct stat st;
     return stat(path, &st) == 0;
+#endif
+}
+
+int psx_stat_utf8(const char *path, long *out_mtime, long *out_size)
+{
+#ifdef _WIN32
+    wchar_t wpath[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, (int)(sizeof wpath / sizeof wpath[0])) <= 0)
+        return 0;
+    struct _stat64 st;
+    if (_wstat64(wpath, &st) != 0) return 0;
+    if (out_mtime) *out_mtime = (long)st.st_mtime;
+    if (out_size)  *out_size  = (long)st.st_size;
+    return 1;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    if (out_mtime) *out_mtime = (long)st.st_mtime;
+    if (out_size)  *out_size  = (long)st.st_size;
+    return 1;
 #endif
 }
 
@@ -100,6 +121,17 @@ int psx_dir_list_utf8(const char *dir, void (*cb)(const char *name, int is_dir, 
     closedir(dp);
     return 1;
 #endif
+}
+
+int psx_rename_utf8(const char *from, const char *to)
+{
+#ifdef _WIN32
+    wchar_t wfrom[2048], wto[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, from, -1, wfrom, (int)(sizeof wfrom / sizeof wfrom[0])) > 0 &&
+        MultiByteToWideChar(CP_UTF8, 0, to, -1, wto, (int)(sizeof wto / sizeof wto[0])) > 0)
+        return _wrename(wfrom, wto);
+#endif
+    return rename(from, to);
 }
 
 /* one UTF-16 code unit stream -> UTF-8 */

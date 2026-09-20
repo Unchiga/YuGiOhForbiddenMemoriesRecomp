@@ -73,13 +73,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
+#define MKDIR(p) psx_mkdir_utf8(p)
 #ifdef _WIN32
 #include <direct.h>
-#define MKDIR(p) _mkdir(p)
 #else
 #include <unistd.h>
-#define MKDIR(p) mkdir(p, 0755)
 #endif
 
 #include "cdrom.h"
@@ -710,9 +708,9 @@ static void pack_path(int id, const char *file, char *out, size_t cap)
 
 static long file_mtime(const char *path)
 {
-    struct stat st;
-    if (stat(path, &st) != 0) return 0;
-    return (long)st.st_mtime ^ (long)(st.st_size << 8);
+    long mtime, size;
+    if (!psx_stat_utf8(path, &mtime, &size)) return 0;
+    return mtime ^ (size << 8);
 }
 
 /* ---- where art.png / thumb.png / title.png actually live -----------------
@@ -799,7 +797,17 @@ static const char *const ART_NAME[4] = { "", "art.png", "thumb.png", "title.png"
 
 static void art_legacy_path(int id, int kind, char *out, size_t cap)
 {
-    pack_path(id, ART_NAME[kind], out, cap);
+    /* psx_card_packs_own_dir(), NOT pack_path()/s_dir: s_dir is the LIVE
+     * card set, which with Dev Card Effects on is mods/card_effects/cards,
+     * not the player's own cards/ folder these legacy pictures actually
+     * lived in. Migrating against s_dir reported "nothing to migrate" while
+     * the player's own cards/<id>/art.png was still sitting there
+     * unmigrated (caught in review). Legacy art was always per-PLAYER, not
+     * per active card set, so it must be looked for in the same place
+     * psx_mod_package.c's reset-all already uses for this exact reason. */
+    char buf[1200];
+    snprintf(buf, sizeof buf, "%s/%d/%s", psx_card_packs_own_dir(), id, ART_NAME[kind]);
+    snprintf(out, cap, "%s", buf);
 }
 
 /* rename() first -- atomic, and the common case since both paths are under
@@ -811,7 +819,7 @@ static int move_file(const char *from, const char *to)
     char dir[1200]; snprintf(dir, sizeof dir, "%s", to);
     char *slash = strrchr(dir, '/');
     if (slash) { *slash = 0; psx_texture_export_mkdir_p(dir); }
-    if (rename(from, to) == 0) return 1;
+    if (psx_rename_utf8(from, to) == 0) return 1;
     long size = 0;
     unsigned char *data = read_file(from, &size);
     if (!data) return 0;
@@ -820,8 +828,8 @@ static int move_file(const char *from, const char *to)
     const int ok = fwrite(data, 1, (size_t)size, out) == (size_t)size;
     fclose(out);
     free(data);
-    if (!ok) { remove(to); return 0; }
-    remove(from);
+    if (!ok) { (void)psx_remove_utf8(to); return 0; }
+    (void)psx_remove_utf8(from);
     return 1;
 }
 
@@ -829,8 +837,37 @@ static int move_file(const char *from, const char *to)
  * pack's shared folder, skipping (and counting separately) any card whose
  * shared slot is ALREADY occupied -- a newer upload there always wins over
  * an old file this never touches or overwrites. */
+/* 1 if any card has a legacy picture waiting to be migrated -- a quick,
+ * early-exiting version of the loop below, for a one-time "you have art to
+ * migrate" nudge (psx_asset_manager.c's psx_asset_manager_open()), not
+ * something run every frame or every open: reviewing the paired PR pointed
+ * out that a returning player has no way to know their art needs migrating
+ * short of stumbling onto the button, since nothing tells them it vanished. */
+int psx_card_packs_has_legacy_art(void)
+{
+    for (int id = 1; id <= CARD_COUNT; id++)
+        for (int kind = 1; kind <= 3; kind++) {
+            char legacy[1200];
+            art_legacy_path(id, kind, legacy, sizeof legacy);
+            if (file_mtime(legacy) != 0) return 1;
+        }
+    return 0;
+}
+
 void psx_card_packs_migrate_legacy_art(int *out_migrated, int *out_skipped)
 {
+    /* Native (DISPLAY) size per kind, the same numbers ART_W/ART_H etc name
+     * -- entry_load() (texture_pack.c) only accepts a file whose size is an
+     * exact integer multiple of these. Builds before that requirement
+     * accepted any size and resized at quantize time, so a legacy file can
+     * easily fail this and, since it has just been moved out of the only
+     * place anything used to read it, show stock with no way for the player
+     * to tell why (caught in review: a 500x500 legacy art.png migrated,
+     * then was refused and stayed stock). psx_texture_export_fit_native()
+     * resamples it to the nearest multiple after the move, so it actually
+     * displays. */
+    static const int NATIVE_W[4] = { 0, ART_W, THUMB_W, TITLE_W };
+    static const int NATIVE_H[4] = { 0, ART_H, THUMB_H, TITLE_H };
     int migrated = 0, skipped = 0;
     for (int id = 1; id <= CARD_COUNT; id++) {
         for (int kind = 1; kind <= 3; kind++) {
@@ -840,7 +877,10 @@ void psx_card_packs_migrate_legacy_art(int *out_migrated, int *out_skipped)
             char shared[1200];
             art_shared_path(id, kind, shared, sizeof shared);
             if (file_mtime(shared) != 0) { skipped++; continue; }
-            if (move_file(legacy, shared)) migrated++;
+            if (move_file(legacy, shared)) {
+                (void)psx_texture_export_fit_native(shared, NATIVE_W[kind], NATIVE_H[kind]);
+                migrated++;
+            }
         }
     }
     if (out_migrated) *out_migrated = migrated;
@@ -1923,8 +1963,7 @@ static void scan_all(void)
     for (int id = 1; id <= CARD_COUNT; id++) {
         char path[1200];
         pack_path(id, NULL, path, sizeof path);
-        struct stat st;
-        const int exists = stat(path, &st) == 0;
+        const int exists = psx_path_exists_utf8(path);
         if (exists || (s_packs[id] && s_packs[id]->present)) load_pack(id);
     }
 }
@@ -2086,11 +2125,15 @@ int psx_card_packs_remove(int id)
     if (id < 1 || id > CARD_COUNT || !s_dir_ok) return 0;
     static const char *const files[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
     char path[1200];
-    for (int i = 0; i < 4; i++) { pack_path(id, files[i], path, sizeof path); remove(path); }
-    /* Also whichever of the three the shared pack folder is holding: "restore
-     * stock" means stock everywhere, not stock in this card's own folder
-     * while the Asset Manager's copy quietly keeps drawing. */
-    for (int k = 1; k < 4; k++) { art_shared_path(id, k, path, sizeof path); remove(path); }
+    for (int i = 0; i < 4; i++) { pack_path(id, files[i], path, sizeof path); (void)psx_remove_utf8(path); }
+    /* Deliberately does NOT also clear the shared pack folder any more (see
+     * psx_mod_package_reset_all()'s own comment on why, same reasoning
+     * applies here): the shared folder cannot tell "the player's own
+     * upload" from "a pack they installed", so a bulk "restore all" here
+     * (psx_card_manager.c's finish_restore_all(), which loops every card)
+     * had the exact same failure mode as psx_mod_package_reset_all() did --
+     * it could delete an entire downloaded pack's worth of card art one
+     * card at a time. "Restore to stock" must never delete a pack's files. */
     pack_path(id, NULL, path, sizeof path);
 #ifdef _WIN32
     _rmdir(path);

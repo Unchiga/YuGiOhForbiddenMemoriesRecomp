@@ -1407,6 +1407,21 @@ void psx_asset_manager_open(void)
     if (!ensure_canvas(WIN_W, WIN_H)) { psx_asset_manager_close(); return; }
     layout_compute();
     SDL_StartTextInput(s_win);
+    /* One-time nudge, first open only: a returning player whose art moved
+     * to the shared folder in 2026-09-13 has no other way to learn it needs
+     * migrating -- it just looks like it vanished until they stumble onto
+     * this button. Checked once per session, not on every open (both
+     * has_legacy_* scans are a stat() per card/duelist, the same cost class
+     * as a directory rescan -- fine once, not worth repeating every time
+     * this window opens). Silent once nothing is left to migrate. */
+    {
+        static int checked;
+        if (!checked) {
+            checked = 1;
+            if (psx_card_packs_has_legacy_art() || psx_cpu_has_legacy_portraits())
+                say("Older card art/portraits found -- use \"Migrate assets\" below to bring them back");
+        }
+    }
 }
 
 void psx_asset_manager_close(void)

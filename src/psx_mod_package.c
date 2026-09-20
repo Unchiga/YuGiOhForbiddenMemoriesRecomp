@@ -614,7 +614,25 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
     int cards = 0, drops = 0, cpu = 0, fusion = 0, dialogue = 0, files = 0, rows = 0;
     {   /* the player's own cards/ folders, by hand: psx_card_packs_remove
          * works on the LIVE set, and with Dev Card Effects on that is the
-         * shipped effects mod, which stays as it is */
+         * shipped effects mod, which stays as it is.
+         *
+         * Deliberately does NOT touch the active pack's shared Textures
+         * folder (psx_card_packs_art_path()'s target for art/thumb/title)
+         * any more -- a 2026-09-xx change had this loop clear that path too,
+         * on the reasoning that a player's own uploaded picture should come
+         * back to stock along with everything else. In review that turned
+         * out to delete an entire DOWNLOADED HD pack: the shared folder has
+         * no way to tell "the player's own upload" apart from "someone
+         * else's pack the player installed", so clearing it here also
+         * cleared theirs (measured: reset-all against a 721-picture pack
+         * folder left 0). "Reset to stock" must never delete a pack's
+         * files, even at the cost of a player's own MOD-imported picture
+         * surviving a reset it should ideally also have undone -- there is
+         * no way to have both without tracking provenance this folder
+         * layout does not carry. Only the legacy per-card location
+         * (own/<id>/{art,thumb,title}.png, pre-2026-09-13, genuinely
+         * player-owned and never shared with a pack) is still cleared
+         * below, alongside card.ini. */
         static const char *const files4[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
         const char *own = psx_card_packs_own_dir();
         for (int id = 1; id <= CARD_COUNT; id++) {
@@ -623,19 +641,6 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
             for (int j = 0; j < 4; j++) {
                 char pth[1400]; snprintf(pth, sizeof pth, "%s/%s", d, files4[j]);
                 if (file_exists(pth)) { any = 1; (void)psx_remove_utf8(pth); }
-            }
-            /* The three pictures (art/thumb/title) moved to the active pack's
-             * shared Textures folder in 2026-09-13 and are not per-set, unlike
-             * card.ini above -- clearing only the old per-card path (just
-             * done) left a player's custom art/thumb/title in place after a
-             * "reset all", which is not what "back to stock" promises.
-             * psx_card_packs_art_path() reports wherever a picture actually
-             * is right now (the shared copy, or a not-yet-migrated legacy
-             * one already caught above); clear that too. */
-            for (int j = 1; j < 4; j++) {
-                char shared[1400];
-                psx_card_packs_art_path(id, j, shared, sizeof shared);
-                if (file_exists(shared)) { any = 1; (void)psx_remove_utf8(shared); }
             }
             if (any) { (void)rmdir(d); cards++; }
         }
