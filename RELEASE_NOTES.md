@@ -16,6 +16,9 @@ duel results screen and the Free Duel portraits.
 
 ### Fixed
 
+- Large edited-card sets no longer lose later cards' renamed titles in Build
+  Deck or the Library after a reload. Renamed card text is no longer limited
+  to the 1.2 KB of spare space in the game's original name bank.
 - A monster or other card converted into a field spell now exposes the Boosts
   and Field creatures controls in Card Manager. Its saved boost and allow-list
   settings are applied when that card changes the terrain, without leaking to

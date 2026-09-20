@@ -107,6 +107,12 @@ mod_function_entry_funcs = [
     #             what exposes the card-name stream pointer, which is the only
     #             way to pin the compressed name blob's base address.
     "0x80037DA4",
+    # 0x800383DC  F8 command that resolves D_8009B32E and pushes the stream.
+    # 0x8003B744  standalone global-string lookup. Card names use both paths;
+    #             entry replacements let edited names live outside the stock
+    #             bank instead of silently exhausting its 1216-byte free tail.
+    "0x800383DC",
+    "0x8003B744",
     # 0x80036C14  per-character glyph emitter, func(obj, ch) -> rec[16] = ch.
     #             Every decoded character of every string passes through here,
     #             so it reads out a name without decoding the compression.

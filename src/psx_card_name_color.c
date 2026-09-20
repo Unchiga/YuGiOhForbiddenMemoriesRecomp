@@ -118,8 +118,10 @@ static void tint_restore(uint32_t obj)
 
 static void card_name_text(CPUState *cpu, uint32_t address)
 {
+    uint32_t name_addr;
+    int id;
     if (psx_ygo_netplay_session()) return;   /* netplay: per-machine layer, peers must stay bit-identical */
-    if (!cpu || address != PSX_TEXT_FN || cpu->gpr[31] != CARD_NAME_CALLER)
+    if (!cpu || address != PSX_TEXT_FN)
         return;
 
     const uint32_t obj = cpu->gpr[4];
@@ -130,22 +132,46 @@ static void card_name_text(CPUState *cpu, uint32_t address)
 
     const unsigned mode = psx_mod_read_byte(cursor);
 
-    /* Every card-field command that is not the name ends the previous one's
-     * color — and so does the name's own command, before it re-tints. */
-    tint_restore(obj);
+    /* The tint belongs only to the card-info widget caller measured above.
+     * Other screens call the same handler from different interpreter loops,
+     * but they still need the edited-name pointer substitution below. */
+    if (cpu->gpr[31] == CARD_NAME_CALLER) {
+        /* Every card-field command that is not the name ends the previous
+         * one's color — and so does the name's own command before re-tinting. */
+        tint_restore(obj);
+        if (!(mode & MODE_SET_COLOR) && (mode & MODE_CARD_NAME)) {
+            id = (int)psx_mod_read_half(PSX_SELECTED_CARD);
+            {
+                const int col = card_name_color(id);
+                if (col >= 0) {
+                    s_tint_prev  = psx_mod_read_byte(obj + GLYPH_COLOR_OFF);
+                    s_tint_color = (uint8_t)col;
+                    psx_mod_write_byte(obj + GLYPH_COLOR_OFF, s_tint_color);
+                    s_tint_obj   = obj;
+                    s_tint_depth = depth;
+                }
+            }
+        }
+    }
 
     if ((mode & MODE_SET_COLOR) || !(mode & MODE_CARD_NAME))
         return;
+    id = (int)psx_mod_read_half(PSX_SELECTED_CARD);
 
-    const int col = card_name_color((int)psx_mod_read_half(PSX_SELECTED_CARD));
-    if (col < 0)
-        return;
-
-    s_tint_prev  = psx_mod_read_byte(obj + GLYPH_COLOR_OFF);
-    s_tint_color = (uint8_t)col;
-    psx_mod_write_byte(obj + GLYPH_COLOR_OFF, s_tint_color);
-    s_tint_obj   = obj;
-    s_tint_depth = depth;
+    /* Edited names no longer have to fit the stock 0x801D string bank. The
+     * card-field handler's name branch consumes this mode byte, clears +62,
+     * pushes string 0x8000+selected-card, and returns. Reproduce those exact
+     * side effects with the full Expansion-1 pointer and replace the body. */
+    name_addr = psx_card_packs_name_address(id);
+    if (name_addr) {
+        const uint8_t next_depth = (uint8_t)(depth + 1);
+        psx_mod_write_byte(obj + 0x62u, 0u);
+        psx_mod_write_word(obj + (uint32_t)depth * 4u, cursor + 1u);
+        psx_mod_write_byte(obj + TEXT_STACK_OFF, next_depth);
+        psx_mod_write_word(obj + (uint32_t)(int32_t)(int8_t)next_depth * 4u,
+                           name_addr);
+        psx_mod_skip_current_function(cpu);
+    }
 }
 
 static void card_name_glyph(CPUState *cpu, uint32_t address)

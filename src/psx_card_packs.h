@@ -281,6 +281,10 @@ int  psx_card_packs_get(int id, PsxCardPack *out);
  * it, else the game's own. psx_card_db_name() stays the stock name, which is
  * what "back to stock" and the stock snapshots need. */
 const char *psx_card_packs_display_name(int id);
+/* Encoded FF-terminated guest string for an edited name, or 0 for stock.
+ * Text resolver hooks use the full pointer because the stock table stores
+ * only a 16-bit offset into its fixed 0x801D bank. */
+uint32_t psx_card_packs_name_address(int id);
 /* Effective password-screen starchip price: a loaded card.ini override when
  * present, otherwise the disc value. Returns -1 before the card DB is ready. */
 int psx_card_packs_price(int id);
@@ -292,15 +296,15 @@ int psx_card_packs_derive_sell_price(int purchase_price);
  * sentinel purchase cost 999999 is capped to 1000. `overridden`, when non-NULL,
  * says which source was selected. Returns -1 before card data is ready. */
 int psx_card_packs_sell_price(int id, int *overridden);
-/* The two string arenas in the free tail of the game's name blob. The blob's
+/* The duelist-name arena in the free tail of the game's name blob. The blob's
  * last stock string ends at 0x801D8C66 and 0x801D916F..0x801DA000 is zero in
  * the SLUS and in every state sampled (psx_card_extend.c); 0x801DA000 is NOT
  * free: it is D_801DA000, a table of 0x88-byte records func_80036C14 writes
  * (seen live 2026-09-06: eight bytes appear there once a save is loaded).
- * psx_card_extend takes 0x801D9200.. for its clone names, the card renames
- * run from 0x801D9800 up to this limit, and the CPU Manager's duelist names
- * (psx_cpu_data.c, 39 fixed slots of PSX_CPU_NAME_MAX + 1 bytes) fill the
- * rest up to 0x801DA000. */
+ * psx_card_extend takes 0x801D9200.. for its clone names. Older builds put
+ * card renames in 0x801D9800..0x801D9CBF; keep that boundary named so the CPU
+ * Manager's 39 fixed duelist-name slots remain above the legacy range. Card
+ * renames themselves now use Expansion 1 and full-pointer resolver hooks. */
 #define PSX_CARD_PACKS_NAMES_LIMIT 0x801D9CC0u
 #define PSX_CPU_NAMES_BASE         0x801D9CC0u
 /* One character in the game's own frequency-ordered glyph code, or 0 for a

@@ -701,6 +701,15 @@ description, ATK/DEF, both guardian stars, type, level, attribute, frame
 color (orange, purple, pink), art.png, thumb.png, an explicit title.png and a
 title strip derived from the name, price and password on the PASSWORD screen.
 
+Rename-capacity regression (2026-09-19): an isolated profile renamed cards
+1..40 to 37-character strings (well beyond the old 0x4C0-byte guest arena),
+then renamed 698 to `Bug Gem` and 701 to `Spell Tag`. After restarting and
+loading a state, Build Deck showed both late names, Library card 698 showed
+`Bug Gem`, and its full-card view kept the rendered `Bug Gem` title. Test the
+late IDs: checking only the first few cards does not cross the old failure
+threshold. The stock name-offset table stays stock; edited names use stable
+Expansion-1 slots and full-pointer resolver hooks.
+
 ## 12. Reading duel results
 
 Field rows at 0x801A7AD8, 30 rows of 0x1C bytes (player hand 0..4, monsters

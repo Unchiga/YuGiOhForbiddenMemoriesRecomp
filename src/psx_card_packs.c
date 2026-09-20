@@ -46,9 +46,10 @@
  * SO: the disc-side fields become SECTOR OVERRIDES (psx_mod_cd_override_*):
  * the runtime serves the replacement bytes for those LBAs and every reader
  * gets them, no per-screen hook, no VRAM rect to know. The EXE-side fields
- * are asserted per frame the way the other mods do it (savestates and the
- * card-extension's table relocation both put stock bytes back). Nothing on
- * the disc image or in the save changes.
+ * stats and descriptions are asserted per frame. Names are encoded into
+ * Expansion 1 and substituted by the text resolvers because the game's u16
+ * offset table cannot address enough spare RAM for a large renamed set.
+ * Nothing on the disc image or in the save changes.
  *
  * The earlier psx_card_skins.c did the face by redirecting LoadImage and
  * only reached the library/chest viewer; it is retired to tools/card_titles/
@@ -73,6 +74,7 @@
 #endif
 
 #include "cdrom.h"
+#include "cpu_state.h"
 #include "mod_plugins.h"
 #include "psx_game_hooks.h"
 #include "psx_card_db.h"
@@ -122,11 +124,14 @@
 #define AUX_STOCK      0x801D5332u
 #define NAMEOFF_TABLE  0x801D5800u
 #define NAME_SEGMENT   0x801D0000u
-/* Our name strings. 0x801D916F.. is zero on the stock EXE; psx_card_extend
- * uses 0x801D9200.. for its clone names and stops well before 0x801D9800,
- * and the duelist names take the top of the tail (see the header). */
-#define NAMES_BASE     0x801D9800u
-#define NAMES_LIMIT    PSX_CARD_PACKS_NAMES_LIMIT
+/* A u16 stock string offset cannot address outside 0x801D0000..0x801DFFFF.
+ * The old implementation consequently squeezed every edited card name into
+ * 0x801D9800..0x801D9CBF.  That is only 1216 bytes: large card sets silently
+ * left later card IDs on their stock names.  Edited names now live in fixed
+ * per-card slots in Expansion 1 and the stock name resolvers below hand
+ * those full 32-bit pointers to the text engine. */
+#define NAME_SLOT_BYTES (PSX_CARD_PACK_NAME_MAX + 2u)
+#define NAME_ARENA_BYTES ((CARD_COUNT + 1u) * NAME_SLOT_BYTES)
 /* Descriptions: offsets are relative to 0x801C0000, so the strings must sit
  * in that 64 KB. There are 723 offset entries (the game indexes 0..722), then
  * the larger global offset table continues through 0x801C09F4, followed by
@@ -590,7 +595,7 @@ static int      s_dev;                /* 1 = the Card Effects mod's set is live 
 static int      s_dev_want = -1;      /* a switch asked for, applied on the emulation thread */
 static int      s_menu_row = -1;
 static unsigned s_generation;
-static uint32_t s_names_next = NAMES_BASE;
+static uint32_t s_names_base;
 static int      s_pw_dirty;           /* the price/password sectors need a rebuild */
 static uint8_t  s_stock_desc[CARD_COUNT + 1][DESC_ENC_CAP];
 static uint16_t s_stock_desc_len[CARD_COUNT + 1];
@@ -1579,12 +1584,11 @@ static void rebuild_password_table(void)
 }
 
 /* ---- names in guest RAM ------------------------------------------------------
- * Strings are laid out back to back from NAMES_BASE in pack order and never
- * moved; a rename that no longer fits is dropped with a note. Re-laid out
- * from scratch on every reload, which is rare and cheap. */
+ * Every card has a stable Expansion-1 slot, whether it is currently renamed
+ * or not. Reloading one card therefore cannot move a pointer another live
+ * text channel is already consuming, and all 722 maximum-length names fit. */
 static void layout_names(void)
 {
-    uint32_t a = NAMES_BASE;
     for (int id = 1; id <= CARD_COUNT; id++) {
         Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
@@ -1593,12 +1597,10 @@ static void layout_names(void)
         int n = 0;
         for (; pk->cfg.name[n] && n < PSX_CARD_PACK_NAME_MAX; n++) pk->enc[n] = (uint8_t)encode_char(pk->cfg.name[n]);
         pk->enc[n] = 0xFF;
-        if (a + (uint32_t)n + 1u > NAMES_LIMIT) continue;    /* out of room: keep stock name */
+        if (!s_names_base) continue;
         pk->enc_len = n + 1;
-        pk->str_addr = a;
-        a += (uint32_t)n + 1u;
+        pk->str_addr = s_names_base + (uint32_t)id * NAME_SLOT_BYTES;
     }
-    s_names_next = a;
     for (int id = 1; id <= CARD_COUNT; id++) {
         Pack *pk = s_packs[id];
         if (!pk || !pk->present) continue;
@@ -1767,10 +1769,11 @@ static void assert_ram(void)
             for (int k = 0; k < pk->enc_len; k++)
                 if (psx_mod_read_byte(pk->str_addr + (uint32_t)k) != pk->enc[k])
                     psx_mod_write_byte(pk->str_addr + (uint32_t)k, pk->enc[k]);
-            const uint16_t want = (uint16_t)(pk->str_addr - NAME_SEGMENT);
-            if (psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u) != want)
-                psx_mod_write_half(NAMEOFF_TABLE + (uint32_t)id * 2u, want);
-        } else if (psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u) != pk->stock_nameoff) {
+        }
+        /* Expansion memory has a full address, not a u16 offset into the
+         * stock 0x801D bank. Keep the stock table pristine for unhooked IDs
+         * and let the resolver hooks substitute only actual replacements. */
+        if (psx_mod_read_half(NAMEOFF_TABLE + (uint32_t)id * 2u) != pk->stock_nameoff) {
             psx_mod_write_half(NAMEOFF_TABLE + (uint32_t)id * 2u, pk->stock_nameoff);
         }
     }
@@ -1865,6 +1868,14 @@ const char *psx_card_packs_display_name(int id)
     if (id >= 1 && id <= CARD_COUNT && s_packs[id] && s_packs[id]->present && s_packs[id]->cfg.name[0])
         return s_packs[id]->cfg.name;
     return psx_card_db_name(id);
+}
+
+uint32_t psx_card_packs_name_address(int id)
+{
+    const Pack *pk;
+    if (id < 1 || id > CARD_COUNT) return 0u;
+    pk = s_packs[id];
+    return pk && pk->present && pk->enc_len ? pk->str_addr : 0u;
 }
 
 int psx_card_packs_price(int id)
@@ -2146,7 +2157,6 @@ static void unload_all(void)
         s_packs[id] = NULL;
     }
     for (int s = 0; s < PW_SECTORS; s++) psx_mod_cd_override_clear(PW_LBA + (uint32_t)s);
-    s_names_next = NAMES_BASE;
     psx_card_db_invalidate();
 }
 
@@ -2220,6 +2230,79 @@ void psx_card_packs_register_menu(void)
     psx_video_menu_set_row_hints(s_dev_row, HINTS);
 }
 
+/* ---- stock text resolver bridges --------------------------------------------
+ * Card names are global string IDs 0x8001..0x82D2. Three independent paths
+ * resolve those IDs directly instead of calling one shared helper, so each
+ * entry point must be taught about the Expansion-1 name pointer.
+ *
+ * func_80037DA4, the fourth path used by full-card fields, already has the
+ * name-color hook in psx_card_name_color.c; that callback performs the same
+ * substitution after reading its mode byte so the two features cannot race. */
+#define NAME_ID_BASE       0x8000u
+#define TEXT_ID_ADDR       0x8009B32Eu
+#define RESOLVE_PUSH_FN    0x800383DCu
+#define TEXTBOX_BUILD_FN   0x800393B0u
+#define LOOKUP_STRING_FN   0x8003B744u
+#define TEXT_FLAGS_OFF     0x34u
+#define TEXT_ID_OFF        0x36u
+#define TEXT_DEPTH_OFF     0x58u
+#define TEXT_INITIALIZED   0x4000u
+
+static uint32_t name_for_string_id(uint32_t string_id)
+{
+    if (string_id <= NAME_ID_BASE || string_id > NAME_ID_BASE + CARD_COUNT)
+        return 0u;
+    return psx_card_packs_name_address((int)(string_id - NAME_ID_BASE));
+}
+
+/* F8 command 0x0C: resolve D_8009B32E, push the resulting stream, return its
+ * slot. This is small enough to replace exactly for edited card-name IDs. */
+static void name_resolve_push(CPUState *cpu, uint32_t address)
+{
+    uint32_t obj, name, slot;
+    uint8_t depth;
+    if (!cpu || address != RESOLVE_PUSH_FN || psx_ygo_netplay_session()) return;
+    name = name_for_string_id(psx_mod_read_half(TEXT_ID_ADDR));
+    if (!name) return;
+    obj = cpu->gpr[4];
+    depth = (uint8_t)(psx_mod_read_byte(obj + TEXT_DEPTH_OFF) + 1u);
+    psx_mod_write_byte(obj + TEXT_DEPTH_OFF, depth);
+    slot = obj + (uint32_t)(int32_t)(int8_t)depth * 4u;
+    psx_mod_write_word(slot, name);
+    cpu->gpr[2] = slot;
+    psx_mod_skip_current_function(cpu);
+}
+
+/* TextBox_BuildStep's first call initializes slot zero from its u16 ID and
+ * returns. On the second call, swap that just-resolved stock pointer before
+ * the first byte is consumed. Later calls already point into Expansion 1. */
+static void name_textbox_build(CPUState *cpu, uint32_t address)
+{
+    uint32_t obj, name, cursor;
+    int depth;
+    if (!cpu || address != TEXTBOX_BUILD_FN || psx_ygo_netplay_session()) return;
+    obj = cpu->gpr[4];
+    if (!(psx_mod_read_half(obj + TEXT_FLAGS_OFF) & TEXT_INITIALIZED)) return;
+    name = name_for_string_id(psx_mod_read_half(obj + TEXT_ID_OFF));
+    if (!name) return;
+    depth = (int8_t)psx_mod_read_byte(obj + TEXT_DEPTH_OFF);
+    if (depth < 0 || depth >= 12) return;
+    cursor = psx_mod_read_word(obj + (uint32_t)depth * 4u);
+    if ((cursor & 0xFFFF0000u) == NAME_SEGMENT)
+        psx_mod_write_word(obj + (uint32_t)depth * 4u, name);
+}
+
+/* The standalone lookup returns its string pointer in v0. */
+static void name_lookup_string(CPUState *cpu, uint32_t address)
+{
+    uint32_t name;
+    if (!cpu || address != LOOKUP_STRING_FN || psx_ygo_netplay_session()) return;
+    name = name_for_string_id(cpu->gpr[5]);
+    if (!name) return;
+    cpu->gpr[2] = name;
+    psx_mod_skip_current_function(cpu);
+}
+
 /* ---- the frame hook ------------------------------------------------------------ */
 static void card_packs_tick(void)
 {
@@ -2267,6 +2350,13 @@ static void card_packs_tick(void)
 
 PSX_MOD_CONSTRUCTOR(psx_card_packs_install)
 {
+    s_names_base = psx_mod_alloc_guest_memory(NAME_ARENA_BYTES, 4u);
+    (void)psx_mod_register_function_entry_plugin(
+        "ygofm.card_names.resolve_push", RESOLVE_PUSH_FN, name_resolve_push);
+    (void)psx_mod_register_function_entry_plugin(
+        "ygofm.card_names.textbox", TEXTBOX_BUILD_FN, name_textbox_build);
+    (void)psx_mod_register_function_entry_plugin(
+        "ygofm.card_names.lookup", LOOKUP_STRING_FN, name_lookup_string);
     psx_card_packs_register_menu();
     (void)psx_game_add_frame_hook(card_packs_tick);
 }
