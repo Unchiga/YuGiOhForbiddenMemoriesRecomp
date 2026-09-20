@@ -661,11 +661,15 @@ int psx_card_packs_validate(const PsxCardPack *candidate, char *err, unsigned er
     }
     if (candidate->description[0] &&
         !psx_card_packs_validate_description(candidate->description, err, errcap)) return 0;
-    if (candidate->field_targets_set) {
-        if (candidate->id < 330 || candidate->id > 335) {
-            if (err) snprintf(err, errcap, "Only field-spell cards can have a creature allow-list");
+    if (candidate->boost_set || candidate->field_targets_set) {
+        const int is_field = candidate->effect == PSX_CARD_FX_FIELD ||
+                             (candidate->effect < 0 && candidate->id >= 330 && candidate->id <= 335);
+        if (!is_field) {
+            if (err) snprintf(err, errcap, "Only field-spell cards can have boosts or a creature allow-list");
             return 0;
         }
+    }
+    if (candidate->field_targets_set) {
         if (candidate->field_target_n < 0 ||
             candidate->field_target_n > PSX_CARD_PACK_FIELD_TARGET_MAX) {
             if (err) snprintf(err, errcap, "A field-spell creature list can contain at most 722 cards");

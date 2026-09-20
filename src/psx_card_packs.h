@@ -77,7 +77,7 @@ typedef struct {
     uint32_t equip_types;                 /* bit t = monsters of type t; bit 31 = every monster */
     int  equip_n;
     uint16_t equip_ids[PSX_CARD_PACK_EQUIP_MAX];
-    int  boost_set;                       /* the 20 boosts below apply (field cards 330..335) */
+    int  boost_set;                       /* the 20 boosts below apply when this field spell is active */
     int  boost[20];                       /* per monster type, -1280..1270, x10; PSX_CARD_PACK_BOOST_UNSET = stock */
     int  field_targets_set;               /* explicit allow-list replaces type eligibility; absent = exact stock */
     int  field_target_n;

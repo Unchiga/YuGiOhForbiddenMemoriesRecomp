@@ -321,6 +321,38 @@ static void parse_manifest(const unsigned char *m, PsxCardShareInfo *info)
     }
 }
 
+static int ini_is_field_spell(int id, const unsigned char *data)
+{
+    const char *p = (const char *)data;
+    int field = id >= 330 && id <= 335;
+    while (*p) {
+        const char *e = strchr(p, '\n');
+        const size_t len = e ? (size_t)(e - p) : strlen(p);
+        char line[4096];
+        if (len < sizeof line) {
+            memcpy(line, p, len); line[len] = 0;
+            char *q = line;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q != ';' && *q != '#' && *q != '[') {
+                char *eq = strchr(q, '=');
+                if (eq) {
+                    *eq++ = 0;
+                    char *ke = q + strlen(q);
+                    while (ke > q && (ke[-1] == ' ' || ke[-1] == '\t' || ke[-1] == '\r')) *--ke = 0;
+                    for (char *k = q; *k; k++) if (*k >= 'A' && *k <= 'Z') *k = (char)(*k + 32);
+                    while (*eq == ' ' || *eq == '\t') eq++;
+                    char *ve = eq + strlen(eq);
+                    while (ve > eq && (ve[-1] == ' ' || ve[-1] == '\t' || ve[-1] == '\r')) *--ve = 0;
+                    if (!strcmp(q, "effect")) field = psx_card_packs_parse_effect(eq) == PSX_CARD_FX_FIELD;
+                }
+            }
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    return field;
+}
+
 /* Validate fields whose exact spelling/shape matters before an import changes
  * any files. The runtime's own parsers remain the single source of truth for
  * the new list; this pass also computes description-arena use. Return -1 for
@@ -330,6 +362,7 @@ static int ini_description_bytes(int id, const unsigned char *data,
 {
     const char *p = (const char *)data;
     int desc_bytes = 0;
+    const int field_spell = ini_is_field_spell(id, data);
     while (*p) {
         const char *e = strchr(p, '\n');
         const size_t len = e ? (size_t)(e - p) : strlen(p);
@@ -367,12 +400,19 @@ static int ini_description_bytes(int id, const unsigned char *data,
                                           "sell_price must be an integer from 0 to 999999");
                         return -1;
                     }
+                } else if (!strcmp(q, "boost") || !strcmp(q, "boosts")) {
+                    PsxCardPack parsed; memset(&parsed, 0, sizeof parsed); parsed.id = id;
+                    if (!field_spell) {
+                        if (err) snprintf(err, errcap, "boost requires effect = field");
+                        return -1;
+                    }
+                    if (!psx_card_packs_parse_boost(eq, &parsed, err, errcap)) return -1;
                 } else if (!strcmp(q, "field_targets") ||
                            !strcmp(q, "terrain_targets") ||
                            !strcmp(q, "field_allowlist")) {
                     PsxCardPack parsed; memset(&parsed, 0, sizeof parsed); parsed.id = id;
-                    if (id < 330 || id > 335) {
-                        if (err) snprintf(err, errcap, "only cards 330 through 335 are field spells");
+                    if (!field_spell) {
+                        if (err) snprintf(err, errcap, "field_targets requires effect = field");
                         return -1;
                     }
                     if (!psx_card_packs_parse_field_targets(eq, &parsed, err, errcap)) return -1;

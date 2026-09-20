@@ -659,7 +659,8 @@ static int field_fits(int f)
     case F_TERRAIN: return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD;
     case F_RITUAL:  return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_RITUAL;
     case F_EQUIP_BONUS: case F_EQUIPS: return t == 23;
-    case F_BOOST: case F_FIELD_TARGETS: return s_sel >= 330 && s_sel <= 335;
+    case F_BOOST: case F_FIELD_TARGETS:
+        return field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD;
     case F_TRAP_MAX: return s_sel >= 681 && s_sel <= 686 && t == 21;   /* a trap turned into anything else never springs */
     case F_IMMUNE: return is_monster();
     default:
@@ -1723,10 +1724,7 @@ static void focus_commit(void)
 static void do_save(void)
 {
     if (s_focus >= 0) focus_commit();
-    {
-        char err[192];
-        if (!psx_card_packs_validate(&s_edit, err, sizeof err)) { say(err); return; }
-    }
+    const PsxCardPack before_cleanup = s_edit;
     if (!is_monster()) {
         /* nothing the game would draw; do not carry stale monster numbers */
         s_edit.attack = s_edit.defense = s_edit.star1 = s_edit.star2 = s_edit.level = s_edit.attribute = -1;
@@ -1743,6 +1741,15 @@ static void do_save(void)
         s_edit.bonus_n = 0;
     } else for (int t = 0; t < 6; t++) trigger_prune(trig_at(t));
     rules_build();
+    {
+        char err[192];
+        if (!psx_card_packs_validate(&s_edit, err, sizeof err)) {
+            s_edit = before_cleanup;
+            rules_build();
+            say(err);
+            return;
+        }
+    }
     int any = 0;
     for (int f = 0; f < F_COUNT; f++) any |= field_is_set(f);
     if (!any && !s_edit.has_art && !s_edit.has_thumb && !s_edit.has_title) {
@@ -2235,6 +2242,8 @@ static void draw_editor(void)
     if (L->fx_note_y) {
         const char *note = (s_tab == 1 && is_monster())
             ? (s_rule_n ? "One line per effect. \"Otherwise\" runs when the line above it fails its roll; face-up rules hold while the monster shows." : "This monster has no effects yet. Add one: a trigger, its odds and what happens, or a rule that holds while it is face-up.")
+            : (s_tab == 1 && field_fits(F_EFFECT) && eff_effect() == PSX_CARD_FX_FIELD)
+            ? "A field card: set each type's boost, then optionally choose exact creature IDs. No list keeps stock type rules."
             : psx_card_effects_note(s_sel, effective_type());
         psx_ui_text_clip(&s_cv, L->fx_note_x, L->fx_note_y + psx_ui_font_ascent(fs), note, COL_ACCENT, fs, right - L->fx_note_x);
     }

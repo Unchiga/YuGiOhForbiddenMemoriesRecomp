@@ -149,10 +149,10 @@ static uint32_t s_state_mem;
 static int s_eq_active, s_eq_dirty, s_eq_bonus, s_eq_card;
 static uint16_t s_scratch_key = SCRATCH_KEY;
 
-/* Optional explicit card-ID eligibility for the active field spell. The
- * stock game keys gDuel_aTerrainBoost only by monster type; this is applied
- * to the dedicated per-row terrain modifier, never permanent card stats. */
-static int s_field_filter_active, s_field_filter_terrain;
+/* Per-card boosts and optional card-ID eligibility for the active field
+ * spell. The stock game keys gDuel_aTerrainBoost only by terrain and monster
+ * type, so remember which card selected the terrain as well. */
+static int s_field_card, s_field_filter_active, s_field_filter_terrain;
 static unsigned s_field_filter_writes;
 
 /* hook log for the debug server */
@@ -205,12 +205,59 @@ static int field_target_has(const PsxCardPack *c, int id)
     return 0;
 }
 
-static void field_target_apply(int filtered)
+static void assert_byte(uint32_t at, uint8_t v);
+
+static int field_cfg_is_field(int id, const PsxCardPack *c)
 {
-    const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
-    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
-    const PsxCardPack *cfg = (f && f->cfg.field_targets_set) ? &f->cfg : NULL;
-    if (filtered && !cfg) return;
+    if (c && c->effect >= 0) return c->effect == PSX_CARD_FX_FIELD;
+    return id >= 330 && id <= 335;
+}
+
+static int field_cfg_terrain(int id, const PsxCardPack *c)
+{
+    if (c && c->terrain >= 1 && c->terrain <= 6) return c->terrain;
+    return id >= 330 && id <= 335 ? id - 329 : 1;
+}
+
+static const PsxCardPack *field_cfg_for_terrain(int terrain)
+{
+    const Fx *f;
+    if (s_field_card >= 1 && s_field_card <= CARD_COUNT) {
+        f = fx_of(s_field_card);
+        if (field_cfg_is_field(s_field_card, f ? &f->cfg : NULL) &&
+            field_cfg_terrain(s_field_card, f ? &f->cfg : NULL) == terrain)
+            return f ? &f->cfg : NULL;
+        return NULL;
+    }
+    f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
+    return f && field_cfg_is_field(329 + terrain, &f->cfg) ? &f->cfg : NULL;
+}
+
+static int field_boost(const PsxCardPack *c, int terrain, int type)
+{
+    if (c && c->boost_set && c->boost[type] != PSX_CARD_PACK_BOOST_UNSET)
+        return c->boost[type];
+    return (int)(int8_t)s_want_terrain[type * 6 + terrain - 1] * 10;
+}
+
+static void field_table_apply(void)
+{
+    const Fx *f = (s_field_card >= 1 && s_field_card <= CARD_COUNT) ? fx_of(s_field_card) : NULL;
+    const PsxCardPack *c = f ? &f->cfg : NULL;
+    const int terrain = field_cfg_terrain(s_field_card, c);
+    for (int t = 0; t < 20; t++) {
+        for (int k = 1; k <= 6; k++) {
+            int amount = (int)(int8_t)s_want_terrain[t * 6 + k - 1] * 10;
+            if (s_field_card && k == terrain && field_cfg_is_field(s_field_card, c))
+                amount = field_boost(c, k, t);
+            assert_byte(TERRAIN_TAB + (uint32_t)(t * 6 + k - 1),
+                        (uint8_t)(int8_t)(amount / 10));
+        }
+    }
+}
+
+static void field_target_apply(const PsxCardPack *cfg, int terrain, int filtered)
+{
     for (int side = 0; side < 2; side++) {
         for (int slot = 0; slot < 5; slot++) {
             const int row_index = side * 15 + 5 + slot;
@@ -221,7 +268,7 @@ static void field_target_apply(int filtered)
             int amount = 0;
             if (terrain >= 1 && terrain <= 6 && type >= 0 && type < 20 &&
                 (!filtered || field_target_has(cfg, id)))
-                amount = (int)(int8_t)s_want_terrain[type * 6 + terrain - 1] * 10;
+                amount = field_boost(cfg, terrain, type);
             if ((int)(int16_t)psx_mod_read_half(row + ROW_TERRAIN) != amount) {
                 psx_mod_write_half(row + ROW_TERRAIN, (uint16_t)(int16_t)amount);
                 s_field_filter_writes++;
@@ -235,17 +282,15 @@ static void field_target_apply(int filtered)
 static void field_target_tick(void)
 {
     const int terrain = (int)psx_mod_read_byte(DUEL_TERRAIN);
-    const Fx *f = (terrain >= 1 && terrain <= 6) ? fx_of(329 + terrain) : NULL;
-    const int active = f && f->cfg.field_targets_set;
-    if (active) {
-        field_target_apply(1);
-        s_field_filter_active = 1;
-    } else if (s_field_filter_active) {
-        /* Removing an override while its terrain remains active must not leave
-         * zeroed rows stale. Restore the ordinary type result once. */
-        field_target_apply(0);
-        s_field_filter_active = 0;
-    }
+    const PsxCardPack *cfg = field_cfg_for_terrain(terrain);
+    const int filtered = cfg && cfg->field_targets_set;
+    /* Reassert the volatile row for newly played monsters, hot edits and
+     * save-state reconciliation. This also restores the ordinary type result
+     * immediately when a custom boost or allow-list is removed. */
+    if (terrain >= 1 && terrain <= 6 &&
+        (s_field_card || filtered || s_field_filter_active))
+        field_target_apply(cfg, terrain, filtered);
+    s_field_filter_active = filtered;
 }
 
 static uint8_t clamp_u8(long v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
@@ -454,11 +499,6 @@ static void rebuild_wanted_tables(void)
         const Fx *f = fx_of(id);
         if (!f) continue;
         const PsxCardPack *c = &f->cfg;
-        if (id >= 330 && id <= 335 && c->boost_set) {
-            const int terrain = id - 329;
-            for (int t = 0; t < 20; t++)
-                if (c->boost[t] != PSX_CARD_PACK_BOOST_UNSET) s_want_terrain[t * 6 + terrain - 1] = (uint8_t)(int8_t)(c->boost[t] / 10);
-        }
         if (id >= 681 && id <= 686 && c->trap_atk_max >= 0) s_want_trap[id - 681] = clamp_u8(c->trap_atk_max / 100);
         const int idx = fx_index(id);
         if (idx >= 0) {
@@ -592,7 +632,11 @@ static void tick(void)
     s_booted = 1;
     const unsigned gen = psx_card_packs_generation();
     if (gen != s_seen_gen) { s_seen_gen = gen; rebuild(); }
-    for (int i = 0; i < 120; i++) assert_byte(TERRAIN_TAB + (uint32_t)i, s_want_terrain[i]);
+    if (psx_mod_read_byte(MODE_BYTE) != 0xC3u) {
+        s_field_card = 0;
+        s_field_filter_active = 0;
+    }
+    field_table_apply();
     for (int i = 0; i < 6; i++)   assert_byte(TRAP_TAB + (uint32_t)i, s_want_trap[i]);
     for (int i = 0; i < 101; i++) assert_byte(CLASS_TAB + (uint32_t)i, s_want_class[i]);
     if (psx_mod_read_byte(MODE_BYTE) == 0xC3u) field_target_tick();
@@ -702,7 +746,13 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
     if (!s_stock_ok) return;
     const int id = (int)(int16_t)cpu->gpr[4];
     const Fx *f = fx_of(id);
-    if (!f) return;
+    if (!f) {
+        if (id >= 330 && id <= 335) {
+            s_field_card = id;
+            field_table_apply();
+        }
+        return;
+    }
     const PsxCardPack *c = &f->cfg;
     int fx = c->effect;
     if (fx < 0) {
@@ -711,11 +761,17 @@ static void hook_magic(struct CPUState *cpu, uint32_t address)
          * and that class runs with the edited amount. Returning here left
          * those edits dead until the effect was also picked (reported
          * 2026-09-07). */
-        if (c->amount < 0) return;
+        if (c->amount < 0 && !c->boost_set && !c->field_targets_set) return;
         PsxCardStock st;
         psx_card_effects_stock(id, &st);
         fx = st.effect;
         if (fx < 0) return;
+    }
+    if (fx == PSX_CARD_FX_FIELD) {
+        s_field_card = id;
+        /* The stock handler consumes the global table in this same guest
+         * frame, before the next host frame hook can run. */
+        field_table_apply();
     }
     const int proxy = fx_prepare(fx, c->amount, c->target, c->terrain, (int)cpu->gpr[5]);
     if (proxy < 0) return;
@@ -751,6 +807,10 @@ int psx_card_effects_cast(int fx, int amount, int target, int terrain)
 {
     if (psx_ygo_netplay_session()) return 0;   /* netplay: per-machine layer, peers must stay bit-identical */
     if (!s_stock_ok) return 0;
+    if (fx == PSX_CARD_FX_FIELD) {
+        s_field_card = 0;                 /* a monster-triggered field has no card-specific settings */
+        field_table_apply();
+    }
     const int proxy = fx_prepare(fx, amount, target, terrain, 1);
     if (proxy < 0) return 0;
     /* what func_80026BA4(proxy, 1) would set */
@@ -959,12 +1019,12 @@ int psx_card_effects_state_json(char *out, unsigned cap)
         "\"ritual_override\":%d,\"ritual_records\":%d,\"hold\":{\"active\":%d,\"kind\":%d,\"since\":%u,\"stalled\":%d},"
         "\"holds_stalled\":%d,\"holds_cancelled\":%d,"
         "\"equip_bonus\":{\"active\":%d,\"bonus\":%d,\"card\":%d,\"dirty\":%d},\"scratch_key\":%u,\"frame\":%u,"
-        "\"field_targets\":{\"active\":%d,\"terrain\":%d,\"writes\":%u},"
+        "\"field_targets\":{\"active\":%d,\"terrain\":%d,\"card\":%d,\"writes\":%u},"
         "\"fx_state\":%u,\"events\":[",
         s_stock_ok, n_fx, s_equip_override, s_equip_bytes, s_equip_dropped, s_ritual_override, s_ritual_records,
         s_hold.active, s_hold.kind, s_hold.since, s_hold_stalled, s_holds_stalled, s_holds_cancelled,
         s_eq_active, s_eq_bonus, s_eq_card, s_eq_dirty, s_scratch_key, s_frame,
-        s_field_filter_active, s_field_filter_terrain, s_field_filter_writes,
+        s_field_filter_active, s_field_filter_terrain, s_field_card, s_field_filter_writes,
         s_stock_ok ? psx_mod_read_half(FX_STATE) : 0);
     const unsigned first = s_ev_n > 16u ? s_ev_n - 16u : 0u;
     for (unsigned i = first; i < s_ev_n && n + 80 < cap; i++) {
@@ -1013,6 +1073,7 @@ static void state_before_save(void)
     card_state_put(&i, s_scratch_key);
     card_state_put(&i, (uint32_t)s_field_filter_active);
     card_state_put(&i, (uint32_t)s_field_filter_terrain);
+    card_state_put(&i, (uint32_t)s_field_card);
 }
 
 static void state_after_load(void)
@@ -1023,6 +1084,7 @@ static void state_after_load(void)
     s_malus_dirty = s_hold_amount = s_hold_stalled = 0;
     s_holds_stalled = s_holds_cancelled = 0;
     s_eq_active = s_eq_dirty = s_eq_bonus = s_eq_card = 0;
+    s_field_card = 0;
     s_field_filter_active = 0;
     s_field_filter_terrain = 0;
     s_field_filter_writes = 0;
@@ -1047,6 +1109,7 @@ static void state_after_load(void)
      * stock type result; an old snapshot with no filter remains untouched. */
     s_field_filter_active = (int)card_state_get(&i);
     s_field_filter_terrain = (int)card_state_get(&i);
+    s_field_card = (int)card_state_get(&i);
 }
 
 PSX_MOD_CONSTRUCTOR(psx_card_effects_install)

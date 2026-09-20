@@ -16,6 +16,10 @@ duel results screen and the Free Duel portraits.
 
 ### Fixed
 
+- A monster or other card converted into a field spell now exposes the Boosts
+  and Field creatures controls in Card Manager. Its saved boost and allow-list
+  settings are applied when that card changes the terrain, without leaking to
+  another field spell that selects the same terrain.
 - Monster bonuses no longer stack up again on every battle. A monster lifted
   out of its zone for the battle animation was treated as re-summoned, so its
   bonus was added again, summon effects fired again, and a face-down defender

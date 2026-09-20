@@ -387,8 +387,10 @@ and recorded hook event `{a:301,b:1,out:1}`; excluded card 2 resolved as no
 equip. An intentional all-empty override now remains a valid resident table for
 the Fusion Hint instead of making its readiness probe fail.
 
-Field spells 330 through 335 have a `Field creatures` row on the Cards page's
-Effects tab. Its picker is an explicit card-ID allow-list: search matches card
+Any Magic/Ritual card whose effective effect is `Change the field` has
+`Boosts` and `Field creatures` rows on the Cards page's Effects tab, including
+a stock monster converted into a field spell. The picker is an explicit
+card-ID allow-list: search matches card
 ID, edited/display name, effective type, or effective attribute; rows toggle
 individually, while `Select filtered`, `Remove filtered`, `Clear all`, Ctrl+A,
 Delete, Cancel, and Apply support batch work. `card_manager.field_picker`
@@ -404,8 +406,10 @@ Selection is by stable card ID, not a saved type or attribute query, so a later
 unrelated card edit cannot silently add other creatures. At runtime the list
 filters only the signed per-duel-row terrain modifier at `row + 0x14`, for both
 sides. It does not alter base stats, the ordinary modifier at `+0x12`, flags,
-ownership, the field visual, or another terrain. The configured field's normal
-type amount still determines both boosts and penalties; an allowed creature
+ownership, the field visual, or another terrain. The field spell that actually
+selected the terrain supplies its configured type amounts, so two spells on
+the same terrain do not share overrides. Those amounts still determine both
+boosts and penalties; an allowed creature
 whose type has zero for that terrain still receives zero.
 
 Verified 2026-09-10 with a real Umi activation: the board changed to `SEA`;
