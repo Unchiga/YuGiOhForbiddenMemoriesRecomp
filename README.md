@@ -1,5 +1,16 @@
 # Yu-Gi-Oh! Forbidden Memories Recompiled
 
+> [!IMPORTANT]
+> **This project has moved.** Development continues in
+> **[Yu-Gi-Oh! Forbidden Memories Recompiled](https://github.com/Unchiga/Yu-Gi-Oh-Forbidden-Memories-Recompiled)**,
+> a native port built from the game's decompilation instead of a static
+> recompilation of its MIPS code. Get new releases, mods and fixes there, and
+> join the [Discord](https://discord.gg/Gn6Mag52q) to follow development, ask
+> questions and report issues.
+>
+> This repository and its releases (up to v0.6.2) stay up for reference but
+> are no longer updated.
+
 A static recompilation of **Yu-Gi-Oh! Forbidden Memories** (USA,
 SLUS-01411). The game's MIPS code is translated to C ahead of time and built
 as a native executable instead of being interpreted by an emulator.
@@ -204,4 +215,4 @@ compiled build.
 
 ## Community
 
-Join the project Discord: https://discord.gg/SR8qWG9Ve
+Join the project Discord: https://discord.gg/Gn6Mag52q
