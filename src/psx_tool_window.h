@@ -25,7 +25,7 @@ int psx_tool_present(SDL_Renderer *ren, SDL_Texture *tex, const void *px, int w,
 /* the configured choice right now: 0 software, 1 accelerated */
 int psx_tool_renderer_choice(void);
 
-/* One native FM Editor window shared by all five page implementations.  Each
+/* One native FM Editor window shared by all six page implementations.  Each
  * page keeps its existing renderer/canvas/backend; switching releases those
  * transient objects, retains the page's selection/edit state, and attaches
  * the next page to the same SDL_Window. */
@@ -35,6 +35,7 @@ enum {
     PSX_FM_PAGE_FUSIONS,
     PSX_FM_PAGE_DIALOGUE,
     PSX_FM_PAGE_CPU,
+    PSX_FM_PAGE_TEXTURES,
     PSX_FM_PAGE_COUNT
 };
 #define PSX_FM_EDITOR_TAB_H 38
@@ -62,7 +63,7 @@ int psx_fm_editor_state_json(char *out, unsigned cap);
 /* Reset the cumulative low-overhead editor tick/event/present profiler. */
 void psx_fm_editor_profile_reset(void);
 /* Test/automation input through the same event path as a physical click or
- * Ctrl+1..5. keyboard=0 clicks the tab, nonzero sends the shortcut. */
+ * Ctrl+1..6. keyboard=0 clicks the tab, nonzero sends the shortcut. */
 int psx_fm_editor_inject_tab(int page, int keyboard);
 /* Native-window test/control seam. Negative x/y/w/h leave that component
  * unchanged. restore happens before resize/move; maximize and fit happen

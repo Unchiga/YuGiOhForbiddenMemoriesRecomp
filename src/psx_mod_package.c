@@ -34,6 +34,7 @@
 #include "host_osd.h"
 #include "mod_plugins.h"
 #include "psx_card_packs.h"
+#include "texture_pack.h"          /* texpack_request_reload() after reset-all */
 #include "psx_card_share.h"
 #include "psx_card_shop.h"
 #include "psx_card_drops.h"
@@ -613,7 +614,25 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
     int cards = 0, drops = 0, cpu = 0, fusion = 0, dialogue = 0, files = 0, rows = 0;
     {   /* the player's own cards/ folders, by hand: psx_card_packs_remove
          * works on the LIVE set, and with Dev Card Effects on that is the
-         * shipped effects mod, which stays as it is */
+         * shipped effects mod, which stays as it is.
+         *
+         * Deliberately does NOT touch the active pack's shared Textures
+         * folder (psx_card_packs_art_path()'s target for art/thumb/title)
+         * any more -- a 2026-09-xx change had this loop clear that path too,
+         * on the reasoning that a player's own uploaded picture should come
+         * back to stock along with everything else. In review that turned
+         * out to delete an entire DOWNLOADED HD pack: the shared folder has
+         * no way to tell "the player's own upload" apart from "someone
+         * else's pack the player installed", so clearing it here also
+         * cleared theirs (measured: reset-all against a 721-picture pack
+         * folder left 0). "Reset to stock" must never delete a pack's
+         * files, even at the cost of a player's own MOD-imported picture
+         * surviving a reset it should ideally also have undone -- there is
+         * no way to have both without tracking provenance this folder
+         * layout does not carry. Only the legacy per-card location
+         * (own/<id>/{art,thumb,title}.png, pre-2026-09-13, genuinely
+         * player-owned and never shared with a pack) is still cleared
+         * below, alongside card.ini. */
         static const char *const files4[4] = { "card.ini", "art.png", "thumb.png", "title.png" };
         const char *own = psx_card_packs_own_dir();
         for (int id = 1; id <= CARD_COUNT; id++) {
@@ -627,6 +646,11 @@ int psx_mod_package_reset_all(char *msg, unsigned cap)
         }
     }
     psx_card_packs_reload(0);
+    /* Same gap psx_card_share_import() had: psx_card_packs_reload() re-reads
+     * disc-side bookkeeping but never touches texpack's OWN file listing, so
+     * the raw VRAM injector would otherwise keep showing an art/thumb/title
+     * file this reset just deleted until something else triggered a rescan. */
+    texpack_request_reload();
     for (int d = 0; d < PSX_DROP_DB_DUELISTS; d++) {
         if (psx_drop_edits_count(d)) { psx_drop_edits_clear(d); drops++; }
         if (psx_drop_edits_reward(d, NULL)) { psx_drop_edits_reward_set(d, 0, 0); drops++; }

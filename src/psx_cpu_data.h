@@ -77,6 +77,16 @@ int  psx_cpu_portrait_set(int duelist, const char *png_path, char *msg, unsigned
 int  psx_cpu_portrait_clear(int duelist);
 int  psx_cpu_portrait_edited(int duelist);
 int  psx_cpu_portraits_count(void);
+/* Player-triggered, one-time move of every legacy per-duelist portrait (from
+ * before 2026-09-13, when portraits lived at duelists/<id>/portrait.png)
+ * into the active pack's shared folder -- see psx_asset_manager.c's
+ * "Migrate assets" button, the only caller. Skips a duelist whose shared
+ * slot is already occupied. Both out-params are optional. */
+void psx_cpu_migrate_legacy_portraits(int *out_migrated, int *out_skipped);
+/* 1 if any duelist has a legacy portrait waiting to be migrated. Cheap
+ * enough for a one-time check (see psx_asset_manager.c), not a per-frame
+ * poll. */
+int  psx_cpu_has_legacy_portraits(void);
 
 /* ---- the name ------------------------------------------------------------
  * What the FREE DUEL grid prints under the portrait, and what the campaign

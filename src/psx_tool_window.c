@@ -16,6 +16,7 @@
 #include "psx_fusion_manager.h"
 #include "psx_dialogue_manager.h"
 #include "psx_cpu_manager.h"
+#include "psx_asset_manager.h"
 #include "host_osd.h"
 
 static int  s_row = -1;
@@ -44,7 +45,7 @@ static EditorPerf s_editor_perf[PSX_FM_PAGE_COUNT];
 static uint64_t s_editor_switches;
 
 static const char *const s_page_names[PSX_FM_PAGE_COUNT] = {
-    "Cards", "Drop Tables", "Fusions", "Dialogue", "CPU"
+    "Cards", "Drop Tables", "Fusions", "Dialogue", "CPU", "Textures"
 };
 
 /* Keep a small horizontal gutter around a fitted window.  KWin may relocate a
@@ -110,6 +111,7 @@ static void page_close(int page)
     case PSX_FM_PAGE_FUSIONS:  psx_fusion_manager_close(); break;
     case PSX_FM_PAGE_DIALOGUE: psx_dialogue_manager_close(); break;
     case PSX_FM_PAGE_CPU:      psx_cpu_manager_close(); break;
+    case PSX_FM_PAGE_TEXTURES: psx_asset_manager_close(); break;
     default: break;
     }
 }
@@ -127,6 +129,7 @@ void psx_fm_editor_open_page(int page)
     case PSX_FM_PAGE_FUSIONS:  psx_fusion_manager_open(); break;
     case PSX_FM_PAGE_DIALOGUE: psx_dialogue_manager_open(); break;
     case PSX_FM_PAGE_CPU:      psx_cpu_manager_open(); break;
+    case PSX_FM_PAGE_TEXTURES: psx_asset_manager_open(); break;
     default: break;
     }
 }
@@ -270,7 +273,7 @@ int psx_fm_editor_filter_event(int page, const SDL_Event *event,
         const SDL_Keymod mod = event->key.keysym.mod;
 #endif
         if (event->key.windowID == id && (mod & KMOD_CTRL) &&
-            key >= SDLK_1 && key <= SDLK_5) {
+            key >= SDLK_1 && key <= SDLK_6) {
             psx_fm_editor_open_page((int)(key - SDLK_1));
             return 1;
         }
@@ -327,7 +330,7 @@ int psx_fm_editor_state_json(char *out, unsigned cap)
               y + h + top + bottom <= usable.y + usable.h;
     }
     int n = snprintf(out, cap,
-        "\"open\":%d,\"page\":%d,\"page_name\":\"%s\",\"tabs\":5,"
+        "\"open\":%d,\"page\":%d,\"page_name\":\"%s\",\"tabs\":%d,"
         "\"window_id\":%u,\"window\":[%d,%d],\"position\":[%d,%d],"
         "\"pixels\":[%d,%d],\"borders_reported\":[%d,%d,%d,%d],"
         "\"borders\":[%d,%d,%d,%d],\"borders_estimated\":%d,"
@@ -338,7 +341,7 @@ int psx_fm_editor_state_json(char *out, unsigned cap)
         "\"maximized\":%d,\"minimized\":%d,\"resizable\":%d,"
         "\"fit_count\":%u,\"last_fit\":%d",
         s_editor_win != NULL, s_editor_page,
-        s_editor_page >= 0 ? s_page_names[s_editor_page] : "",
+        s_editor_page >= 0 ? s_page_names[s_editor_page] : "", PSX_FM_PAGE_COUNT,
         s_editor_win ? (unsigned)SDL_GetWindowID(s_editor_win) : 0u,
         w, h, x, y, pw, ph,
         raw_top, raw_left, raw_bottom, raw_right,
@@ -737,7 +740,7 @@ PSX_MOD_CONSTRUCTOR(psx_tool_window_install)
         CHOICES, 2, "tool_renderer", def, NULL);
     s_editor_row = psx_video_menu_add_action(
         PSX_VM_MENU_VIEW, "FM Editor",
-        "Cards, Drop Tables, Fusions, Dialogue and CPU in one window",
+        "Cards, Drop Tables, Fusions, Dialogue, CPU and Textures in one window",
         editor_row_activate);
     (void)psx_game_add_start_hook(editor_policy);
     (void)psx_game_add_frame_hook(editor_policy);

@@ -5,6 +5,12 @@
 #include <stdint.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <wchar.h>
+#include <direct.h>
+#include <sys/stat.h>
+#else
+#include <sys/stat.h>
+#include <dirent.h>
 #endif
 
 FILE *psx_fopen_utf8(const char *path, const char *mode)
@@ -28,6 +34,104 @@ int psx_remove_utf8(const char *path)
         return _wremove(wpath);
 #endif
     return remove(path);
+}
+
+int psx_path_exists_utf8(const char *path)
+{
+#ifdef _WIN32
+    wchar_t wpath[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, (int)(sizeof wpath / sizeof wpath[0])) > 0)
+        return GetFileAttributesW(wpath) != INVALID_FILE_ATTRIBUTES;
+    return 0;
+#else
+    struct stat st;
+    return stat(path, &st) == 0;
+#endif
+}
+
+int psx_stat_utf8(const char *path, long *out_mtime, long *out_size)
+{
+#ifdef _WIN32
+    wchar_t wpath[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, (int)(sizeof wpath / sizeof wpath[0])) <= 0)
+        return 0;
+    struct _stat64 st;
+    if (_wstat64(wpath, &st) != 0) return 0;
+    if (out_mtime) *out_mtime = (long)st.st_mtime;
+    if (out_size)  *out_size  = (long)st.st_size;
+    return 1;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    if (out_mtime) *out_mtime = (long)st.st_mtime;
+    if (out_size)  *out_size  = (long)st.st_size;
+    return 1;
+#endif
+}
+
+int psx_mkdir_utf8(const char *path)
+{
+#ifdef _WIN32
+    wchar_t wpath[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, (int)(sizeof wpath / sizeof wpath[0])) > 0)
+        return _wmkdir(wpath);
+    return -1;
+#else
+    return mkdir(path, 0755);
+#endif
+}
+
+int psx_dir_list_utf8(const char *dir, void (*cb)(const char *name, int is_dir, void *ctx), void *ctx)
+{
+#ifdef _WIN32
+    wchar_t wglob[2048];
+    char glob8[2048];
+    snprintf(glob8, sizeof glob8, "%s/*", dir);
+    if (MultiByteToWideChar(CP_UTF8, 0, glob8, -1, wglob, (int)(sizeof wglob / sizeof wglob[0])) <= 0)
+        return 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(wglob, &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return 0;
+    do {
+        if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L".."))
+            continue;
+        char name[1024];
+        if (WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, (int)sizeof name, NULL, NULL) <= 0)
+            continue;
+        cb(name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, ctx);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return 1;
+#else
+    DIR *dp = opendir(dir);
+    if (!dp)
+        return 0;
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        const char *nm = de->d_name;
+        if (!strcmp(nm, ".") || !strcmp(nm, ".."))
+            continue;
+        char full[2048];
+        snprintf(full, sizeof full, "%s/%s", dir, nm);
+        struct stat st;
+        const int is_dir = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+        cb(nm, is_dir, ctx);
+    }
+    closedir(dp);
+    return 1;
+#endif
+}
+
+int psx_rename_utf8(const char *from, const char *to)
+{
+#ifdef _WIN32
+    wchar_t wfrom[2048], wto[2048];
+    if (MultiByteToWideChar(CP_UTF8, 0, from, -1, wfrom, (int)(sizeof wfrom / sizeof wfrom[0])) > 0 &&
+        MultiByteToWideChar(CP_UTF8, 0, to, -1, wto, (int)(sizeof wto / sizeof wto[0])) > 0)
+        return _wrename(wfrom, wto);
+#endif
+    return rename(from, to);
 }
 
 /* one UTF-16 code unit stream -> UTF-8 */

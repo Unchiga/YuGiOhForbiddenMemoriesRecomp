@@ -41,8 +41,11 @@
 #include "psx_story_rewards.h"
 #include "psx_starchip_rewards.h"
 #include "psx_card_manager.h"
+#include "psx_asset_manager.h"
 #include "psx_card_shop.h"
 #include "psx_card_packs.h"
+#include "texture_pack.h"
+#include "psx_texture_export.h"    /* psx_texture_export_write_png/mkdir_p -- texpack_capture dump */
 #include "psx_card_effects.h"
 #include "psx_card_password_view.h"
 #include "psx_card_share.h"
@@ -178,7 +181,8 @@ static void handle_fm_editor(int id, const char *json)
         else if (!strcmp(page_name, "fusions")) page = PSX_FM_PAGE_FUSIONS;
         else if (!strcmp(page_name, "dialogue")) page = PSX_FM_PAGE_DIALOGUE;
         else if (!strcmp(page_name, "cpu")) page = PSX_FM_PAGE_CPU;
-        else { send_err(id, "page_name must be cards|drops|fusions|dialogue|cpu"); return; }
+        else if (!strcmp(page_name, "textures")) page = PSX_FM_PAGE_TEXTURES;
+        else { send_err(id, "page_name must be cards|drops|fusions|dialogue|cpu|textures"); return; }
     }
     if (json_get_int(json, "open", -1) == 0) psx_fm_editor_close();
     else if (page >= 0 || json_get_int(json, "open", -1) == 1) {
@@ -216,6 +220,7 @@ static void handle_fm_editor(int id, const char *json)
         case PSX_FM_PAGE_FUSIONS:  ok = psx_fusion_manager_shot(path); break;
         case PSX_FM_PAGE_DIALOGUE: ok = psx_dialogue_manager_shot(path); break;
         case PSX_FM_PAGE_CPU:      ok = psx_cpu_manager_shot(path); break;
+        case PSX_FM_PAGE_TEXTURES: ok = psx_asset_manager_shot(path); break;
         }
         if (!ok) { send_err(id, "FM Editor is closed or screenshot failed"); return; }
     }
@@ -649,6 +654,71 @@ static void handle_drop_missing_state(int id, const char *json)
     send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
 }
 
+/* texpack_state — overall texpack counters, unresolved shapes and the
+ * VRAM-to-VRAM copy log (texpack_note_copy(), wired to a real call site
+ * 2026-09-13). Was defined in texture_pack.c from early in the HD
+ * texture-pack work but never actually exposed to a debug command. */
+static void handle_texpack_state(int id, const char *json)
+{
+    (void)json;
+    static char buf[32u * 1024u];
+    if (!texpack_state_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* texpack_draw_log — the last TP_DRAWLOG_CAP distinct HD-replacement resolves
+ * (which asset/region matched a draw, its own uv bound and texture window,
+ * the resulting placement). Built 2026-09-13 to root-cause a seam/hole on a
+ * multi-primitive tiled asset (campaign_characters' composited face/eyes/
+ * mouth chunks) without guessing at shader math -- reproduce the draw live,
+ * then read back exactly what texpack_on_draw() decided for it. */
+static void handle_texpack_draw_log(int id, const char *json)
+{
+    (void)json;
+    static char buf[32u * 1024u];
+    if (!texpack_draw_log_json(buf, sizeof buf)) { send_err(id, "state too long"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+
+/* texpack_capture — the "unknown-asset capture" discovery aid (see its own
+ * comment block in texture_pack.h for the full "why"). texpack_set_
+ * capture_enabled()/texpack_capture_count()/texpack_capture_get() existed
+ * from early in the HD texture-pack work but had no way to be turned on or
+ * read back -- this is that.
+ *
+ * {"enable":0|1} arms/disarms recording (status-only if omitted).
+ * {"dump":1} writes every capture held so far as a PNG under
+ * <player-data>/textures/_captures/, named by its VRAM rectangle and bit
+ * depth -- default 0, since a plain status poll should not also be a disk
+ * write. Always reports {"enabled", "count", "dumped"}. */
+static void handle_texpack_capture(int id, const char *json)
+{
+    const int enable = json_get_int(json, "enable", -1);
+    if (enable >= 0) texpack_set_capture_enabled(enable);
+
+    const int count = texpack_capture_count();
+    int dumped = 0;
+    if (json_get_int(json, "dump", 0)) {
+        const char *base = psx_mod_player_data_dir();
+        if (base && *base) {
+            char dir[1200];
+            snprintf(dir, sizeof dir, "%s/textures/_captures", base);
+            psx_texture_export_mkdir_p(dir);
+            for (int i = 0; i < count; i++) {
+                TexPackCapture cap;
+                if (!texpack_capture_get(i, &cap)) continue;
+                char path[1300];
+                snprintf(path, sizeof path, "%s/%04d_%d_%d_%dx%d_d%d.png",
+                         dir, i, cap.base_x, cap.base_y, cap.w, cap.h, cap.depth);
+                if (psx_texture_export_write_png(path, cap.rgba, cap.w, cap.h))
+                    dumped++;
+            }
+        }
+    }
+    send_fmt("{\"id\":%d,\"ok\":true,\"enabled\":%d,\"count\":%d,\"dumped\":%d}",
+             id, texpack_capture_enabled(), count, dumped);
+}
+
 /* card_packs — which cards are replaced and how. */
 static void handle_card_packs(int id, const char *json)
 {
@@ -972,6 +1042,41 @@ static void handle_card_manager_shot(int id, const char *json)
     char path[1024];
     if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "missing path"); return; }
     if (!psx_card_manager_shot(path)) { send_err(id, "manager is closed"); return; }
+    send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
+}
+
+/* asset_manager — the Textures/Asset Manager window (psx_asset_manager.c):
+ * same state/open/click/shot family as card_manager above, added alongside
+ * it since the window itself was never given one -- reachable through the
+ * FM Editor's tab strip in-game, but until now not through the debug server
+ * the way every other FM Editor page already was. */
+static void handle_asset_manager(int id, const char *json)
+{
+    (void)json;
+    char buf[2048];
+    psx_asset_manager_state_json(buf, sizeof buf);
+    send_fmt("{\"id\":%d,\"ok\":true,%s}", id, buf);
+}
+static void handle_asset_manager_set(int id, const char *json)
+{
+    if (reject_stock_netplay_mutation(id)) return;
+    const int open = json_get_int(json, "open", -1);
+    if (open >= 0) psx_asset_manager_request_open(open);
+    handle_asset_manager(id, json);
+}
+static void handle_asset_manager_click(int id, const char *json)
+{
+    if (reject_stock_netplay_mutation(id)) return;
+    if (!psx_asset_manager_click(json_get_int(json, "x", 0), json_get_int(json, "y", 0), json_get_int(json, "button", 1))) {
+        send_err(id, "manager is closed"); return;
+    }
+    send_ok(id);
+}
+static void handle_asset_manager_shot(int id, const char *json)
+{
+    char path[1024];
+    if (!json_get_str(json, "path", path, sizeof path)) { send_err(id, "missing path"); return; }
+    if (!psx_asset_manager_shot(path)) { send_err(id, "manager is closed"); return; }
     send_fmt("{\"id\":%d,\"ok\":true,\"path\":\"%s\"}", id, path);
 }
 
@@ -1719,6 +1824,9 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("drop_viewer",       handle_drop_viewer);
     (void)psx_debug_add_command("drop_viewer_set",   handle_drop_viewer_set);
     (void)psx_debug_add_command("drop_viewer_click", handle_drop_viewer_click);
+    (void)psx_debug_add_command("texpack_draw_log",   handle_texpack_draw_log);
+    (void)psx_debug_add_command("texpack_state",      handle_texpack_state);
+    (void)psx_debug_add_command("texpack_capture",    handle_texpack_capture);
     (void)psx_debug_add_command("card_packs",         handle_card_packs);
     (void)psx_debug_add_command("card_description_validate", handle_card_description_validate);
     (void)psx_debug_add_command("card_packs_reload",  handle_card_packs_reload);
@@ -1743,6 +1851,10 @@ PSX_MOD_CONSTRUCTOR(psx_ygo_debug_install) {
     (void)psx_debug_add_command("card_manager_move",  handle_card_manager_move);
     (void)psx_debug_add_command("card_manager_key",   handle_card_manager_key);
     (void)psx_debug_add_command("card_manager_shot",  handle_card_manager_shot);
+    (void)psx_debug_add_command("asset_manager",       handle_asset_manager);
+    (void)psx_debug_add_command("asset_manager_set",   handle_asset_manager_set);
+    (void)psx_debug_add_command("asset_manager_click", handle_asset_manager_click);
+    (void)psx_debug_add_command("asset_manager_shot",  handle_asset_manager_shot);
     (void)psx_debug_add_command("drop_viewer_press", handle_drop_viewer_press);
     (void)psx_debug_add_command("drop_viewer_release",
                                 handle_drop_viewer_release);
